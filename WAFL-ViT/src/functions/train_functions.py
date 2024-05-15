@@ -5,9 +5,10 @@ import warnings
 warnings.simplefilter("ignore")
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
+import random
+
 import matplotlib.pyplot as plt
 import numpy as np
-import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,6 +16,7 @@ import torchvision.datasets as datasets
 import torchvision.io as io
 import torchvision.transforms as transforms
 from sklearn.metrics import confusion_matrix
+
 from .visualize import *
 
 # デフォルトフォントサイズ変更

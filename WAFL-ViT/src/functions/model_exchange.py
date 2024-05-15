@@ -1,5 +1,7 @@
-import torch
 import copy
+
+import torch
+
 
 def update_nets_vgg(net, contact, fl_coefficiency):  # sはn番目の要素に複数のmodelがあるかで決まる
     local_model = [{} for _ in range(10)]
