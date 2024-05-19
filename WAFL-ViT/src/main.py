@@ -12,11 +12,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-from definitions.model_exchange import *
-from definitions.mydataset import *
-from definitions.net import *
-from definitions.train_functions import *
-from definitions.visualize import *
+from functions.model_exchange import *
+from functions.mydataset import *
+from functions.net import *
+from functions.train_functions import *
+from functions.visualize import *
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Subset
@@ -85,14 +85,6 @@ contact_file_path = os.path.join(contact_pattern_path, contact_file)
 
 # 2.6 Select train mode
 is_pretrain_only = False  # use to do only pre-training
-is_train_only = False  # use to load pre-trained data and start training from scratch
-is_restart = False  # use to load traied_data and add training
-load_time_index = (
-    None  # use when "is_train_only" or "is_restart" flag is valid. check situation
-)
-load_epoch = (
-    None  # use when "is_restart" flag is valid. how many epochs shoud it be added
-)
 
 # 2.7 設定
 torch_seed() # seedの固定 # 場所の変更------------
@@ -309,59 +301,11 @@ if use_pretrain_scheduler: # pretrainでlr decayを使う場合
 contact_list = []
 histories = [np.zeros((0, 5)) for i in range(n_node)] # モデル合成時の結果を格納
 pretrain_histories = [np.zeros((0, 5)) for i in range(n_node)] # pretrainの結果を格納
+
+## 7. Main Loop
 if __name__ == "__main__":
-    if is_train_only:
-        with open(
-            os.path.join(project_path, load_time_index, "params", "histories_data.pkl"),
-            "rb",
-        ) as f:
-            histories = pickle.load(f)
-        for n in range(10):
-            nets[n].load_state_dict(
-                torch.load(
-                    os.path.join(
-                        project_path, f"{load_time_index}/params/Pre-train-node{n}.pth"
-                    )
-                )
-            )
-        cur_time_index = load_time_index
-        cur_path = os.path.join(project_path, cur_time_index)
-        load_epoch = 0
-        print("Just training from pre-train result")
-        with open(os.path.join(cur_path, "log.txt"), "a") as f:
-            f.write(
-                "train under the following conditions. confirm them to be same as that of pre-train\n"
-            )
-
-    elif is_restart:
-        with open(
-            os.path.join(project_path, load_time_index, "params", "histories_data.pkl"),
-            "rb",
-        ) as f:
-            histories = pickle.load(f)
-        if len(histories[0]) != load_epoch + 1:
-            print("error: do not load suitable file")
-            exit(1)
-        for n in range(10):
-            nets[n].load_state_dict(
-                torch.load(
-                    os.path.join(
-                        project_path,
-                        f"{load_time_index}/params/node{n}_epoch-{load_epoch:04d}.pth",
-                    )
-                )
-            )
-        cur_time_index = load_time_index
-        cur_path = os.path.join(project_path, cur_time_index)
-        print(f"restart training from epoch{load_epoch+1}")
-        with open(os.path.join(cur_path, "log.txt"), "a") as f:
-            f.write(
-                "restart training under the following conditions. confirm them to be same as that of pre-train\n"
-            )
-
-    else:
-        os.makedirs(cur_path) # 結果格納用のディレクトリを作成
-        show_dataset_contents(data_path, classes, cur_path)
+    os.makedirs(cur_path) # 結果格納用のディレクトリを作成
+    show_dataset_contents(data_path, classes, cur_path)
 
     with open(os.path.join(cur_path, "log.txt"), "a") as f: # パラメータの出力
         for i in range(len(subset)):
@@ -383,37 +327,36 @@ if __name__ == "__main__":
         f.write(f"net:\n {summary(nets[0], (1,3,224,224), verbose=False)}\n")
 
     # Pretrainを行う
-    if (not is_train_only) and (not is_restart):
-        os.makedirs(os.path.join(cur_path, "params"))
-        load_epoch = 0
-        # pre-self training
-        pretrain(
-            nets,
-            trainloader,
-            testloader,
-            pretrain_optimizers,
-            criterion,
-            pretrain_epoch,
-            device,
-            cur_path,
-            histories,
-            pretrain_histories,
-            pretrain_schedulers,
-        )
+    os.makedirs(os.path.join(cur_path, "params"))
+    load_epoch = 0
+    # pre-self training
+    pretrain(
+        nets,
+        trainloader,
+        testloader,
+        pretrain_optimizers,
+        criterion,
+        pretrain_epoch,
+        device,
+        cur_path,
+        histories,
+        pretrain_histories,
+        pretrain_schedulers,
+    )
 
-        history_save_path = os.path.join(cur_path, "params", "histories_data.pkl")
-        with open(history_save_path, "wb") as f:
-            pickle.dump(histories, f)
-        print("saving histories...")
+    history_save_path = os.path.join(cur_path, "params", "histories_data.pkl")
+    with open(history_save_path, "wb") as f:
+        pickle.dump(histories, f)
+    print("saving histories...")
+
+    if is_pretrain_only: # pretrainのみの場合はここで終了
         pretrain_history_save_path = os.path.join(
-                cur_path, "params", "pretrain_histories_data.pkl"
-            )
+            cur_path, "params", "pretrain_histories_data.pkl"
+        )
         with open(pretrain_history_save_path, "wb") as f: # pretrainのhistoryを保存
             pickle.dump(pretrain_histories, f)
             print("saving pretrain histories...")
-
-        if is_pretrain_only: # pretrainのみの場合はここで終了
-            exit(0)
+        exit(0)
 
     # load contact pattern
     print(f"Loading ... {contact_file_path}")
@@ -500,9 +443,6 @@ if __name__ == "__main__":
     with open(history_save_path, "wb") as f:
         pickle.dump(histories, f)
         print("saving histories...")
-    # with open(history_csv_save_path, "wb") as f: # 結果をcsvファイル形式で出力
-    #     writer = csv.writer(f)
-    #     writer.writerow(histories)
     mean, std = calc_res_mean_and_std(histories)
     with open(os.path.join(cur_path, "log.txt"), "a") as f:
         f.write(f"the average of the last 10 epoch: {mean}\n")
