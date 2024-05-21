@@ -34,9 +34,9 @@ device = torch.device(
 # path
 data_path = "../data"
 project_path = "../training_logs" # GPU2
-noniid_filter_path = "../data/nonIID_filter"
+noniid_filter_path = "../data/non-IID_filter"
 contact_pattern_path = "../data/contact_pattern"
-mean_and_std_path = "../data/mean_and_std"
+mean_and_std_path = "../data/test_mean_and_std"
 # classes = ("安田講堂", "工2", "工3", "工13", "工4", "工8", "工1", "工6", "列品館", "法文1")
 classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
 train_path = os.path.join(data_path, "train")
@@ -92,8 +92,8 @@ g = torch.Generator()
 g.manual_seed(0)
 
 print("using device", device)
-schedulers = None ## 場所の変更---------- 実体生成用の変数宣言は一箇所（ここ？）にまとめる
-pretrain_schedulers = None
+# schedulers = None ## 場所の変更---------- 実体生成用の変数宣言は一箇所（ここ？）にまとめる
+# pretrain_schedulers = None
 
 ## 3. Test Transform （各エポックでのデータ呼び出しの際に、RandomCropなどどのような処理を行うか. Train用は後で）
 # Normalize用に、Test directoryの画像の画素値の平均と分散を読み込む
@@ -128,8 +128,8 @@ else:
 
 ## 4. Prepare data
 # 4.1 Create dataset with ImageFolder & custom dataset
-train_data = None
-test_data = None
+# train_data = None
+# test_data = None
 if useGPUinTrans: # GPUでTransformを行う場合
     # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
     train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく
@@ -189,7 +189,7 @@ for i in range(len(subset)):
     mean = mean.tolist()
     std = stds[i]
     std = std.tolist()
-    train_transform = None
+    # train_transform = None
     if useGPUinTrans:
         train_transform = transforms.Compose(
             [
@@ -250,7 +250,7 @@ for i in range(len(subset)):
         )
 
 # 4.5 Prepare test_dataloader
-testloader = None
+# testloader = None
 
 if useGPUinTrans:
     testloader = DataLoader(
@@ -304,7 +304,7 @@ pretrain_histories = [np.zeros((0, 5)) for i in range(n_node)] # pretrainの結�
 
 ## 7. Main Loop
 if __name__ == "__main__":
-    os.makedirs(cur_path) # 結果格納用のディレクトリを作成
+    os.makedirs(cur_path) # 実行結果の格納用ディレクトリを作成. makedirsを使うと、親ディレクトリも含めて一気に新規作成できる。
     show_dataset_contents(data_path, classes, cur_path)
 
     with open(os.path.join(cur_path, "log.txt"), "a") as f: # パラメータの出力
