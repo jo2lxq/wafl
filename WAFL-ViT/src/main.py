@@ -101,7 +101,7 @@ if (os.path.exists(meant_file_path)) and (os.path.exists(stdt_file_path)): # Tes
     mean_t = torch.load(meant_file_path)
     std_t = torch.load(stdt_file_path)
 else: # Test dataの平均と分散のファイルがない場合
-    mean_t, std_t = search_mean_and_std(test_path)
+    mean_t, std_t = calculate_mean_and_std(test_path)
     torch.save(mean_t, meant_file_path)
     torch.save(std_t, stdt_file_path)
 print("calculation of mean and std in test data finished")
@@ -132,7 +132,7 @@ else:
 # test_data = None
 if useGPUinTrans: # GPUでTransformを行う場合
     # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
-    train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく
+    train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく正規化を行う
     test_data = MyGPUdataset(
         test_path,
         device,
@@ -148,21 +148,21 @@ filter_file = f"filter_r{filter_rate:02d}_s{filter_seed:02d}.pt"
 if is_use_noniid_filter: # Non-IID Filterを使う場合
     indices = torch.load(os.path.join(noniid_filter_path, filter_file))
 else: # Non-IID Filterを使わない場合
-    indices = [[] for i in range(n_node)]
+    indices = [[] for _ in range(n_node)]
     for i in range(len(train_data)):
         indices[i % n_node].append(i)
 
 # 4.3 Assign training data to each node
-for i in range(n_node):# データ分布の出力
-    print(f"node_{i}:{indices[i]}\n")
+# for i in range(n_node):# データ分布の出力
+#     print(f"node_{i}:{indices[i]}\n")
 subset = [Subset(train_data, indices[i]) for i in range(n_node)]
-nums = [[0 for i in range(n_node)] for j in range(n_node)]
-for i in range(n_node): # データ分布の出力を行う
-    for j in range(len(subset[i])):
-        image, label = subset[i][j]
-        nums[i][int(label)] += 1
-    print(f'Distributions of data')
-    print(f"train_data of node_{i}: {nums[i]}\n")
+# nums = [[0 for i in range(n_node)] for j in range(n_node)]
+# for i in range(n_node): # データ分布の出力を行う
+#     for j in range(len(subset[i])):
+#         image, label = subset[i][j]
+#         nums[i][int(label)] += 1
+#     print(f'Distributions of data')
+#     print(f"train_data of node_{i}: {nums[i]}\n")
 
 # Normalize用のファイル読み込み
 if is_use_noniid_filter: # Non-IIDフィルタを使うとき
@@ -185,9 +185,9 @@ print("Loading of mean and std in train data finished")
 # 4.4. Prepare train_dataloader
 trainloader = []
 for i in range(len(subset)):
-    mean = means[i]
+    mean = mean_list[i]
     mean = mean.tolist()
-    std = stds[i]
+    std = std_list[i]
     std = std.tolist()
     # train_transform = None
     if useGPUinTrans:
