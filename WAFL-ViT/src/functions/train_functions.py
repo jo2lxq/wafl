@@ -264,7 +264,8 @@ def calculate_mean_and_std_subset(subset):
     for i in range(len(subset)):
         total_samples = len(subset[i])
         for j in range(total_samples):
-            image, _ = subset[i][j]
+            image_PIL, _ = subset[i][j]
+            image = transforms.ToTensor()(image_PIL)
             mean_list[i] += image.mean(dim=(1, 2))
             std_list[i] += image.std(dim=(1, 2))
         mean_list[i] /= total_samples
