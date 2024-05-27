@@ -46,7 +46,7 @@ stdt_file_path = os.path.join(mean_and_std_path, "test_std.pt") ## IIDでもNonI
 
 ## 2. 変数の定義（ここを変更する）
 # 2.1 出力ファイル名
-cur_time_index = datetime.now().strftime("%Y-%m-%d-%H")
+cur_time_index = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 cur_path = os.path.join(project_path, cur_time_index) ## 変更する---------------------
 
 # 2.2 Training conditions
