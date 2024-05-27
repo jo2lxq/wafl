@@ -207,7 +207,8 @@ for i in range(len(subset)):
         train_transform = transforms.Compose(
             [
                 transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
-                transforms.ToTensor(),
+                # transforms.ToTensor(),
+                transforms.ConvertImageDtype(torch.float32), # pre_transformで既にtensor化されている
                 transforms.Normalize(mean=tuple(mean), std=tuple(std)),
                 transforms.RandomErasing(
                     p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False
@@ -217,10 +218,12 @@ for i in range(len(subset)):
     pre_transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.ConvertImageDtype(torch.uint8),
+            transforms.ConvertImageDtype(torch.uint8), # メモリ容量を圧縮するためにuint8で保管（元の画像はuint8なので情報の損失なし）
             transforms.Resize(256),
         ]
     )
+    # 最初に全エポックに共通の処理をpre_transformで実施。
+    # randomCropなどそれぞれのエポックで異なる処理はtransformに記載。
     train_dataset_new = FromSubsetDataset(
         subset[i], device, transform=train_transform, pre_transform=pre_transform
     )
@@ -280,6 +283,7 @@ pretrain_optimizers = [ # pretrain時のoptimizer
     for i in range(n_node)
 ]
 
+scheduler = None
 if use_scheduler: # exchangeでlr decayを使う場合
     schedulers = [
         optim.lr_scheduler.StepLR(
@@ -287,6 +291,7 @@ if use_scheduler: # exchangeでlr decayを使う場合
         )
         for i in range(10)
     ]
+pretrain_schedulers = None
 if use_pretrain_scheduler: # pretrainでlr decayを使う場合
     pretrain_schedulers = [
         optim.lr_scheduler.StepLR(
