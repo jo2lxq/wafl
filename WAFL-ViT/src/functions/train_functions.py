@@ -237,7 +237,7 @@ def show_dataset_contents(
                 f"label: {classes[i]} train_data: {num_train[i]} test_data: {num_test[i]}\n"
             )
 
-def search_mean_and_std(datapath):
+def calculate_mean_and_std(datapath):
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -257,6 +257,19 @@ def search_mean_and_std(datapath):
     mean /= total_samples
     std /= total_samples
     return mean, std
+
+def calculate_mean_and_std_subset(subset):
+    mean_list = [torch.zeros(3) for _ in range(len(subset))]
+    std_list = [torch.zeros(3) for _ in range(len(subset))]
+    for i in range(len(subset)):
+        total_samples = len(subset[i])
+        for j in range(total_samples):
+            image, _ = subset[i][j]
+            mean_list[i] += image.mean(dim=(1, 2))
+            std_list[i] += image.std(dim=(1, 2))
+        mean_list[i] /= total_samples
+        std_list[i] /= total_samples
+    return mean_list, std_list
 
 def train_for_cmls(
     cur_dir, epoch, n, cur_time_index, classes, net, criterion, test_loader, device
