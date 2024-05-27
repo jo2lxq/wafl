@@ -166,19 +166,26 @@ subset = [Subset(train_data, indices[i]) for i in range(n_node)]
 
 # Normalize用のファイル読み込み
 if is_use_noniid_filter: # Non-IIDフィルタを使うとき
-    means = torch.load(
-        os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt") # 各ノードごとの画素値の平均、分散を取得
-    )
-    stds = torch.load(
-        os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt") # 各ノードごとの画素値の平均、分散を取得
-    )
+    train_mean_file_path = os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    train_std_file_path = os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path): # 既に計算済みの場合
+        mean_list = torch.load(train_mean_file_path) # 各ノードごとの画素値の平均、分散を取得
+        std_list = torch.load(train_std_file_path) # 各ノードごとの画素値の平均、分散を取得
+    else: # 計算する
+        mean_list, std_list = calculate_mean_and_std_subset(subset)
+        torch.save(mean_list, train_mean_file_path)
+        torch.save(std_list, train_std_file_path)
 else: # Non-IIDフィルタを使わないとき
-    means = torch.load(
-        os.path.join(mean_and_std_path, 'IID_train_mean.pt')
-        )
-    stds = torch.load(
-        os.path.join(mean_and_std_path, 'IID_train_std.pt')
-    )
+    train_mean_file_path = os.path.join(mean_and_std_path, 'IID_train_mean.pt')
+    train_std_file_path = os.path.join(mean_and_std_path, 'IID_train_std.pt')
+    if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path):
+        mean_list = torch.load(train_mean_file_path)
+        std_list = torch.load(train_std_file_path)
+    else:
+        mean_list, std_list = calculate_mean_and_std_subset(subset)
+        torch.save(mean_list, train_mean_file_path)
+        torch.save(std_list, train_std_file_path)
+print("Loading of mean and std in train data finished")
 
 print("Loading of mean and std in train data finished")
 
@@ -283,7 +290,7 @@ pretrain_optimizers = [ # pretrain時のoptimizer
     for i in range(n_node)
 ]
 
-scheduler = None
+schedulers = None # define before passing to the function
 if use_scheduler: # exchangeでlr decayを使う場合
     schedulers = [
         optim.lr_scheduler.StepLR(
@@ -291,7 +298,7 @@ if use_scheduler: # exchangeでlr decayを使う場合
         )
         for i in range(10)
     ]
-pretrain_schedulers = None
+pretrain_schedulers = None # define before passing to the function
 if use_pretrain_scheduler: # pretrainでlr decayを使う場合
     pretrain_schedulers = [
         optim.lr_scheduler.StepLR(
@@ -325,10 +332,10 @@ if __name__ == "__main__":
         f.write(f"train transform: {trainloader[0].dataset.transform}\n")
         f.write(f"optimizer: {optimizers[0]}\n")
         if use_scheduler:
-            f.write(f"pre-training sheduler: {schedulers[0]}\n")
+            f.write(f"training scheduler: {schedulers[0].state_dict()}\n")
         f.write(f"pre-training optimizer: {pretrain_optimizers[0]}\n")
         if use_pretrain_scheduler:
-            f.write(f"pre-training sheduler: {pretrain_schedulers[0]}\n")
+            f.write(f"pre-training scheduler: {pretrain_schedulers[0].state_dict()}\n")
         f.write(f"net:\n {summary(nets[0], (1,3,224,224), verbose=False)}\n")
 
     # Pretrainを行う
@@ -407,10 +414,10 @@ if __name__ == "__main__":
 
             # このif文がTrueになったらConfusion Matrixを出力
             if ((load_epoch + epoch > (load_epoch + max_epoch) * 0.75) and epoch % 50 == 49) or (load_epoch + max_epoch - epoch < 11):
-                print(load_epoch)
-                print(max_epoch)
-                print(epoch)
-                print(load_epoch + max_epoch - epoch)
+                # print(load_epoch)
+                # print(max_epoch)
+                # print(epoch)
+                # print(load_epoch + max_epoch - epoch)
                 train_for_cmls(
                     cur_path,
                     epoch,
