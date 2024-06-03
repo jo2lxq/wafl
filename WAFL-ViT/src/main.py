@@ -47,6 +47,7 @@ stdt_file_path = os.path.join(mean_and_std_path, "test_std.pt") ## IIDでもNonI
 ## 2. 変数の定義（ここを変更する）
 # 2.1 出力ファイル名
 cur_time_index = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+cur_time_index = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 cur_path = os.path.join(project_path, cur_time_index) ## 変更する---------------------
 
 # 2.2 Training conditions
@@ -102,6 +103,7 @@ if (os.path.exists(meant_file_path)) and (os.path.exists(stdt_file_path)): # Tes
     std_t = torch.load(stdt_file_path)
 else: # Test dataの平均と分散のファイルがない場合
     mean_t, std_t = calculate_mean_and_std(test_path)
+    mean_t, std_t = calculate_mean_and_std(test_path)
     torch.save(mean_t, meant_file_path)
     torch.save(std_t, stdt_file_path)
 print("calculation of mean and std in test data finished")
@@ -133,6 +135,7 @@ else:
 if useGPUinTrans: # GPUでTransformを行う場合
     # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
     train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく正規化を行う
+    train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく正規化を行う
     test_data = MyGPUdataset(
         test_path,
         device,
@@ -149,10 +152,13 @@ if is_use_noniid_filter: # Non-IID Filterを使う場合
     indices = torch.load(os.path.join(noniid_filter_path, filter_file))
 else: # Non-IID Filterを使わない場合
     indices = [[] for _ in range(n_node)]
+    indices = [[] for _ in range(n_node)]
     for i in range(len(train_data)):
         indices[i % n_node].append(i)
 
 # 4.3 Assign training data to each node
+# for i in range(n_node):# データ分布の出力
+#     print(f"node_{i}:{indices[i]}\n")
 # for i in range(n_node):# データ分布の出力
 #     print(f"node_{i}:{indices[i]}\n")
 subset = [Subset(train_data, indices[i]) for i in range(n_node)]
@@ -163,9 +169,25 @@ subset = [Subset(train_data, indices[i]) for i in range(n_node)]
 #         nums[i][int(label)] += 1
 #     print(f'Distributions of data')
 #     print(f"train_data of node_{i}: {nums[i]}\n")
+# nums = [[0 for i in range(n_node)] for j in range(n_node)]
+# for i in range(n_node): # データ分布の出力を行う
+#     for j in range(len(subset[i])):
+#         image, label = subset[i][j]
+#         nums[i][int(label)] += 1
+#     print(f'Distributions of data')
+#     print(f"train_data of node_{i}: {nums[i]}\n")
 
 # Normalize用のファイル読み込み
 if is_use_noniid_filter: # Non-IIDフィルタを使うとき
+    train_mean_file_path = os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    train_std_file_path = os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path): # 既に計算済みの場合
+        mean_list = torch.load(train_mean_file_path) # 各ノードごとの画素値の平均、分散を取得
+        std_list = torch.load(train_std_file_path) # 各ノードごとの画素値の平均、分散を取得
+    else: # 計算する
+        mean_list, std_list = calculate_mean_and_std_subset(subset)
+        torch.save(mean_list, train_mean_file_path)
+        torch.save(std_list, train_std_file_path)
     train_mean_file_path = os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt")
     train_std_file_path = os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt")
     if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path): # 既に計算済みの場合
@@ -191,7 +213,9 @@ print("Loading of mean and std in train data finished")
 trainloader = []
 for i in range(len(subset)):
     mean = mean_list[i]
+    mean = mean_list[i]
     mean = mean.tolist()
+    std = std_list[i]
     std = std_list[i]
     std = std.tolist()
     # train_transform = None
@@ -223,10 +247,12 @@ for i in range(len(subset)):
     pre_transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.ConvertImageDtype(torch.uint8),
+            transforms.ConvertImageDtype(torch.uint8), # メモリ容量を圧縮するためにuint8で保管（元の画像はuint8なので情報の損失なし）
             transforms.Resize(256),
         ]
     )
+    # 最初に全エポックに共通の処理をpre_transformで実施。
+    # randomCropなどそれぞれのエポックで異なる処理はtransformに記載。
     train_dataset_new = FromSubsetDataset(
         subset[i], device, transform=train_transform, pre_transform=pre_transform
     )
@@ -329,8 +355,10 @@ if __name__ == "__main__":
         f.write(f"optimizer: {optimizers[0]}\n")
         if use_scheduler:
             f.write(f"training scheduler: {schedulers[0].state_dict()}\n")
+            f.write(f"training scheduler: {schedulers[0].state_dict()}\n")
         f.write(f"pre-training optimizer: {pretrain_optimizers[0]}\n")
         if use_pretrain_scheduler:
+            f.write(f"pre-training scheduler: {pretrain_schedulers[0].state_dict()}\n")
             f.write(f"pre-training scheduler: {pretrain_schedulers[0].state_dict()}\n")
         f.write(f"net:\n {summary(nets[0], (1,3,224,224), verbose=False)}\n")
 
@@ -410,6 +438,10 @@ if __name__ == "__main__":
 
             # このif文がTrueになったらConfusion Matrixを出力
             if ((load_epoch + epoch > (load_epoch + max_epoch) * 0.75) and epoch % 50 == 49) or (load_epoch + max_epoch - epoch < 11):
+                # print(load_epoch)
+                # print(max_epoch)
+                # print(epoch)
+                # print(load_epoch + max_epoch - epoch)
                 # print(load_epoch)
                 # print(max_epoch)
                 # print(epoch)
