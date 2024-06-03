@@ -46,7 +46,7 @@ stdt_file_path = os.path.join(mean_and_std_path, "test_std.pt") ## IIDでもNonI
 
 ## 2. 変数の定義（ここを変更する）
 # 2.1 出力ファイル名
-cur_time_index = datetime.now().strftime("%Y-%m-%d-%H")
+cur_time_index = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 cur_path = os.path.join(project_path, cur_time_index) ## 変更する---------------------
 
 # 2.2 Training conditions
@@ -56,7 +56,7 @@ batch_size = 16
 n_node = 10
 n_middle = 256
 fl_coefficiency = 0.1
-model_name = "mobilenet_v2"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
+model_name = "vit_b16"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
 optimizer_name = "SGD"  # SGD or Adam
 useGPUinTrans = True  # whether use GPU in transform or not
 lr = 0.01
@@ -66,10 +66,10 @@ pretrain_momentum = 0.9
 
 # 2.3 Schedulers（学習率を途中で下げる）
 use_scheduler = False  # if do not use scheduler, False here
-scheduler_step = 1000
+scheduler_step = 10
 scheduler_rate = 0.5
 use_pretrain_scheduler = False # pretrainでschedulerを使うか. When you use lr_decay in pretrain phase, set True.
-pretrain_scheduler_step = 30
+pretrain_scheduler_step = 10
 pretrain_scheduler_rate = 0.3
 
 # 2.4 About the data each node has. When you use non-IID filter to create data of each node, 'is_use_noniid_filter' is 'True'.
@@ -101,7 +101,7 @@ if (os.path.exists(meant_file_path)) and (os.path.exists(stdt_file_path)): # Tes
     mean_t = torch.load(meant_file_path)
     std_t = torch.load(stdt_file_path)
 else: # Test dataの平均と分散のファイルがない場合
-    mean_t, std_t = search_mean_and_std(test_path)
+    mean_t, std_t = calculate_mean_and_std(test_path)
     torch.save(mean_t, meant_file_path)
     torch.save(std_t, stdt_file_path)
 print("calculation of mean and std in test data finished")
@@ -132,7 +132,7 @@ else:
 # test_data = None
 if useGPUinTrans: # GPUでTransformを行う場合
     # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
-    train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく
+    train_data = ImageFolder(train_path) # Trainのデータは後でノードごとの平均、分散に基づく正規化を行う
     test_data = MyGPUdataset(
         test_path,
         device,
@@ -148,46 +148,51 @@ filter_file = f"filter_r{filter_rate:02d}_s{filter_seed:02d}.pt"
 if is_use_noniid_filter: # Non-IID Filterを使う場合
     indices = torch.load(os.path.join(noniid_filter_path, filter_file))
 else: # Non-IID Filterを使わない場合
-    indices = [[] for i in range(n_node)]
+    indices = [[] for _ in range(n_node)]
     for i in range(len(train_data)):
         indices[i % n_node].append(i)
 
 # 4.3 Assign training data to each node
-for i in range(n_node):# データ分布の出力
-    print(f"node_{i}:{indices[i]}\n")
+# for i in range(n_node):# データ分布の出力
+#     print(f"node_{i}:{indices[i]}\n")
 subset = [Subset(train_data, indices[i]) for i in range(n_node)]
-nums = [[0 for i in range(n_node)] for j in range(n_node)]
-for i in range(n_node): # データ分布の出力を行う
-    for j in range(len(subset[i])):
-        image, label = subset[i][j]
-        nums[i][int(label)] += 1
-    print(f'Distributions of data')
-    print(f"train_data of node_{i}: {nums[i]}\n")
+# nums = [[0 for i in range(n_node)] for j in range(n_node)]
+# for i in range(n_node): # データ分布の出力を行う
+#     for j in range(len(subset[i])):
+#         image, label = subset[i][j]
+#         nums[i][int(label)] += 1
+#     print(f'Distributions of data')
+#     print(f"train_data of node_{i}: {nums[i]}\n")
 
 # Normalize用のファイル読み込み
 if is_use_noniid_filter: # Non-IIDフィルタを使うとき
-    means = torch.load(
-        os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt") # 各ノードごとの画素値の平均、分散を取得
-    )
-    stds = torch.load(
-        os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt") # 各ノードごとの画素値の平均、分散を取得
-    )
+    train_mean_file_path = os.path.join(mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    train_std_file_path = os.path.join(mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt")
+    if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path): # 既に計算済みの場合
+        mean_list = torch.load(train_mean_file_path) # 各ノードごとの画素値の平均、分散を取得
+        std_list = torch.load(train_std_file_path) # 各ノードごとの画素値の平均、分散を取得
+    else: # 計算する
+        mean_list, std_list = calculate_mean_and_std_subset(subset)
+        torch.save(mean_list, train_mean_file_path)
+        torch.save(std_list, train_std_file_path)
 else: # Non-IIDフィルタを使わないとき
-    means = torch.load(
-        os.path.join(mean_and_std_path, 'IID_train_mean.pt')
-        )
-    stds = torch.load(
-        os.path.join(mean_and_std_path, 'IID_train_std.pt')
-    )
-
+    train_mean_file_path = os.path.join(mean_and_std_path, 'IID_train_mean.pt')
+    train_std_file_path = os.path.join(mean_and_std_path, 'IID_train_std.pt')
+    if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path):
+        mean_list = torch.load(train_mean_file_path)
+        std_list = torch.load(train_std_file_path)
+    else:
+        mean_list, std_list = calculate_mean_and_std_subset(subset)
+        torch.save(mean_list, train_mean_file_path)
+        torch.save(std_list, train_std_file_path)
 print("Loading of mean and std in train data finished")
 
 # 4.4. Prepare train_dataloader
 trainloader = []
 for i in range(len(subset)):
-    mean = means[i]
+    mean = mean_list[i]
     mean = mean.tolist()
-    std = stds[i]
+    std = std_list[i]
     std = std.tolist()
     # train_transform = None
     if useGPUinTrans:
@@ -207,7 +212,8 @@ for i in range(len(subset)):
         train_transform = transforms.Compose(
             [
                 transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
-                transforms.ToTensor(),
+                # transforms.ToTensor(), # すでにpreトランスフォームでTensor化しているのでは？
+                transforms.ConvertImageDtype(torch.float32),
                 transforms.Normalize(mean=tuple(mean), std=tuple(std)),
                 transforms.RandomErasing(
                     p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False
@@ -280,6 +286,7 @@ pretrain_optimizers = [ # pretrain時のoptimizer
     for i in range(n_node)
 ]
 
+schedulers = None # 下の学習関数で引数として与えるので、実体を作る
 if use_scheduler: # exchangeでlr decayを使う場合
     schedulers = [
         optim.lr_scheduler.StepLR(
@@ -287,6 +294,7 @@ if use_scheduler: # exchangeでlr decayを使う場合
         )
         for i in range(10)
     ]
+pretrain_schedulers = None # 下の学習関数で引数として与えるので、実体を作る
 if use_pretrain_scheduler: # pretrainでlr decayを使う場合
     pretrain_schedulers = [
         optim.lr_scheduler.StepLR(
@@ -320,10 +328,10 @@ if __name__ == "__main__":
         f.write(f"train transform: {trainloader[0].dataset.transform}\n")
         f.write(f"optimizer: {optimizers[0]}\n")
         if use_scheduler:
-            f.write(f"pre-training sheduler: {schedulers[0]}\n")
+            f.write(f"training scheduler: {schedulers[0].state_dict()}\n")
         f.write(f"pre-training optimizer: {pretrain_optimizers[0]}\n")
         if use_pretrain_scheduler:
-            f.write(f"pre-training sheduler: {pretrain_schedulers[0]}\n")
+            f.write(f"pre-training scheduler: {pretrain_schedulers[0].state_dict()}\n")
         f.write(f"net:\n {summary(nets[0], (1,3,224,224), verbose=False)}\n")
 
     # Pretrainを行う
@@ -402,10 +410,10 @@ if __name__ == "__main__":
 
             # このif文がTrueになったらConfusion Matrixを出力
             if ((load_epoch + epoch > (load_epoch + max_epoch) * 0.75) and epoch % 50 == 49) or (load_epoch + max_epoch - epoch < 11):
-                print(load_epoch)
-                print(max_epoch)
-                print(epoch)
-                print(load_epoch + max_epoch - epoch)
+                # print(load_epoch)
+                # print(max_epoch)
+                # print(epoch)
+                # print(load_epoch + max_epoch - epoch)
                 train_for_cmls(
                     cur_path,
                     epoch,
@@ -437,6 +445,7 @@ if __name__ == "__main__":
             # update scheduler
             if schedulers != None:
                 schedulers[n].step()
+                print(schedulers[n].get_last_lr())
 
     history_save_path = os.path.join(cur_path, "params", "histories_data.pkl")
     history_csv_save_path = os.path.join(cur_path, "params", "histories_data.csv")
