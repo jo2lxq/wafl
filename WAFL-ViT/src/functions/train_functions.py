@@ -239,7 +239,6 @@ def show_dataset_contents(
             )
 
 def calculate_mean_and_std(datapath):
-def calculate_mean_and_std(datapath):
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
