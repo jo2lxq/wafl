@@ -111,11 +111,13 @@ def update_nets_mobile(net, contact, fl_coefficiency):  # sはn番目の要素�
         recv_models[n] = []
         for k in nbr:
             # recv_models[n].append(net[k].classifier[1].state_dict())
-            recv_models[n].append(copy.deepcopy(local_model[k])) # 参照渡しを防ぐために変更
+            # recv_models[n].append(copy.deepcopy(local_model[k])) # 参照渡しを防ぐために変更
+            recv_models[n].append(net[k].classifier[1].state_dict())
 
     # mixture of models
     for n in range(10):
-        update_model = copy.deepcopy(recv_models[n]) # 参照渡しを防ぐために変更
+        # update_model = copy.deepcopy(recv_models[n]) # 参照渡しを防ぐために変更
+        update_model = recv_models[n]
         n_nbr = len(update_model)  # how many nodes n-th node contacted
 
         # put difference of n-th node models and k-th conducted node to n-th into update_model[k]
