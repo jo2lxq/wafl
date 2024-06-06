@@ -53,12 +53,12 @@ if __name__ == "__main__":
 
     # 2.2 Training conditions
     max_epoch = 3000
-    pretrain_epoch = 100
+    pretrain_epoch = 5
     batch_size = 16
     n_node = 10
     n_middle = 256
     fl_coefficiency = 0.1
-    model_name = "mobilenet_v2"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
+    model_name = "vit_b16"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
     optimizer_name = "SGD"  # SGD or Adam
     useGPUinTrans = True  # whether use GPU in transform or not
     lr = 0.01
@@ -155,16 +155,16 @@ if __name__ == "__main__":
             indices[i % n_node].append(i)
 
     # 4.3 Assign training data to each node
-    for i in range(n_node):# データ分布の出力
-        print(f"node_{i}:{indices[i]}\n")
+    # for i in range(n_node):# データ分布の出力
+    #     print(f"node_{i}:{indices[i]}\n")
     subset = [Subset(train_data, indices[i]) for i in range(n_node)]
-    nums = [[0 for i in range(n_node)] for j in range(n_node)]
-    for i in range(n_node): # データ分布の出力を行う
-        for j in range(len(subset[i])):
-            image, label = subset[i][j]
-            nums[i][int(label)] += 1
-        print(f'Distributions of data')
-        print(f"train_data of node_{i}: {nums[i]}\n")
+    # nums = [[0 for i in range(n_node)] for j in range(n_node)]
+    # for i in range(n_node): # データ分布の出力を行う
+    #     for j in range(len(subset[i])):
+    #         image, label = subset[i][j]
+    #         nums[i][int(label)] += 1
+    #     print(f'Distributions of data')
+    #     print(f"train_data of node_{i}: {nums[i]}\n")
 
 
     # Normalize用のファイル読み込み
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     histories = [np.zeros((0, 5)) for i in range(n_node)] # モデル合成時の結果を格納
     pretrain_histories = [np.zeros((0, 5)) for i in range(n_node)] # pretrainの結果を格納
 
-## 7. Main Loop
+    ## 7. Main Loop
     os.makedirs(cur_path) # 実行結果の格納用ディレクトリを作成. makedirsを使うと、親ディレクトリも含めて一気に新規作成できる。
     show_dataset_contents(data_path, classes, cur_path)
 
@@ -422,7 +422,7 @@ if __name__ == "__main__":
                     cur_path,
                     epoch,
                     n,
-                    cur_time_index,
+                    cur_index,
                     classes,
                     nets[n],
                     criterion,
