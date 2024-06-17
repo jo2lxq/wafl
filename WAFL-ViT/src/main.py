@@ -28,14 +28,15 @@ if __name__ == "__main__":
     ## 1. 初期設定とPath
     # Use GPU if possible.
     device = torch.device(
-        "cuda:0" if torch.cuda.is_available() else "cpu"
+        "cuda:1" if torch.cuda.is_available() else "cpu"
     )  # use 0 in GPU1 use 1 in GPU2
     # path
-    data_path = "../data"
-    project_path = "../training_logs"  # GPU2
-    noniid_filter_path = "../data/non-IID_filter"
-    contact_pattern_path = "../data/contact_pattern"
-    mean_and_std_path = "../data/test_mean_and_std"
+    main_path = os.path.dirname(os.path.abspath(__file__)) # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
+    data_path = os.path.normpath(os.path.join(main_path, "../data"))
+    project_path = os.path.normpath(os.path.join(main_path, "../training_logs"))
+    noniid_filter_path = os.path.normpath(os.path.join(main_path, "../data/non-IID_filter"))
+    contact_pattern_path = os.path.normpath(os.path.join(main_path, "../data/contact_pattern"))
+    mean_and_std_path = os.path.normpath(os.path.join(main_path, "../data/test_mean_and_std"))
     # classes = ("安田講堂", "工2", "工3", "工13", "工4", "工8", "工1", "工6", "列品館", "法文1")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
     train_path = os.path.join(data_path, "train")
@@ -60,7 +61,7 @@ if __name__ == "__main__":
     n_node = 10
     n_middle = 256
     fl_coefficiency = 0.1
-    model_name = "vit_b16"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
+    model_name = "mobilenet_v2"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
     optimizer_name = "SGD"  # SGD or Adam
     useGPUinTrans = True  # whether use GPU in transform or not
     lr = 0.01
