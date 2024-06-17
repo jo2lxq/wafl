@@ -263,7 +263,7 @@ if __name__ == "__main__":
         # 最初に全エポックに共通の処理をpre_transformで実施。
         # randomCropなどそれぞれのエポックで異なる処理はtransformに記載。
         train_dataset_new = FromSubsetDataset(
-            subset[i], device, transform=train_transform, pre_transform=pre_transform
+            subset[i], device, transform=train_transform, pre_transform=pre_transform, useGPUinTrans=useGPUinTrans
         )
         if useGPUinTrans:
             trainloader.append(
