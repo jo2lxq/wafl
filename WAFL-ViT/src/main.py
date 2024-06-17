@@ -37,6 +37,7 @@ if __name__ == "__main__":
     noniid_filter_path = os.path.normpath(os.path.join(main_path, "../data/non-IID_filter"))
     contact_pattern_path = os.path.normpath(os.path.join(main_path, "../data/contact_pattern"))
     mean_and_std_path = os.path.normpath(os.path.join(main_path, "../data/test_mean_and_std"))
+    config_path = os.path.join(main_path, 'config.json')
     # classes = ("安田講堂", "工2", "工3", "工13", "工4", "工8", "工1", "工6", "列品館", "法文1")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
     train_path = os.path.join(data_path, "train")
@@ -55,41 +56,46 @@ if __name__ == "__main__":
     cur_path = os.path.join(project_path, cur_index)
 
     # 2.2 Training conditions
-    max_epoch = 3000
-    pretrain_epoch = 100
-    batch_size = 16
-    n_node = 10
-    n_middle = 256
-    fl_coefficiency = 0.1
-    model_name = "mobilenet_v2"  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
-    optimizer_name = "SGD"  # SGD or Adam
-    useGPUinTrans = True  # whether use GPU in transform or not
-    lr = 0.01
-    momentum = 0.9
-    pretrain_lr = 0.01
-    pretrain_momentum = 0.9
+    with open(config_path) as f:
+        config = json.load(f)
+    n_node = config["data"]["n_node"]
+    model_name = config["model"]["model_name"]  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
+    n_middle = config["model"]["n_middle"]
+    useGPUinTrans = config["gpu"]["transform_on_GPU"]  # whether use GPU in transform or not
+    # self-training (1st phase)
+    batch_size = config["collaborative_training"]["batch_size"]
+    pretrain_epoch = config["self_training"]["epochs"]
+    pretrain_lr = config["self_training"]["learning_rate"]
+    pretrain_optimizer_name = config["self_training"]["optimizer_name"]  # SGD or Adam
+    pretrain_momentum = config["self_training"]["momentum"]
+    # collaborative training (2nd phase)
+    max_epoch = config["collaborative_training"]["epochs"]
+    lr = config["collaborative_training"]["learning_rate"]
+    fl_coefficient = config["collaborative_training"]["fl_coefficient"]
+    optimizer_name = config["collaborative_training"]["optimizer_name"]  # SGD or Adam
+    momentum = config["collaborative_training"]["momentum"]
 
     # 2.3 Schedulers（学習率を途中で下げる）
-    use_scheduler = False  # if do not use scheduler, False here
-    scheduler_step = 10
-    scheduler_rate = 0.5
-    use_pretrain_scheduler = False  # pretrainでschedulerを使うか. When you use lr_decay in pretrain phase, set True.
-    pretrain_scheduler_step = 10
-    pretrain_scheduler_rate = 0.3
+    use_pretrain_scheduler = config["self_training"]["use_scheduler"]  # pretrainでschedulerを使うか. When you use lr_decay in pretrain phase, set True.
+    pretrain_scheduler_step = config["self_training"]["scheduler_step"]
+    pretrain_scheduler_rate = config["self_training"]["scheduler_rate"]
+    use_scheduler = config["collaborative_training"]["use_scheduler"]  # if do not use scheduler, False here
+    scheduler_step = config["collaborative_training"]["scheduler_step"]
+    scheduler_rate = config["collaborative_training"]["scheduler_rate"]
 
     # 2.4 About the data each node has. When you use non-IID filter to create data of each node, 'is_use_noniid_filter' is 'True'.
-    is_use_noniid_filter = False
-    filter_rate = 50
-    filter_seed = 1
+    is_use_noniid_filter = config["non_IID_filter"]["use_noniid_filter"]
+    filter_rate = config["non_IID_filter"]["filter_rate"]
+    filter_seed = config["non_IID_filter"]["filter_seed"]
 
     # 2.5 About contact patterns
     # contact_file=f'cse_n10_c10_b02_tt05_tp2_s01.json'
     # contact_file = 'meet_at_once_t10000.json'
-    contact_file = "rwp_n10_a0500_r100_p10_s01.json"  ## 場所を変更する---------------
+    contact_file = config["contact_pattern"]["contact_file"] 
     contact_file_path = os.path.join(contact_pattern_path, contact_file)
 
     # 2.6 Select train mode
-    is_pretrain_only = False  # use to do only pre-training
+    is_pretrain_only = config["mode"]["self_train_only"]  # use to do only pre-training
 
     # 2.7 設定
     torch_seed()  # seedの固定 # 場所の変更------------
@@ -330,7 +336,7 @@ if __name__ == "__main__":
     ]
     pretrain_optimizers = [  # pretrain時のoptimizer
         select_optimizer(
-            model_name, nets[i], optimizer_name, pretrain_lr, pretrain_momentum
+            model_name, nets[i], pretrain_optimizer_name, pretrain_lr, pretrain_momentum
         )
         for i in range(n_node)
     ]
@@ -430,7 +436,7 @@ if __name__ == "__main__":
         contact = contact_list[epoch]
 
         model_exchange(
-            nets, model_name, contact, fl_coefficiency
+            nets, model_name, contact, fl_coefficient
         )  # model_nameで指定したモデルで接触したノードとモデル合成を行う。
 
         for n in range(n_node):  # モデルの合成を行った場合は1回学習を行う
