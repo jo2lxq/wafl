@@ -17,7 +17,6 @@ from functions.mydataset import *
 from functions.net import *
 from functions.train_functions import *
 from functions.visualize import *
-from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Subset
 from torchinfo import summary
