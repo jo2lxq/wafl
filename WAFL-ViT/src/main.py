@@ -26,10 +26,6 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
 if __name__ == "__main__":
     ## 1. 初期設定とPath
-    # Use GPU if possible.
-    device = torch.device(
-        "cuda:1" if torch.cuda.is_available() else "cpu"
-    )  # use 0 in GPU1 use 1 in GPU2
     # path
     main_path = os.path.dirname(os.path.abspath(__file__)) # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
@@ -58,6 +54,10 @@ if __name__ == "__main__":
     # 2.2 Training conditions
     with open(config_path) as f:
         config = json.load(f)
+    # Use GPU if possible.
+    device = torch.device(
+        config["gpu"]["device"] if torch.cuda.is_available() else "cpu"
+    )  # use 0 in GPU1 use 1 in GPU2
     n_node = config["data"]["n_node"]
     model_name = config["model"]["model_name"]  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
     n_middle = config["model"]["n_middle"]
