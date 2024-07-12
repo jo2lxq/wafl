@@ -76,7 +76,7 @@ def pretrain(
                 # get the inputs; data is a list of [x_train, y_train]
                 x_train, y_train = data
                 batch_size = len(y_train)
-                if x_train.device == "cpu":
+                if x_train.is_cuda is False:
                     x_train = x_train.to(device)
                     y_train = y_train.to(device)
                 optimizers[n].zero_grad()
@@ -94,7 +94,7 @@ def pretrain(
             for tdata in test_loader:
                 x_test, y_test = tdata
                 batch_size = len(y_test)
-                if x_test.device == "cpu":
+                if x_test.is_cuda is False:
                     x_test = x_test.to(device)
                     y_test = y_test.to(device)
                 y_output_t = nets[n](x_test)
@@ -153,7 +153,7 @@ def fit(
     for inputs, labels in train_loader:
         train_batch_size = len(labels)
         n_train += train_batch_size
-        if inputs.device == "cpu":
+        if inputs.is_cuda is False:
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -171,7 +171,7 @@ def fit(
     for inputs_test, labels_test in test_loader:
         test_batch_size = len(labels_test)
         n_test += test_batch_size
-        if inputs_test.device == "cpu":
+        if inputs_test.is_cuda is False:
             inputs_test = inputs_test.to(device)
             labels_test = labels_test.to(device)
 
@@ -286,7 +286,7 @@ def train_for_cmls(
     for inputs_test, labels_test in test_loader:
         test_batch_size = len(labels_test)
         n_test += test_batch_size
-        if inputs_test.device == "cpu":
+        if inputs_test.is_cuda is False:
             inputs_test = inputs_test.to(device)
             labels_test = labels_test.to(device)
 

@@ -5,7 +5,7 @@ import json
 
 n_time = 10000
 
-n_node = 12
+n_node = 10
 min_travel_speed = 3
 max_travel_speed = 7
 radio_range = 100
@@ -14,7 +14,8 @@ pose_time_set = [10, 40, 100]
 areasize_set = [500]
 randomseed_set = [1]
 
-contact_pattern_dir = "../../data/contact_pattern"
+current_path = os.path.dirname(os.path.abspath(__file__))
+contact_pattern_dir = os.path.normpath(os.path.join(current_path, '../../data/contact_pattern'))
 
 parameters = []
 for areasize in areasize_set:

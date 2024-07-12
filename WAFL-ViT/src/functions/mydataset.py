@@ -7,12 +7,16 @@ from torch.utils.data import Dataset
 
 
 class FromSubsetDataset(Dataset):  # subset -> dataset
-    def __init__(self, data_list, device, transform=None, pre_transform=None):
+    def __init__(self, data_list, device, transform=None, pre_transform=None, useGPUinTrans=None):
         new_data_list = []
         for i in range(len(data_list)):
             image, label = data_list[i]
-            image = pre_transform(image).to(device)
-            label = torch.tensor(label).to(device)
+            if useGPUinTrans is True:
+                image = pre_transform(image).to(device)
+                label = torch.tensor(label).to(device)
+            elif useGPUinTrans is False:
+                image = pre_transform(image)
+                label = torch.tensor(label)
             new_data_list.append([image, label])
         self.transform = transform
         self.data_list = new_data_list
