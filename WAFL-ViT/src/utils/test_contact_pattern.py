@@ -5,7 +5,7 @@ import os
 
 n_time = 3000  # up to 10000
 
-n_node = 12  # fixed
+n_node = 10  # fixed
 radio_range = 100  # fixed
 
 pose_time = 10  # [10,20,40]
