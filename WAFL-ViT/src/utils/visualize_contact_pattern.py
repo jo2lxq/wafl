@@ -11,7 +11,7 @@ import pandas as pd
 
 max_time = 1000
 
-n_node = 12
+n_node = 10
 min_travel_speed = 3
 max_travel_speed = 7
 radio_range = 100
