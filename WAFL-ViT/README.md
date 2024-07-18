@@ -47,7 +47,7 @@
 
 ## Data installation
 
-![システム全体図](../assets/dataset_abstract.png)
+![System overview](../assets/dataset_abstract.png)
 
 In this project, we created and utilized the dataset which consist of  images of several buildings at the University of Tokyo.
 The mapping between labels and buildings is shown in the image above.
@@ -89,6 +89,7 @@ If you encounter any issues, you may need to modify the versions in `requirement
 To start the training and store its results, please follow these steps:
 
 1. Ensure the dataset is correctly located in the expected directory.
+
     ```plain text
     |- WAFL-ViT
     |   |- data
@@ -103,27 +104,28 @@ To start the training and store its results, please follow these steps:
     |   |   |-non-IID_filter
     |   |   |
     ```
-3. Check that all required dependencies are correctly installed.
-4. Move to the `src` directory:
+
+2. Check that all required dependencies are correctly installed.
+3. Move to the `src` directory:
   
     ```Linux
     cd src
     ```
 
-5. Prepare contact patterns and filters:
+4. Prepare contact patterns and filters:
 
     ```Linux
     python utils/generate_contact_pattern.py
     python utils/generate_nonIID_filter.py
     ```
 
-6. Review and adjust the experimental settings in the config file(`src/config.json`):
+5. Review and adjust the experimental settings in the config file(`src/config.json`):
 
     ```Linux
     vim config.json  # or use any text editor of your choice
     ```
 
-7. Start the training process:
+6. Start the training process:
 
     ```Linux
     python main.py
