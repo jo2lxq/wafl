@@ -89,27 +89,41 @@ If you encounter any issues, you may need to modify the versions in `requirement
 To start the training and store its results, please follow these steps:
 
 1. Ensure the dataset is correctly located in the expected directory.
-2. Check that all required dependencies are correctly installed.
-3. Move to the `src` directory:
+    ```plain text
+    |- WAFL-ViT
+    |   |- data
+    |   |   |-val
+    |   |   |   |-0
+    |   |   |   |-1
+    |   |   |   
+    |   |   |-train
+    |   |   |   |-0
+    |   |   |   |-1
+    |   |   |   
+    |   |   |-non-IID_filter
+    |   |   |
+    ```
+3. Check that all required dependencies are correctly installed.
+4. Move to the `src` directory:
   
     ```Linux
     cd src
     ```
 
-4. Prepare contact patterns and filters:
+5. Prepare contact patterns and filters:
 
     ```Linux
-    python generate_contact_pattern.py
-    python generate_nonIID_filter.py
+    python utils/generate_contact_pattern.py
+    python utils/generate_nonIID_filter.py
     ```
 
-5. Review and adjust the experimental settings in the config file(`src/config.json`):
+6. Review and adjust the experimental settings in the config file(`src/config.json`):
 
     ```Linux
     vim config.json  # or use any text editor of your choice
     ```
 
-6. Start the training process:
+7. Start the training process:
 
     ```Linux
     python main.py
