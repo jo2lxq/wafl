@@ -1,0 +1,44 @@
+{
+    "data": {
+        "n_node": 10
+    },
+    "model": {
+        "model_name": "mobilenet_v2",
+        "n_middle": 256
+    },
+    "gpu": {
+        "device": "cuda:1",
+        "transform_on_GPU": true
+    },
+    "mode": {
+        "self_train_only": false
+    },
+    "self_training": {
+        "epochs": 100,
+        "learning_rate": 0.01,
+        "optimizer_name": "SGD",
+        "momentum": 0.9,
+        "use_scheduler": false,
+        "scheduler_step": 10,
+        "scheduler_rate": 0.3
+    },
+    "collaborative_training": {
+        "epochs": 3000,
+        "batch_size": 16,
+        "learning_rate": 0.01,
+        "fl_coefficient": 0.1,
+        "optimizer_name": "SGD",
+        "momentum": 0.9,
+        "use_scheduler": false,
+        "scheduler_step": 1000,
+        "scheduler_rate": 0.5
+    },
+    "non_IID_filter": {
+        "use_noniid_filter": false,
+        "filter_rate": 50,
+        "filter_seed": 1
+    },
+    "contact_pattern": {
+        "contact_file": "rwp_n10_a0500_r100_p10_s01.json"
+    }
+}
