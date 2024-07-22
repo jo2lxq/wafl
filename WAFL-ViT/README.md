@@ -1,4 +1,19 @@
-# WAFL-ViT
+# WAFL-ViT - Wireless Ad Hoc Federated Learning with Vision Transformer
+
+## Overview
+
+This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
+
+![Architecture](./assets/architecture.png)
+
+The figure shows the overview of WAFL-Vision Transformer. It is composed of multiple devices. Each of them collects data from the target environment and fine-tunes the pre-trained Vision Transformer (ViT). Here, the MLP head of ViT is replaced with another feedforward layer to fit the target task.
+
+In our scenario, each device has ad hoc wireless interfaces and exchanges the MLP head with the neighbors through device-to-device communications (although the project code is for simulation only). This communication can be a combination of Bluetooth and Wi-Fi: i.e., finding friend workers by Bluetooth and exchanging model parameters by Wi-Fi ad hoc mode. The exchanged MLP heads are aggregated by the WAFL algorithm as below.
+
+
+
+Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
+
 
 ## Concept of this folder
 
