@@ -4,7 +4,7 @@ Wireless Ad Hoc Federated Learning with Vision Transformer (WAFL-ViT). This proj
 
 ## Architecture
 
-![Architecture](./assets/architecture.png)
+<img src="./assets/architecture.png" width="75%" />
 
 The figure shows the overview of WAFL-Vision Transformer. It is composed of multiple devices. Each of them collects data from the target environment and fine-tunes the pre-trained Vision Transformer (ViT). Here, the MLP head of ViT is replaced with another feedforward layer to fit the target task.
 
@@ -16,11 +16,11 @@ Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is
 
 ## Data Set
 
-![Target Buildings](./assets/target_buildings.png)
+<img src="./assets/target_buildings.png" width="75%" />
 
 As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually. 
 
-![Data Set Examples](./assets/dataset_examples.png)
+<img src="./assets/dataset_examples.png" width="75%" />
 
 This figure shows the examples -- target buildings were taken from the front, back, and sides, sometimes closely, looking up, or from afar, or with a telescopic mode. Some photos contain trees, clouds, and the sun. This characteristic is not available in MNIST or CIFAR-10 datasets.
 
