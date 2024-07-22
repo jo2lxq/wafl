@@ -1,3 +1,4 @@
+import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -13,32 +14,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from net import Net
+import json
+
+
+experiment_case="rwp0500"
+cp_filename=f'../data/contact_pattern/rwp_n10_a0500_r100_p10_s01.json'
 
 max_epoch=5000
 batch_size=32
+fl_coefficiency=1.0
 n_node=10
 
+TRAINED_NET_PATH=f'../trained_net/{experiment_case}'
+if not os.path.exists(TRAINED_NET_PATH):
+    os.makedirs(TRAINED_NET_PATH)
+
 torch.random.manual_seed(1)
-
-trainset = torchvision.datasets.MNIST(root='./data',train=True,
+trainset = torchvision.datasets.MNIST(root='../data/MNIST/',train=True,
                                       download=True, transform=transforms.ToTensor())
-
-indices=torch.load('./noniid_filter/filter_r90_s01.pt')
+indices=torch.load('../data/noniid_filter/filter_r90_s01.pt')
 subset=[Subset(trainset,indices[i]) for i in range(10)]
-
 trainloader = [torch.utils.data.DataLoader(subset[i], batch_size=batch_size,
                                            shuffle=False, num_workers=2) for i in range(10)]
 
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print('using device', device)
 net=[Net().to(device) for i in range(10)]
 local_model=[{} for i in range(10)]
 recv_models=[[] for i in range(10)]
 
-fl_coefficiency=0.1
-
 criterion = nn.CrossEntropyLoss()
-#optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 optimizer = [optim.Adam(net[i].parameters(), lr=0.001) for i in range(10)]
 
 # pre-self training
@@ -67,15 +72,12 @@ for epoch in range(50) :
                 print(f'Pre-self training: [{n}, {epoch + 1}, {i + 1:5d}] loss: {running_loss / 100:.5f}')
                 running_loss = 0.0
     
-import json
 
 contact_list=[]
-
-filename=f'./contact_pattern/rwp_n10_a0500_r100_p10_s01.json'
-# filename=f'./contact_pattern/cse_n10_c10_b02_tt10_tp5_s01.json'
-print(f'Loading ... {filename}')
-with open(filename) as f :
+print(f'Loading ... {cp_filename}')
+with open(cp_filename) as f :
     contact_list=json.load(f)
+
 
 for epoch in range(max_epoch):  # loop over the dataset multiple times
     
@@ -139,6 +141,6 @@ for epoch in range(max_epoch):  # loop over the dataset multiple times
     #print(net.state_dict())
     print(f'Model saving ... at {epoch+1}')
     for n in range(10) :
-        torch.save(net[n].state_dict(),f'./trained_net/mnist_net_{n}_{epoch+1:04d}.pth')
+        torch.save(net[n].state_dict(),f'{TRAINED_NET_PATH}/mnist_net_{n}_{epoch+1:04d}.pth')
     
 print('Finished Training')
