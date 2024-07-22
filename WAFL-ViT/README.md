@@ -47,7 +47,7 @@
 
 ## Data installation
 
-![System overview](../assets/dataset_abstract.png)
+![System overview](./assets/dataset_abstract.png)
 
 In this project, we created and utilized the dataset which consist of  images of several buildings at the University of Tokyo.
 The mapping between labels and buildings is shown in the image above.
