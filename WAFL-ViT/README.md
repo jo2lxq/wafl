@@ -1,6 +1,6 @@
 # WAFL-ViT
 
-Wireless Ad Hoc Federated Learning with Vision Transformer. This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
+Wireless Ad Hoc Federated Learning with Vision Transformer (WAFL-ViT). This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
 
 ## Architecture
 
@@ -14,6 +14,22 @@ In our scenario, each device has ad hoc wireless interfaces and exchanges the ML
 
 Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
+## Data Set
+
+![Target Buildings](./assets/target_buildings.png)
+
+As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually. 
+
+![Data Set Examples](./assets/dataset_examples.png)
+
+This figure shows the examples -- target buildings were taken from the front, back, and sides, sometimes closely, looking up, or from afar, or with a telescopic mode. Some photos contain trees, clouds, and the sun. This characteristic is not available in MNIST or CIFAR-10 datasets.
+
+We then pre-processed the photos to distribute to virtual ten devices for both IID and Non-IID scenarios described in the previous section. The following table below shows the distributions. In the IID scenario, all the nodes have relatively the same label distributions, whereas, in the Non-IID scenario, the label distributions are dependent on the device. For example, device 0 has a larger amount of label 0 photos. Please note that even if the label distribution is IID, the devices' local photos do not cover all the scenes equally with other devices because the number of stored photos for one building is around 10 to 20.
+
+| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
+| ---- | ---- |  ---- |  ---- |  ---- |  ---- |  ---- |  ---- |  ---- |  ---- |  ---- | 
+| 0 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
+| 0 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
 
 ## Concept of this folder
 
