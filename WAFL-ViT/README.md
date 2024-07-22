@@ -1,10 +1,8 @@
 # WAFL-ViT
 
-Wireless Ad Hoc Federated Learning with Vision Transformer
+Wireless Ad Hoc Federated Learning with Vision Transformer. This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
 
-## Overview
-
-This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
+## Architecture
 
 ![Architecture](./assets/architecture.png)
 
