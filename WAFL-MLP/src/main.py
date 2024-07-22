@@ -20,7 +20,7 @@ import json
 experiment_case="rwp0500"
 cp_filename=f'../data/contact_pattern/rwp_n10_a0500_r100_p10_s01.json'
 
-max_epoch=5000
+max_epoch=10
 batch_size=32
 fl_coefficiency=1.0
 n_node=10
@@ -37,7 +37,7 @@ subset=[Subset(trainset,indices[i]) for i in range(10)]
 trainloader = [torch.utils.data.DataLoader(subset[i], batch_size=batch_size,
                                            shuffle=False, num_workers=2) for i in range(10)]
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 print('using device', device)
 net=[Net().to(device) for i in range(10)]
 local_model=[{} for i in range(10)]
