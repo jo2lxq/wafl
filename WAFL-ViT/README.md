@@ -1,4 +1,6 @@
-# WAFL-ViT - Wireless Ad Hoc Federated Learning with Vision Transformer
+# WAFL-ViT
+
+Wireless Ad Hoc Federated Learning with Vision Transformer
 
 ## Overview
 
