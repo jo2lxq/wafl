@@ -1,3 +1,4 @@
+import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -18,9 +19,14 @@ from sklearn.metrics import confusion_matrix
 import itertools
 
 experiment_case = 'rwp0500'
-epochs = [1, 100, 200, 1000, 5000]
+epochs = [1, 10]
 nodes = [9]
 batch_size=256
+
+
+if not os.path.exists("../confusion_matrix"):
+    os.makedirs("../confusion_matrix")
+
 
 def save_confusion_matrix(cm,classes,
                           normalize=False,

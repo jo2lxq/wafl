@@ -1,3 +1,4 @@
+import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -22,6 +23,11 @@ from net import Net
 output_code="rwp"
 exp_codes=['rwp0500']
 
+
+
+if not os.path.exists("../accuracy"):
+    os.makedirs("../accuracy")
+
 def save_accuracy_trend(x,acc,classes,
                         title='Accuracy Trend',
                         save_path=None) :
@@ -43,7 +49,7 @@ def save_accuracy_trend(x,acc,classes,
     else:
         plt.savefig(save_path,bbox_inches='tight')
 
-max_epoch=5000       # trained epoch to load
+max_epoch=10       # trained epoch to load
 batch_size=512
 
 # nodes=['0','1','2','3','4','5','6','7','8','9']
@@ -55,7 +61,7 @@ x=np.linspace(1,max_epoch,max_epoch)
 acc=[ np.array([i for i in range(max_epoch)],dtype='float32')
         for i in range(len(exp_codes))]
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 print('using device', device)
 
 testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
