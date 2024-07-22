@@ -17,10 +17,9 @@ from matplotlib import cm
 from sklearn.metrics import confusion_matrix
 import itertools
 
-experiment_case = 'cse08'
+experiment_case = 'rwp0500'
 epochs = [1, 100, 200, 1000, 5000]
 nodes = [9]
-
 batch_size=256
 
 def save_confusion_matrix(cm,classes,
@@ -68,14 +67,14 @@ for epoch in epochs :
 
     for n in nodes :
 
-        testset = torchvision.datasets.MNIST(root='.data',train=False,
+        testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
                                         download=True, transform=transforms.ToTensor())
 
         testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                           shuffle=False, num_workers=2)
 
         net=Net()
-        net.load_state_dict(torch.load(f'./{experiment_case}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
+        net.load_state_dict(torch.load(f'../trained_net/{experiment_case}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
 
         y_preds = []
         y_tests = []
@@ -91,18 +90,10 @@ for epoch in epochs :
                 y_preds.extend(y_pred.tolist())
                 y_tests.extend(y_test.tolist())
 
-
         confusion_mtx = confusion_matrix(y_tests, y_preds) 
-        #save_confusion_matrix(confusion_mtx, 
-        #        classes = range(10),
-        #        normalize = False,
-        #        title=f'{experiment_case} (node={n}, epoch={epoch:d})', 
-        #        cmap=plt.cm.Reds,
-        #        save_path=f'./confusion_matrix/mnist_cm_{experiment_case}_count_{n}_{epoch:04d}.png')
-
         save_confusion_matrix(confusion_mtx, 
                 classes = range(10),
                 normalize = True,
                 title=f'{experiment_case} (node={n}, epoch={epoch:d})', 
                 cmap=plt.cm.Reds,
-                save_path=f'./confusion_matrix/mnist_cm_normalize_{experiment_case}_{n}_{epoch:04d}.png')
+                save_path=f'../confusion_matrix/mnist_cm_normalize_{experiment_case}_{n}_{epoch:04d}.png')
