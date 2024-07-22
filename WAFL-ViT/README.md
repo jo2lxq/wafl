@@ -14,7 +14,7 @@ In our scenario, each device has ad hoc wireless interfaces and exchanges the ML
 
 Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
-## Data Set
+## UTokyo Building Recognition Dataset
 
 <img src="./assets/target_buildings.png" width="75%" />
 
@@ -26,7 +26,7 @@ This figure shows the examples -- target buildings were taken from the front, ba
 
 We then pre-processed the photos to distribute to virtual ten devices for both IID and Non-IID scenarios described in the previous section. The following table below shows the distributions. In the IID scenario, all the nodes have relatively the same label distributions, whereas, in the Non-IID scenario, the label distributions are dependent on the device. For example, device 0 has a larger amount of label 0 photos. Please note that even if the label distribution is IID, the devices' local photos do not cover all the scenes equally with other devices because the number of stored photos for one building is around 10 to 20.
 
-Table: Label Distribution of IID Data
+**Table 1: Label Distribution of IID Data**
 | Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
 | 0 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
@@ -40,7 +40,7 @@ Table: Label Distribution of IID Data
 | 8 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 21 | 135 |
 | 9 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 134 |
 
-Table: Label Distribution of Non-IID Data
+**Table2: Label Distribution of Non-IID Data**
 | Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
 | 0 | 44 | 4 | 5 | 4 | 8 | 4 | 8 | 8 | 11 | 12 | 108 |
@@ -53,6 +53,8 @@ Table: Label Distribution of Non-IID Data
 | 7 | 6 | 10 | 2 | 6 | 9 | 4 | 7 | 84 | 6 | 11 | 145 |
 | 8 | 5 | 5 | 7 | 6 | 6 | 6 | 7 | 8 | 59 | 16 | 125 |
 | 9 | 13 | 10 | 5 | 6 | 11 | 9 | 9 | 10 | 10 | 98 | 181 |
+
+You can access our dataset from [this link](https://drive.google.com/file/d/1GKbMyfAkvCVT1a6g2KyvkC3MYxf5VPrZ/view).
 
 ## Concept of this folder
 
@@ -101,10 +103,12 @@ Table: Label Distribution of Non-IID Data
 
 ## Data installation
 
+<!--
 ![System overview](./assets/dataset_abstract.png)
 
 In this project, we created and utilized the dataset which consist of  images of several buildings at the University of Tokyo.
 The mapping between labels and buildings is shown in the image above.
+-->
 
 You can access our dataset from [this link](https://drive.google.com/file/d/1GKbMyfAkvCVT1a6g2KyvkC3MYxf5VPrZ/view).
 
@@ -184,3 +188,7 @@ To start the training and store its results, please follow these steps:
     ```Linux
     python main.py
     ```
+
+## References
+
+\[1\] Hideya Ochiai, Atsuya Muramatsu, Yudai Ueda, Ryuhei Yamaguchi, Kazuhiro Katoh, and Hiroshi Esaki, "[Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition](https://ieeexplore.ieee.org/abstract/document/10539480)", IEEE World Forum on Internet of Things, 2023. 
