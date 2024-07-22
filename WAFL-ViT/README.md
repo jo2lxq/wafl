@@ -10,7 +10,7 @@ The figure shows the overview of WAFL-Vision Transformer. It is composed of mult
 
 In our scenario, each device has ad hoc wireless interfaces and exchanges the MLP head with the neighbors through device-to-device communications (although the project code is for simulation only). This communication can be a combination of Bluetooth and Wi-Fi: i.e., finding friend workers by Bluetooth and exchanging model parameters by Wi-Fi ad hoc mode. The exchanged MLP heads are aggregated by the WAFL algorithm as below.
 
-
+![Model Aggregation](./assets/model_aggregation.png)
 
 Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
