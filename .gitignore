@@ -5,3 +5,4 @@ WAFL-MLP/trained_net
 WAFL-ViT/data/train
 WAFL-ViT/data/val
 WAFL-ViT/training_logs
+**/__pycache__/**
