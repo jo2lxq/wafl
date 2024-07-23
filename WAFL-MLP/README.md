@@ -1,6 +1,6 @@
 # WAFL-MLP
 
-Wireless Ad Hoc Federated Learning (WAFL). This project provides the code for "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning".
+Wireless Ad Hoc Federated Learning (WAFL). This project provides the code for "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning". MLP stands for multi-layer perceptron -- one of the most basic neural networks for beginners.
 
 ## Architecture
 <img src="./assets/wafl_overview.png" width="75%">
