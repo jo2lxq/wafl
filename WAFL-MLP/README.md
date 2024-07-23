@@ -26,7 +26,7 @@ TODO. Descriptions of How to run will be given.
 
 ## RWP0500
 
-<img src="./assets/rwp0500.git">
+<img src="./assets/rwp0500.gif">
 
 TODO. Descriptions of RWP0500 will be given.
 
