@@ -18,13 +18,21 @@ As WAFL does not collect data from users, the distributions of the data on indiv
 
 <img src="./assets/wafl_contact_model_aggregation.png">
 
+Model exchange and aggregation with encountered smart devices in wireless ad hoc federated learning (WAFL). The nodes exchange and aggregate their models among the nodes encountered in an ad hoc manner. The initial models are trained too specific to their local Non-IID data, but in the long run, many contacts allow the mixture of locally trained models, making them more generalized.
+
+## How to Run
+
+TODO. Descriptions of How to run will be given.
+
+## RWP0500
+
+<img src="./assets/rwp0500.git">
+
+TODO. Descriptions of RWP0500 will be given.
 
 ## Contact Pattern for Simulation
 <img src="./assets/contact_pattern.png">
 
-## How to Run
-
-## 
 
 
 ## References 
