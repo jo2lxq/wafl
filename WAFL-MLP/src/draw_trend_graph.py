@@ -18,16 +18,25 @@ import math
 
 from net import Net
 
-#output_code="static"
-#exp_codes=['static_line', 'static_line_cof01', 'static_tree', 'static_tree_cof01', 'static_ringstar', 'static_ringstar_cof01']
-output_code="rwp"
-exp_codes=['rwp0500']
+#
+# Configuration
+# 
+output_code="rwp"         # name of the file
+exp_codes=['rwp0500']     # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']  
 
+max_epoch=10       # default 5000
+n_device=10        # fixed to 10
 
+batch_size=512
 
+# prepare the output directory if not exists
 if not os.path.exists("../accuracy"):
     os.makedirs("../accuracy")
 
+
+#
+# Generate Epoch - Accuracy Graph
+# 
 def save_accuracy_trend(x,acc,classes,
                         title='Accuracy Trend',
                         save_path=None) :
@@ -49,30 +58,30 @@ def save_accuracy_trend(x,acc,classes,
     else:
         plt.savefig(save_path,bbox_inches='tight')
 
-max_epoch=10       # trained epoch to load
-batch_size=512
 
-# nodes=['0','1','2','3','4','5','6','7','8','9']
+
 #
-
-x=np.linspace(1,max_epoch,max_epoch)
-
-
-acc=[ np.array([i for i in range(max_epoch)],dtype='float32')
-        for i in range(len(exp_codes))]
-
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+# Setting up the processor and the training dataset.
+# 
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print('using device', device)
 
 testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
                                         download=True, transform=transforms.ToTensor())
-
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                           shuffle=True, num_workers=2)
-
-
 net=Net().to(device)
 
+#
+# Memory space for storing values of the graph
+#
+x=np.linspace(1,max_epoch,max_epoch)
+acc=[ np.array([i for i in range(max_epoch)],dtype='float32')
+        for i in range(len(exp_codes))]
+
+# 
+# Predictions and Summarizing the results
+#
 for epoch in range(1,max_epoch+1) :
     print(epoch)
 
@@ -80,7 +89,7 @@ for epoch in range(1,max_epoch+1) :
         exp_code=exp_codes[e] 
 
         accuracies = []
-        for n in range(10) :
+        for n in range(n_device) :
             net.load_state_dict(torch.load(f'../trained_net/{exp_code}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
 
             correct = 0
@@ -111,4 +120,5 @@ for epoch in range(1,max_epoch+1) :
 
         acc[e][epoch-1]=statistics.mean(accuracies)
 
+# Save the results in a Graph
 save_accuracy_trend(x,acc,exp_codes,title=f'',save_path=f'../accuracy/accuracy_{output_code}.png')

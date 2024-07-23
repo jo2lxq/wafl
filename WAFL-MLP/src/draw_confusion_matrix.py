@@ -18,16 +18,23 @@ from matplotlib import cm
 from sklearn.metrics import confusion_matrix
 import itertools
 
-experiment_case = 'rwp0500'
-epochs = [1, 10]
-nodes = [9]
+#
+# Configuration
+#
+experiment_case = 'rwp0500'   # the name of the experiment case
+epochs = [1, 10]              # specify the epochs in a list like epochs = [1, 10, 100, 1000, 5000] 
+nodes = [9]                   # specify the devices in a list like nodes = [0, 1, 2]
+
 batch_size=256
 
-
+# prepare the output directory if not exists
 if not os.path.exists("../confusion_matrix"):
     os.makedirs("../confusion_matrix")
 
 
+#
+# Generate Confusion Matrix
+# 
 def save_confusion_matrix(cm,classes,
                           normalize=False,
                           title='Confusion matrix',
@@ -69,17 +76,21 @@ def save_confusion_matrix(cm,classes,
         plt.savefig(save_path,bbox_inches='tight')
 
 
-for epoch in epochs :
+#
+# Preparation of Test Data Loader
+#
+testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
+                                     download=True, transform=transforms.ToTensor())
+testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                     shuffle=False, num_workers=2)
+net=Net()
 
+#
+#  Predictions and Generate Confusion Matrices
+#
+for epoch in epochs :
     for n in nodes :
 
-        testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
-                                        download=True, transform=transforms.ToTensor())
-
-        testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                          shuffle=False, num_workers=2)
-
-        net=Net()
         net.load_state_dict(torch.load(f'../trained_net/{experiment_case}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
 
         y_preds = []
@@ -96,6 +107,7 @@ for epoch in epochs :
                 y_preds.extend(y_pred.tolist())
                 y_tests.extend(y_test.tolist())
 
+        # calculate and generate confusion matrices
         confusion_mtx = confusion_matrix(y_tests, y_preds) 
         save_confusion_matrix(confusion_mtx, 
                 classes = range(10),
