@@ -23,7 +23,7 @@ import itertools
 #
 experiment_case = 'rwp0500'   # the name of the experiment case
 epochs = [1, 10]              # specify the epochs in a list like epochs = [1, 10, 100, 1000, 5000] 
-nodes = [9]                   # specify the devices in a list like nodes = [0, 1, 2]
+devices = [9]                   # specify the devices in a list like devices = [0, 1, 2]
 
 batch_size=256
 
@@ -89,7 +89,7 @@ net=Net()
 #  Predictions and Generate Confusion Matrices
 #
 for epoch in epochs :
-    for n in nodes :
+    for n in devices :
 
         net.load_state_dict(torch.load(f'../trained_net/{experiment_case}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
 
@@ -112,6 +112,6 @@ for epoch in epochs :
         save_confusion_matrix(confusion_mtx, 
                 classes = range(10),
                 normalize = True,
-                title=f'{experiment_case} (node={n}, epoch={epoch:d})', 
+                title=f'{experiment_case} (device={n}, epoch={epoch:d})', 
                 cmap=plt.cm.Reds,
                 save_path=f'../confusion_matrix/mnist_cm_normalize_{experiment_case}_{n}_{epoch:04d}.png')
