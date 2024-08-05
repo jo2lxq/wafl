@@ -33,6 +33,9 @@ TODO. Descriptions of RWP0500 will be given.
 ## Contact Pattern for Simulation
 <img src="./assets/contact_pattern.png">
 
+## Confusion Matrix
+
+<img src="./assets/confusion_matrix.png">
 
 
 ## References 
