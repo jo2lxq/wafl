@@ -20,8 +20,11 @@ As WAFL does not collect data from users, the distributions of the data on indiv
 
 Model exchange and aggregation with encountered smart devices in wireless ad hoc federated learning (WAFL). The devices exchange and aggregate their models among the nodes encountered in an ad hoc manner. The initial models are trained too specific to their local Non-IID data, but in the long run, many contacts allow the mixture of locally trained models, making them more generalized.
 
+The communication can be a combination of Bluetooth and Wi-Fi: i.e., finding friend workers by Bluetooth and exchanging model parameters by Wi-Fi ad hoc mode. The exchanged MLP parameters (model weights) are aggregated by the WAFL algorithm as below.
 
+![Model Aggregation](./assets/model_aggregation.png)
 
+Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP at device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
 ## 4. Mobility / Contact Patterns prepared for Simulation
 
