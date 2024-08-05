@@ -21,8 +21,8 @@ import itertools
 #
 # Configuration
 #
-experiment_case = 'rwp0500'   # the name of the experiment case
-epochs = [1, 10]              # specify the epochs in a list like epochs = [1, 10, 100, 1000, 5000] 
+experiment_case = 'rwp0500'     # the name of the experiment case
+epochs = [1, 100, 1000, 5000]   # specify the epochs in a list like epochs = [1, 10, 100, 1000, 5000] 
 devices = [9]                   # specify the devices in a list like devices = [0, 1, 2]
 
 batch_size=256
