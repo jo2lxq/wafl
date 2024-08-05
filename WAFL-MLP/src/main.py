@@ -1,4 +1,4 @@
-import os
+bimport os
 import json
 import torch
 from torch.utils.data.dataset import Subset
@@ -39,7 +39,7 @@ cp_filename=f'../data/contact_pattern/rwp_n10_a0500_r100_p10_s01.json'
 
 # Hyperparameters
 self_train_epoch=50   # default 50
-max_epoch=10          # default 5000
+max_epoch=5000        # default 5000
 n_device=10           # use 10
 
 batch_size=32         # default 32
