@@ -21,10 +21,10 @@ from net import Net
 #
 # Configuration
 # 
-output_code="rwp"         # name of the file
-exp_codes=['rwp0500']     # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']  
+output_code="rwp"                           # name of the file
+exp_codes=['rwp0500','rwp1000','rwp2000']   # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']  
 
-max_epoch=10       # default 5000
+max_epoch=5000     # default 5000
 n_device=10        # fixed to 10
 
 batch_size=512
