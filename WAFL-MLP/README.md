@@ -144,9 +144,9 @@ Please note that this configuration expects model training has been finished upt
 python3 draw_accuracy_trend.py
 ```
 
-This gives the tree accuracy trends in a comparable form as follows.
+This draws the tree accuracy trends in a comparable form as follows. The generated image will be saved into "accuracy" directory.
 
-<img src="./assets/confusion_matrix.png">
+<img src="./assets/accuracy_rwp.png" width="50%">
 
 ## References 
 \[1\] Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779). 
