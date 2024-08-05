@@ -110,6 +110,12 @@ epochs = [1, 100, 1000, 5000]   # specify the epochs in a list like epochs = [1,
 nodes = [9]                     # specify the devices in a list like nodes = [0, 1, 2]
 ```
 
+Please note that this configuration expects model training has been finished upto 5000 epochs under the name rwp0500. Then, you can run
+
+```Linux
+python3 draw_confusion_matrix.py
+```
+
 This gives four confusion matrics at device 9 at epochs 1, 100, 1000, 5000 as follows.
 
 <img src="./assets/confusion_matrix.png">
@@ -120,16 +126,21 @@ You can generate accuracy trend graphs by executing "draw_accuracy_trend.py" usi
 
 ```Linux
 output_code="rwp"         # name of the file
-exp_codes=['rwp0500','rwp1000','rwp2000']     # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']
+exp_codes=['rwp0500','rwp1000','rwp2000']     # multiple experiment_cases can be listed
 
 max_epoch=5000     # default 5000
 n_device=10        # fixed to 10
 ```
 
-To execute this, you have to execute model training for all "rwp0500", "rwp1000", and "rwp2000".
+Please note that this configuration expects model training has been finished upto 5000 epochs under the names rwp0500, rwp1000, and rwp2000. Then, you can run,
+
+```Linux
+python3 draw_accuracy_trend.py
+```
+
+This gives the tree accuracy trends in a comparable form as follows.
 
 <img src="./assets/confusion_matrix.png">
-
 
 ## References 
 \[1\] Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779). 
