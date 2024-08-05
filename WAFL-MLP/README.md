@@ -54,6 +54,12 @@ pip install -r requirements.txt
 
 If you encounter any issues, you may need to modify the versions in `requirements.txt` to suit your specific setup. In particular, ensure that the `torch` and `torchvision` versions are compatible with your CUDA installation if you're using GPU acceleration.
 
+### Execution of Model Training
+
+```Linux
+cd src
+python3 main.py
+```
 
 
 
