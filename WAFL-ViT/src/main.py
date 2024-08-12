@@ -25,7 +25,7 @@ warnings.simplefilter("ignore")
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
 if __name__ == "__main__":
-    ## 1. 初期設定とPath
+    ## 1. Initial settings and paths
     # path
     main_path = os.path.dirname(os.path.abspath(__file__)) # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
@@ -34,19 +34,18 @@ if __name__ == "__main__":
     contact_pattern_path = os.path.normpath(os.path.join(main_path, "../data/contact_pattern"))
     mean_and_std_path = os.path.normpath(os.path.join(main_path, "../data/test_mean_and_std"))
     config_path = os.path.join(main_path, 'config.json')
-    # classes = ("安田講堂", "工2", "工3", "工13", "工4", "工8", "工1", "工6", "列品館", "法文1")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
     train_path = os.path.join(data_path, "train")
     test_path = os.path.join(data_path, "val")
     meant_file_path = os.path.join(
         mean_and_std_path, "test_mean.pt"
-    )  ## IIDでもNonIIDでもtest用は同じ
+    )  ## Same for IID and NonIID
     stdt_file_path = os.path.join(
         mean_and_std_path, "test_std.pt"
-    )  ## IIDでもNonIIDでもtest用は同じ
+    )  ## Same for IID and NonIID
 
-    ## 2. 変数の定義（ここを変更する）
-    # 2.1 出力ファイル名
+    ## 2. Variable definitions (modify here)
+    # 2.1 Output file name
     cur_index = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     # cur_index = "Sample"
     cur_path = os.path.join(project_path, cur_index)
@@ -57,69 +56,65 @@ if __name__ == "__main__":
     # Use GPU if possible.
     device = torch.device(
         config["gpu"]["device"] if torch.cuda.is_available() else "cpu"
-    )  # use 0 in GPU1 use 1 in GPU2
+    )
     n_node = config["data"]["n_node"]
     model_name = config["model"]["model_name"]  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
     n_middle = config["model"]["n_middle"]
     useGPUinTrans = config["gpu"]["transform_on_GPU"]  # whether use GPU in transform or not
-    # self-training (1st phase)
+    # self-training
     batch_size = config["collaborative_training"]["batch_size"]
     pretrain_epoch = config["self_training"]["epochs"]
     pretrain_lr = config["self_training"]["learning_rate"]
     pretrain_optimizer_name = config["self_training"]["optimizer_name"]  # SGD or Adam
     pretrain_momentum = config["self_training"]["momentum"]
-    # collaborative training (2nd phase)
+    # collaborative training
     max_epoch = config["collaborative_training"]["epochs"]
     lr = config["collaborative_training"]["learning_rate"]
     fl_coefficient = config["collaborative_training"]["fl_coefficient"]
     optimizer_name = config["collaborative_training"]["optimizer_name"]  # SGD or Adam
     momentum = config["collaborative_training"]["momentum"]
 
-    # 2.3 Schedulers（学習率を途中で下げる）
-    use_pretrain_scheduler = config["self_training"]["use_scheduler"]  # pretrainでschedulerを使うか. When you use lr_decay in pretrain phase, set True.
+    # 2.3 Schedulers (lower the learning rate during training)
+    use_pretrain_scheduler = config["self_training"]["use_scheduler"]  # whether to use scheduler in pretrain phase. Set to True if using lr_decay in pretrain phase.
     pretrain_scheduler_step = config["self_training"]["scheduler_step"]
     pretrain_scheduler_rate = config["self_training"]["scheduler_rate"]
-    use_scheduler = config["collaborative_training"]["use_scheduler"]  # if do not use scheduler, False here
+    use_scheduler = config["collaborative_training"]["use_scheduler"]  # if not using scheduler, set to False
     scheduler_step = config["collaborative_training"]["scheduler_step"]
     scheduler_rate = config["collaborative_training"]["scheduler_rate"]
 
-    # 2.4 About the data each node has. When you use non-IID filter to create data of each node, 'is_use_noniid_filter' is 'True'.
+    # 2.4 About the data each node has. Set 'is_use_noniid_filter' to 'True' if using non-IID filter to create data for each node.
     is_use_noniid_filter = config["non_IID_filter"]["use_noniid_filter"]
     filter_rate = config["non_IID_filter"]["filter_rate"]
     filter_seed = config["non_IID_filter"]["filter_seed"]
 
     # 2.5 About contact patterns
-    # contact_file=f'cse_n10_c10_b02_tt05_tp2_s01.json'
-    # contact_file = 'meet_at_once_t10000.json'
     contact_file = config["contact_pattern"]["contact_file"] 
     contact_file_path = os.path.join(contact_pattern_path, contact_file)
 
     # 2.6 Select train mode
     is_pretrain_only = config["mode"]["self_train_only"]  # use to do only pre-training
 
-    # 2.7 設定
-    torch_seed()  # seedの固定 # 場所の変更------------
+    # 2.7 Settings
+    torch_seed()  # fix the seed # Change the location------------
     g = torch.Generator()
     g.manual_seed(0)
 
     print("using device", device)
-    # schedulers = None ## 場所の変更---------- 実体生成用の変数宣言は一箇所（ここ？）にまとめる
-    # pretrain_schedulers = None
 
-    ## 3. Test Transform （各エポックでのデータ呼び出しの際に、RandomCropなどどのような処理を行うか. Train用は後で）
-    # Normalize用に、Test directoryの画像の画素値の平均と分散を読み込む
+    ## 3. Test Transform (what processing to perform when calling data in each epoch. Train data will be processed later)
+    # Load the mean and standard deviation of pixel values of test images in the Test directory for normalization
     if (os.path.exists(meant_file_path)) and (
         os.path.exists(stdt_file_path)
-    ):  # Test dataの平均と分散のファイルがある場合
+    ):  # If the files for mean and standard deviation of test data exist
         mean_t = torch.load(meant_file_path)
         std_t = torch.load(stdt_file_path)
-    else:  # Test dataの平均と分散のファイルがない場合
+    else:  # If the files for mean and standard deviation of test data do not exist
         mean_t, std_t = calculate_mean_and_std(test_path)
         torch.save(mean_t, meant_file_path)
         torch.save(std_t, stdt_file_path)
     print("calculation of mean and std in test data finished")
 
-    if useGPUinTrans:  # GPUでTransformを行う場合
+    if useGPUinTrans:  # If performing transform on GPU
         test_transform = transforms.Compose(
             [
                 transforms.CenterCrop(224),
@@ -143,13 +138,11 @@ if __name__ == "__main__":
 
     ## 4. Prepare data
     # 4.1 Create dataset with ImageFolder & custom dataset
-    # train_data = None
-    # test_data = None
-    if useGPUinTrans:  # GPUでTransformを行う場合
+    if useGPUinTrans:  # If performing transform on GPU
         # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
         train_data = ImageFolder(
             train_path
-        )  # Trainのデータは後でノードごとの平均、分散に基づく正規化を行う
+        )  # Train data will be normalized based on the mean and standard deviation of each node later
         test_data = MyGPUdataset(
             test_path,
             device,
@@ -160,29 +153,27 @@ if __name__ == "__main__":
         train_data = datasets.ImageFolder(train_path)
         test_data = datasets.ImageFolder(test_path, transform=test_transform)
 
-    # 4.2 loading filter file or not. Non-IID Filterを読み込む
+    # 4.2 loading filter file or not. Load Non-IID Filter
     filter_file = f"filter_r{filter_rate:02d}_s{filter_seed:02d}.pt"
-    if is_use_noniid_filter:  # Non-IID Filterを使う場合
+    if is_use_noniid_filter:  # If using Non-IID Filter
         indices = torch.load(os.path.join(noniid_filter_path, filter_file))
-    else:  # Non-IID Filterを使わない場合
+    else:  # If not using Non-IID Filter
         indices = [[] for _ in range(n_node)]
         for i in range(len(train_data)):
             indices[i % n_node].append(i)
 
     # 4.3 Assign training data to each node
-    # for i in range(n_node):# データ分布の出力
-    #     print(f"node_{i}:{indices[i]}\n")
     subset = [Subset(train_data, indices[i]) for i in range(n_node)]
     # nums = [[0 for i in range(n_node)] for j in range(n_node)]
-    # for i in range(n_node): # データ分布の出力を行う
+    # for i in range(n_node): # Output data distribution
     #     for j in range(len(subset[i])):
     #         image, label = subset[i][j]
     #         nums[i][int(label)] += 1
     #     print(f'Distributions of data')
     #     print(f"train_data of node_{i}: {nums[i]}\n")
 
-    # Normalize用のファイル読み込み
-    if is_use_noniid_filter:  # Non-IIDフィルタを使うとき
+    # Load files for normalization
+    if is_use_noniid_filter:  # If using Non-IID filter
         train_mean_file_path = os.path.join(
             mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt"
         )
@@ -191,18 +182,18 @@ if __name__ == "__main__":
         )
         if os.path.exists(train_mean_file_path) and os.path.exists(
             train_std_file_path
-        ):  # 既に計算済みの場合
+        ):  # If already calculated
             mean_list = torch.load(
                 train_mean_file_path
-            )  # 各ノードごとの画素値の平均、分散を取得
+            )  # Get the mean and standard deviation of pixel values for each node
             std_list = torch.load(
                 train_std_file_path
-            )  # 各ノードごとの画素値の平均、分散を取得
-        else:  # 計算する
+            )  # Get the mean and standard deviation of pixel values for each node
+        else:  # Calculate
             mean_list, std_list = calculate_mean_and_std_subset(subset)
             torch.save(mean_list, train_mean_file_path)
             torch.save(std_list, train_std_file_path)
-    else:  # Non-IIDフィルタを使わないとき
+    else:  # If not using Non-IID filter
         train_mean_file_path = os.path.join(mean_and_std_path, "IID_train_mean.pt")
         train_std_file_path = os.path.join(mean_and_std_path, "IID_train_std.pt")
         if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path):
@@ -221,18 +212,14 @@ if __name__ == "__main__":
         mean = mean.tolist()
         std = std_list[i]
         std = std.tolist()
-        # train_transform = None
         if useGPUinTrans:
             train_transform = transforms.Compose(
                 [
                     transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
-                    # transforms.RandomCrop(224),
                     transforms.ConvertImageDtype(torch.float32),
                     transforms.Normalize(
                         mean=tuple(mean), std=tuple(std)
-                    ),  # 各ノードの画素値の平均、分散をもとに正規化
-                    # transforms.Normalize(0.5, 0.5)
-                    transforms.RandomErasing(
+                    ),                    transforms.RandomErasing(
                         p=0.5,
                         scale=(0.02, 0.33),
                         ratio=(0.3, 3.3),
@@ -245,7 +232,6 @@ if __name__ == "__main__":
             train_transform = transforms.Compose(
                 [
                     transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
-                    # transforms.ToTensor(), # すでにpreトランスフォームでTensor化しているのでは？
                     transforms.ConvertImageDtype(torch.float32),
                     transforms.Normalize(mean=tuple(mean), std=tuple(std)),
                     transforms.RandomErasing(
@@ -262,12 +248,16 @@ if __name__ == "__main__":
                 transforms.ToTensor(),
                 transforms.ConvertImageDtype(
                     torch.uint8
-                ),  # メモリ容量を圧縮するためにuint8で保管（元の画像はuint8なので情報の損失なし）
+                ),
+                # Store the original image as uint8 to compress memory capacity
                 transforms.Resize(256),
             ]
         )
-        # 最初に全エポックに共通の処理をpre_transformで実施。
-        # randomCropなどそれぞれのエポックで異なる処理はtransformに記載。
+        # Perform common processing for all epochs using pre_transform
+        train_dataset_new = FromSubsetDataset(
+            subset[i], device, transform=train_transform, pre_transform=pre_transform, useGPUinTrans=useGPUinTrans
+        )
+        # Specify different processing for each epoch, such as randomCrop, in the transform.
         train_dataset_new = FromSubsetDataset(
             subset[i], device, transform=train_transform, pre_transform=pre_transform, useGPUinTrans=useGPUinTrans
         )
@@ -297,8 +287,6 @@ if __name__ == "__main__":
             )
 
     # 4.5 Prepare test_dataloader
-    # testloader = None
-
     if useGPUinTrans:
         testloader = DataLoader(
             test_data,
@@ -321,36 +309,40 @@ if __name__ == "__main__":
         )
 
     ## 5. define net, optimizer, criterion
-    # 5.1 損失関数を定義
+    # 5.1 Define the loss function
     criterion = nn.CrossEntropyLoss()
 
-    # 5.2 Transfer learningに使用するmodelを定義
+    # 5.2 Define the model
     nets = [
         select_net(model_name, len(classes), n_middle).to(device) for i in range(n_node)
-    ]  # model_nameに応じたモデルをとってくる。
+    ]  # Get the model based on the model_name.
 
-    # 5.3 最適化関数を定義
-    optimizers = [  # model合成時のoptimizer
+    # 5.3 Define the optimization function
+    # Optimizer for model ensemble
+    optimizers = [
         select_optimizer(model_name, nets[i], optimizer_name, lr, momentum)
         for i in range(n_node)
     ]
-    pretrain_optimizers = [  # pretrain時のoptimizer
+    pretrain_optimizers = [  # Optimizers for pretraining
         select_optimizer(
             model_name, nets[i], pretrain_optimizer_name, pretrain_lr, pretrain_momentum
         )
         for i in range(n_node)
     ]
 
-    schedulers = None  # 下の学習関数で引数として与えるので、実体を作る
-    if use_scheduler:  # exchangeでlr decayを使う場合
+    schedulers = None
+    # If using lr decay in training
+    if use_scheduler:
         schedulers = [
             optim.lr_scheduler.StepLR(
                 optimizers[i], step_size=scheduler_step, gamma=scheduler_rate
             )
             for i in range(10)
         ]
-    pretrain_schedulers = None  # 下の学習関数で引数として与えるので、実体を作る
-    if use_pretrain_scheduler:  # pretrainでlr decayを使う場合
+
+    pretrain_schedulers = None
+    # If using lr decay in pretraining
+    if use_pretrain_scheduler:
         pretrain_schedulers = [
             optim.lr_scheduler.StepLR(
                 pretrain_optimizers[i],
@@ -362,18 +354,18 @@ if __name__ == "__main__":
 
     ## 6. Training Phase
     contact_list = []
-    histories = [np.zeros((0, 5)) for i in range(n_node)]  # モデル合成時の結果を格納
+    histories = [np.zeros((0, 5)) for i in range(n_node)]  # Store the results of model training
     pretrain_histories = [
         np.zeros((0, 5)) for i in range(n_node)
-    ]  # pretrainの結果を格納
+    ]  # Store the results of pretraining
 
     ## 7. Main Loop
     os.makedirs(
         cur_path
-    )  # 実行結果の格納用ディレクトリを作成. makedirsを使うと、親ディレクトリも含めて一気に新規作成できる。
+    )  # Make a directory to store the execution results.
     show_dataset_contents(data_path, classes, cur_path)
 
-    with open(os.path.join(cur_path, "log.txt"), "a") as f:  # パラメータの出力
+    with open(os.path.join(cur_path, "log.txt"), "a") as f:  # Write the training settings to the log file
         for i in range(len(subset)):
             f.write(f"the number of data for training {i}-th node: {len(subset[i])}\n")
         f.write(f"batch_size: {batch_size}\n")
@@ -392,7 +384,6 @@ if __name__ == "__main__":
             f.write(f"pre-training scheduler: {pretrain_schedulers[0].state_dict()}\n")
         f.write(f"net:\n {summary(nets[0], (1,3,224,224), verbose=False)}\n")
 
-    # Pretrainを行う
     os.makedirs(os.path.join(cur_path, "params"))
     load_epoch = 0
     # pre-self training
@@ -415,11 +406,12 @@ if __name__ == "__main__":
         pickle.dump(histories, f)
     print("saving histories...")
 
-    if is_pretrain_only:  # pretrainのみの場合はここで終了
+    # exit if pretraining only
+    if is_pretrain_only:
         pretrain_history_save_path = os.path.join(
             cur_path, "params", "pretrain_histories_data.pkl"
         )
-        with open(pretrain_history_save_path, "wb") as f:  # pretrainのhistoryを保存
+        with open(pretrain_history_save_path, "wb") as f:  # Save the results of pretraining
             pickle.dump(pretrain_histories, f)
             print("saving pretrain histories...")
         exit(0)
@@ -431,15 +423,14 @@ if __name__ == "__main__":
 
     for epoch in range(
         load_epoch, max_epoch + load_epoch
-    ):  # loop over the dataset multiple times
-        # print(global_model['fc2.bias'][1])
+    ):
         contact = contact_list[epoch]
 
         model_exchange(
             nets, model_name, contact, fl_coefficient
-        )  # model_nameで指定したモデルで接触したノードとモデル合成を行う。
+        )  # Perform model aggregation with the contacted nodes.
 
-        for n in range(n_node):  # モデルの合成を行った場合は1回学習を行う
+        for n in range(n_node):  # Train one epoch if the model was aggregated
             nbr = contact[str(n)]
             if len(nbr) == 0:
                 item = np.array(
@@ -468,15 +459,11 @@ if __name__ == "__main__":
                     n,
                 )
 
-            # このif文がTrueになったらConfusion Matrixを出力
+            # Output confusion matrix
             if (
                 (load_epoch + epoch > (load_epoch + max_epoch) * 0.75)
                 and epoch % 50 == 49
             ) or (load_epoch + max_epoch - epoch < 11):
-                # print(load_epoch)
-                # print(max_epoch)
-                # print(epoch)
-                # print(load_epoch + max_epoch - epoch)
                 train_for_cmls(
                     cur_path,
                     epoch,
