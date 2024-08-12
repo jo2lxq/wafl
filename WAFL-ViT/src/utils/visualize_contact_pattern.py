@@ -6,7 +6,7 @@ import networkx as nx
 import pandas as pd
 
 """
-This file use and check the file created by generate.py, so you need to run generate.py before running this file.
+This file uses and checks the file created by generate.py, so you need to run generate.py before running this file.
 The following parameters should be consistent with generate.py.
 """
 

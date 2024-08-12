@@ -74,7 +74,7 @@ for areasize, pose_time, randomseed in parameters:
                         min_travel_speed, max_travel_speed
                     )
 
-        # Use the node number as the key and a list of all nodes that can communicate with the key node as the value
+        # The key is the node number. The value is the list of nodes which the node (key) can communicate with.
         node_in_contact = {
             i: [] for i in range(n_node)
         }

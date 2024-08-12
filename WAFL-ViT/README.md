@@ -18,7 +18,7 @@ Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is
 
 <img src="./assets/target_buildings.png" width="75%" />
 
-As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually. 
+As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually.
 
 <img src="./assets/dataset_examples.png" width="75%" />
 
@@ -210,7 +210,7 @@ To start the training and store its results, please follow these steps:
 ### Final model accuracy and loss
 
 You can check the final model loss and accuracy of all nodes as a result of the model training.
-That scores are recorded in the log file(`results/{result folder name}/log.txt`) as shown in the following example:
+These scores are recorded in the log file(`results/{result folder name}/log.txt`) as shown in the following example:
 
 ```plain text
 Initial Epoch (node0): Loss: 3.75950 Accuracy: 0.44291
