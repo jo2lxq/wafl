@@ -44,6 +44,13 @@
 |   |   |   |-params
 |   |   |   |   |-model_parameters
 |   |   |   |   |-histories (Trend data in the training)
+|   |   |   |-images
+|   |   |   |   |-latent_space (Latent space of the model at epoch [number] for node [node_id])
+|   |   |   |   |   |-ls-epoch{number}-node{node_id}.png
+|   |   |   |   |-normalized_confusion_matrix (Confusion matrix of the model at epoch [number] for node [node_id])
+|   |   |   |   |   |-normalized-cm-epoch{number}-node{node_id}.png
+|   |   |   |   |-acc.png (Trend in accuracy)
+|   |   |   |   |-loss.png (Trend in loss)
 ```
 
 ## Data installation
@@ -134,18 +141,18 @@ To start the training and store its results, please follow these steps:
 
 7. Verify the start of the training process:
 
-   After starting the training process, you can find that log in `results/(result folder name)/log.txt`.
+   After starting the training process, you can find that log in `results/{result folder name}/log.txt`.
 
-8. Confirm the log file(`results/(result folder name)/log.txt`):
+8. Confirm the log file(`results/{result folder name}/log.txt`):
 
    You can find your experimental conditions in the log file.
 
 ## Output
 
-### Final model accuracy
+### Final model accuracy and loss
 
 You can check the final model loss and accuracy of all nodes as a result of the model training.
-That scores are recorded in the log file(`results/(result folder name)/log.txt`) as shown in the following example:
+That scores are recorded in the log file(`results/{result folder name}/log.txt`) as shown in the following example:
 
 ```plain text
 Initial Epoch (node0): Loss: 3.75950 Accuracy: 0.44291
@@ -164,3 +171,15 @@ These statistics are also available in the same file, presented as follows:
 the average of the last 10 epoch: 0.8694059976931949
 the std of the last 10 epoch: 0.004650926644612355
 ```
+
+### Trend graph
+
+After model training is successfully completed, trend graphs for all nodes are created in `results/{result folder name}/images/acc.png (or loss.png)`.
+
+### Images of confusion matrix and latent space
+
+Once 75% of training process is complete, images of the confusion matrix and latent space of models are generated every 50 epochs.
+These images are stored in the following directories:
+
+- Confusion matrices: `results/{result folder name}/images/normalized_confusion_matrix`
+- Latent space visualizations: `results/{result folder name}/images/latent_space`
