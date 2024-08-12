@@ -1,5 +1,61 @@
 # WAFL-ViT
 
+Wireless Ad Hoc Federated Learning with Vision Transformer (WAFL-ViT). This project provides the code for the paper "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition" \[1\] awarded the best paper (2nd place) at IEEE World Forum on the Internet of Things 2023.
+
+## Architecture
+
+<img src="./assets/architecture.png" width="75%" />
+
+The figure shows the overview of WAFL-Vision Transformer. It is composed of multiple devices. Each of them collects data from the target environment and fine-tunes the pre-trained Vision Transformer (ViT). Here, the MLP head of ViT is replaced with another feedforward layer to fit the target task.
+
+In our scenario, each device has ad hoc wireless interfaces and exchanges the MLP head with the neighbors through device-to-device communications (although the project code is for simulation only). This communication can be a combination of Bluetooth and Wi-Fi: i.e., finding friend workers by Bluetooth and exchanging model parameters by Wi-Fi ad hoc mode. The exchanged MLP heads are aggregated by the WAFL algorithm as below.
+
+![Model Aggregation](./assets/model_aggregation.png)
+
+Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
+
+## UTokyo Building Recognition Dataset
+
+<img src="./assets/target_buildings.png" width="75%" />
+
+As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually. 
+
+<img src="./assets/dataset_examples.png" width="75%" />
+
+This figure shows the examples -- target buildings were taken from the front, back, and sides, sometimes closely, looking up, or from afar, or with a telescopic mode. Some photos contain trees, clouds, and the sun. This characteristic is not available in MNIST or CIFAR-10 datasets.
+
+We then pre-processed the photos to distribute to virtual ten devices for both IID and Non-IID scenarios described in the previous section. The following table below shows the distributions. In the IID scenario, all the nodes have relatively the same label distributions, whereas, in the Non-IID scenario, the label distributions are dependent on the device. For example, device 0 has a larger amount of label 0 photos. Please note that even if the label distribution is IID, the devices' local photos do not cover all the scenes equally with other devices because the number of stored photos for one building is around 10 to 20.
+
+**Table 1: Label Distribution of IID Data**
+| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
+| 0 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
+| 1 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
+| 2 | 11 | 16 | 10 | 10 | 11 | 14 | 12 | 17 | 14 | 20 | 135 |
+| 3 | 11 | 16 | 10 | 9 | 12 | 14 | 12 | 17 | 14 | 20 | 135 |
+| 4 | 11 | 16 | 10 | 9 | 12 | 14 | 12 | 17 | 13 | 21 | 135 |
+| 5 | 11 | 15 | 11 | 9 | 12 | 13 | 13 | 16 | 14 | 21 | 135 |
+| 6 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 21 | 135 |
+| 7 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 21 | 135 |
+| 8 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 21 | 135 |
+| 9 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 134 |
+
+**Table2: Label Distribution of Non-IID Data**
+| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
+| 0 | 44 | 4 | 5 | 4 | 8 | 4 | 8 | 8 | 11 | 12 | 108 |
+| 1 | 10 | 95 | 7 | 6 | 5 | 6 | 8 | 9 | 6 | 15 | 167 |
+| 2 | 4 | 7 | 59 | 3 | 8 | 10 | 5 | 9 | 11 | 11 | 127 |
+| 3 | 5 | 7 | 4 | 45 | 8 | 5 | 3 | 9 | 14 | 10 | 110 |
+| 4 | 8 | 8 | 3 | 8 | 52 | 9 | 9 | 14 | 5 | 10 | 126 |
+| 5 | 4 | 7 | 2 | 6 | 8 | 76 | 9 | 11 | 8 | 9 | 140 |
+| 6 | 7 | 6 | 7 | 7 | 4 | 4 | 56 | 7 | 9 | 13 | 120 |
+| 7 | 6 | 10 | 2 | 6 | 9 | 4 | 7 | 84 | 6 | 11 | 145 |
+| 8 | 5 | 5 | 7 | 6 | 6 | 6 | 7 | 8 | 59 | 16 | 125 |
+| 9 | 13 | 10 | 5 | 6 | 11 | 9 | 9 | 10 | 10 | 98 | 181 |
+
+You can access our dataset from [this link](https://drive.google.com/file/d/1GKbMyfAkvCVT1a6g2KyvkC3MYxf5VPrZ/view).
+
 ## Concept of this folder
 
 - In this project, we aimed to train models that is larger and can solve more complicated tasks than that of the project in WAFL-MLP folder.
@@ -55,10 +111,12 @@
 
 ## Data installation
 
+<!--
 ![System overview](./assets/dataset_abstract.png)
 
 In this project, we created and utilized the dataset which consist of  images of several buildings at the University of Tokyo.
 The mapping between labels and buildings is shown in the image above.
+-->
 
 You can access our dataset from [this link](https://drive.google.com/file/d/1GKbMyfAkvCVT1a6g2KyvkC3MYxf5VPrZ/view).
 
@@ -183,3 +241,7 @@ These images are stored in the following directories:
 
 - Confusion matrices: `results/{result folder name}/images/normalized_confusion_matrix`
 - Latent space visualizations: `results/{result folder name}/images/latent_space`
+
+## References
+
+\[1\] Hideya Ochiai, Atsuya Muramatsu, Yudai Ueda, Ryuhei Yamaguchi, Kazuhiro Katoh, and Hiroshi Esaki, "[Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition](https://ieeexplore.ieee.org/abstract/document/10539480)", IEEE World Forum on Internet of Things, 2023. 
