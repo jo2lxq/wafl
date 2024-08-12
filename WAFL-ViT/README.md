@@ -12,7 +12,7 @@
 
 ```plain text
 |- WAFL-ViT
-|   |- data
+|   |-data
 |   |   |-val
 |   |   |   |-0
 |   |   |   |-1
@@ -40,9 +40,10 @@
 |   |   
 |   |-results
 |   |   |-20240515 (Results. You can adjust its name in the program.)
-|   |   |   |-log
-|   |   |   |-model_parameter
-|   |   |   |-histories
+|   |   |   |-log.txt
+|   |   |   |-params
+|   |   |   |   |-model_parameters
+|   |   |   |   |-histories (trend in the training)
 ```
 
 ## Data installation

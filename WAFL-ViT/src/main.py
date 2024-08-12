@@ -29,7 +29,7 @@ if __name__ == "__main__":
     # path
     main_path = os.path.dirname(os.path.abspath(__file__)) # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
-    project_path = os.path.normpath(os.path.join(main_path, "../training_logs"))
+    project_path = os.path.normpath(os.path.join(main_path, "../results"))
     noniid_filter_path = os.path.normpath(os.path.join(main_path, "../data/non-IID_filter"))
     contact_pattern_path = os.path.normpath(os.path.join(main_path, "../data/contact_pattern"))
     mean_and_std_path = os.path.normpath(os.path.join(main_path, "../data/test_mean_and_std"))
