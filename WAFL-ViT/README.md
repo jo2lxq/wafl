@@ -43,7 +43,7 @@
 |   |   |   |-log.txt
 |   |   |   |-params
 |   |   |   |   |-model_parameters
-|   |   |   |   |-histories (trend in the training)
+|   |   |   |   |-histories (Trend data in the training)
 ```
 
 ## Data installation
@@ -131,3 +131,36 @@ To start the training and store its results, please follow these steps:
     ```Linux
     python main.py
     ```
+
+7. Verify the start of the training process:
+
+   After starting the training process, you can find that log in `results/(result folder name)/log.txt`.
+
+8. Confirm the log file(`results/(result folder name)/log.txt`):
+
+   You can find your experimental conditions in the log file.
+
+## Output
+
+### Final model accuracy
+
+You can check the final model loss and accuracy of all nodes as a result of the model training.
+That scores are recorded in the log file(`results/(result folder name)/log.txt`) as shown in the following example:
+
+```plain text
+Initial Epoch (node0): Loss: 3.75950 Accuracy: 0.44291
+Final Epoch (node0): Loss: 0.47345 Accuracy: 0.86851
+Initial Epoch (node1): Loss: 3.84433 Accuracy: 0.41522
+Final Epoch (node1): Loss: 0.47143 Accuracy: 0.86851
+Initial Epoch (node2): Loss: 4.53923 Accuracy: 0.41522
+Final Epoch (node2): Loss: 0.47127 Accuracy: 0.86851
+...
+```
+
+Additionally, you can confirm the average accuracy and its standard deviation across all nodes for the last 10 epochs.
+These statistics are also available in the same file, presented as follows:
+
+```plain text
+the average of the last 10 epoch: 0.8694059976931949
+the std of the last 10 epoch: 0.004650926644612355
+```
