@@ -247,10 +247,8 @@ These images are stored in the following directories:
 You can configure the parameters and settings for the experiment with `src/config.json`.
 This file allows you to easily customize the training process.
 
-Below are the key fields of `config.json`.
+Below are the fields of `config.json`.
 ### model
-
-This sections refers to the setting of the machine learning model which you use.
 
 `model_name`(str): The model which you use in the experiment. This parameter should be either of [`vgg19_bn`, `mobilenet_v2`, `resnet_152`, `vit_b16`].
 
@@ -264,11 +262,48 @@ This sections refers to the setting of the machine learning model which you use.
 
 `device`(str): Set the name of GPU which you want to use. (e.g. "cuda:0", "cuda:1")
 
-`transform_on_gpu`(boolean): If you want to speed up the training process, set `true`. This option use custom dataset. By loading the images to GPU in advance & conduct data-augmentation in GPU, you can save time in training. However, this will consume more GPU memory. For detailed explanation, please refer to the `src/functions/mydataset.py`.
+`transform_on_gpu`(boolean): This option speed up the training process by loading the images to GPU in advance & conduct data-augmentation in GPU. 
+Set this option to `true` to enable the feature. 
+Note that this will consume more GPU memory. 
+For detailed explanation, please refer to the `src/functions/mydataset.py`.
 
 ### mode
 
-`self_train_only`(boolean): We support the training mode which only conduct self-training phase in WAFL. Set `true` only when you want to try self-training phase but do not want to proceed to the subsequent collaborative training phase.
+`self_train_only`(boolean): We support the training mode which only conduct self-training phase in WAFL. 
+Set this option to `true` only when you want to try self-training phase but do not want to proceed to the subsequent collaborative training phase.
+
+### self_training
+
+This section configure the settings in the self-training phase.
+
+`epochs`(int): Maximum epoch
+
+`learning_rate`(float): Learning rate 
+
+`optimizer_name`(str): Choose optimizer from [`SGD`, `Adam`].
+
+`momentum`(float): Momentum of the optimizer.
+
+`use_scheduler`(boolean): If you want to use schedulers in the self-training phase, set this option `true`. 
+We used `StepLR` which means step decay of learning rate.
+
+`scheduler_rate`(float): This option specifies the multiplicative factor by which the learning rate is reduced.
+
+`scheduler_step`(int): This option specifies the number of epochs after which the learning rate is decreased.
+
+### collaborative_training
+
+`fl_coefficient`(float): Aggregation coefficient in wafL.
+
+Please refer to the [self-training](#self_training) section for the other configurations.
+
+### non_IID_filter
+
+You can use non-IID filters to simulate the non-IID scenarios. Set `use_noniid_filter` to `true` to use non-IID filter.
+
+### contact_pattern
+
+You have to prepare moving pattern of nodes that participate in the collaborative training. See `src/utils/generate_contact_pattern.py` & `visualize_contact_pattern.py` for more details.
 
 ## References
 
