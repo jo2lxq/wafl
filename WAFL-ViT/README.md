@@ -185,7 +185,7 @@ To start the training and store its results, please follow these steps:
     python utils/generate_nonIID_filter.py
     ```
 
-5. Review and adjust the experimental settings in the config file(`src/config.json`):
+5. Review and adjust the experimental settings in the config file(`src/config.json`). For detailed instructions on how to write and configure the setting file, please refer to the [Configuration File Guide](#configuration-file-guide):
 
     ```Linux
     vim config.json  # or use any text editor of your choice
@@ -241,6 +241,34 @@ These images are stored in the following directories:
 
 - Confusion matrices: `results/{result folder name}/images/normalized_confusion_matrix`
 - Latent space visualizations: `results/{result folder name}/images/latent_space`
+
+## Configuration File Guide
+
+You can configure the parameters and settings for the experiment with `src/config.json`.
+This file allows you to easily customize the training process.
+
+Below are the key fields of `config.json`.
+### model
+
+This sections refers to the setting of the machine learning model which you use.
+
+`model_name`(str): The model which you use in the experiment. This parameter should be either of [`vgg19_bn`, `mobilenet_v2`, `resnet_152`, `vit_b16`].
+
+`n_middle`(int): The number of input units for the added classification layer. To make use of the WAFL's parameter aggregation, we added another layer for the classification layer.
+
+### data
+
+`n_node`(int): The number of nodes that participate in the training process of WAFL.
+
+### gpu
+
+`device`(str): Set the name of GPU which you want to use. (e.g. "cuda:0", "cuda:1")
+
+`transform_on_gpu`(boolean): If you want to speed up the training process, set `true`. This option use custom dataset. By loading the images to GPU in advance & conduct data-augmentation in GPU, you can save time in training. However, this will consume more GPU memory. For detailed explanation, please refer to the `src/functions/mydataset.py`.
+
+### mode
+
+`self_train_only`(boolean): We support the training mode which only conduct self-training phase in WAFL. Set `true` only when you want to try self-training phase but do not want to proceed to the subsequent collaborative training phase.
 
 ## References
 
