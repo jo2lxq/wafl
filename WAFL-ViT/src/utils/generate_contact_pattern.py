@@ -46,10 +46,11 @@ for areasize, pose_time, randomseed in parameters:
                 tx, ty = node_next_location[i]
                 ax = tx - x
                 ay = ty - y
+                # Calculate the velocity components
                 vx = node_travel_speed[i] * ax / math.sqrt(ax**2 + ay**2)
                 vy = (
                     node_travel_speed[i] * ay / math.sqrt(ax**2 + ay**2)
-                )  # 速度の成分を求める
+                )
                 x += vx
                 y += vy
 
@@ -73,9 +74,10 @@ for areasize, pose_time, randomseed in parameters:
                         min_travel_speed, max_travel_speed
                     )
 
+        # The key is the node number. The value is the list of nodes which the node (key) can communicate with.
         node_in_contact = {
             i: [] for i in range(n_node)
-        }  # ある時刻においてノードiと通信可能なすべてのノードの番号をリストの中に入れている
+        }
         for i in range(n_node):
             node_in_contact[i] = []
 

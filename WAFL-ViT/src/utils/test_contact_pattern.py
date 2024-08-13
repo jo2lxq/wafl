@@ -1,16 +1,19 @@
 import json
 import os
 
-# このファイルはgenerate.pyで作ったものから読み込むので事前にgenerateが必要で下記パラメータはそれに合わせる
+"""
+This file uses and checks the file created by generate.py, so you need to run generate.py before running this file.
+The following parameters should be consistent with generate.py.
+"""
 
-n_time = 3000  # up to 10000
+n_time = 3000
 
-n_node = 10  # fixed
-radio_range = 100  # fixed
+n_node = 10
+radio_range = 100
 
-pose_time = 10  # [10,20,40]
-areasize = 500  # [500,1000,2000]
-randomseed = 1  # [1,2,3]
+pose_time = 10
+areasize = 500
+randomseed = 1
 
 contact_pattern_dir = "../../data/contact_pattern"
 

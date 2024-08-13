@@ -13,7 +13,7 @@ def evaluate_history(histories, cur_dir):
     cmap_name = "tab20"
     cm = plt.colormaps[cmap_name]
     with open(os.path.join(cur_dir, "log.txt"), "a") as f:
-        f.write(f"{len(histories[0])}epochまでの学習\n")
+        f.write(f"Training until {len(histories[0])} epoch\n")
         for i in range(len(histories)):
             f.write(
                 f"Initial Epoch (node{i}): Loss: {histories[i][0, 3]:.5f} Accuracy: {histories[i][0, 4]:.5f}\n"

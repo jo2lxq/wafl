@@ -233,7 +233,6 @@ def show_dataset_contents(
 
     with open(os.path.join(result_path, "log.txt"), "w") as f:
         for i in range(len(num_test)):
-            # print(f'label: {classes[i]} train_data: {num_train[i]} test_data: {num_test[i]}')
             f.write(
                 f"label: {classes[i]} train_data: {num_train[i]} test_data: {num_test[i]}\n"
             )

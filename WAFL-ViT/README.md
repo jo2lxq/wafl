@@ -18,7 +18,7 @@ Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is
 
 <img src="./assets/target_buildings.png" width="75%" />
 
-As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually. 
+As a mission-oriented task, we have generated UTokyo Building Recognition Dataset (UTBR) to provide a smart-campus service. The photos were captured by five persons with their own smartphone cameras individually. We have chosen ten buildings as the photo target, and each of the photos is labeled manually.
 
 <img src="./assets/dataset_examples.png" width="75%" />
 
@@ -68,7 +68,7 @@ You can access our dataset from [this link](https://drive.google.com/file/d/1GKb
 
 ```plain text
 |- WAFL-ViT
-|   |- data
+|   |-data
 |   |   |-val
 |   |   |   |-0
 |   |   |   |-1
@@ -96,9 +96,17 @@ You can access our dataset from [this link](https://drive.google.com/file/d/1GKb
 |   |   
 |   |-results
 |   |   |-20240515 (Results. You can adjust its name in the program.)
-|   |   |   |-log
-|   |   |   |-model_parameter
-|   |   |   |-histories
+|   |   |   |-log.txt
+|   |   |   |-params
+|   |   |   |   |-model_parameters
+|   |   |   |   |-histories (Trend data in the training)
+|   |   |   |-images
+|   |   |   |   |-latent_space (Latent space of the model at epoch [number] for node [node_id])
+|   |   |   |   |   |-ls-epoch{number}-node{node_id}.png
+|   |   |   |   |-normalized_confusion_matrix (Confusion matrix of the model at epoch [number] for node [node_id])
+|   |   |   |   |   |-normalized-cm-epoch{number}-node{node_id}.png
+|   |   |   |   |-acc.png (Trend in accuracy)
+|   |   |   |   |-loss.png (Trend in loss)
 ```
 
 ## Data installation
@@ -188,6 +196,51 @@ To start the training and store its results, please follow these steps:
     ```Linux
     python main.py
     ```
+
+7. Verify the start of the training process:
+
+   After starting the training process, you can find that log in `results/{result folder name}/log.txt`.
+
+8. Confirm the log file(`results/{result folder name}/log.txt`):
+
+   You can find your experimental conditions in the log file.
+
+## Output
+
+### Final model accuracy and loss
+
+You can check the final model loss and accuracy of all nodes as a result of the model training.
+These scores are recorded in the log file(`results/{result folder name}/log.txt`) as shown in the following example:
+
+```plain text
+Initial Epoch (node0): Loss: 3.75950 Accuracy: 0.44291
+Final Epoch (node0): Loss: 0.47345 Accuracy: 0.86851
+Initial Epoch (node1): Loss: 3.84433 Accuracy: 0.41522
+Final Epoch (node1): Loss: 0.47143 Accuracy: 0.86851
+Initial Epoch (node2): Loss: 4.53923 Accuracy: 0.41522
+Final Epoch (node2): Loss: 0.47127 Accuracy: 0.86851
+...
+```
+
+Additionally, you can confirm the average accuracy and its standard deviation across all nodes for the last 10 epochs.
+These statistics are also available in the same file, presented as follows:
+
+```plain text
+the average of the last 10 epoch: 0.8694059976931949
+the std of the last 10 epoch: 0.004650926644612355
+```
+
+### Trend graph
+
+After model training is successfully completed, trend graphs for all nodes are created in `results/{result folder name}/images/acc.png (or loss.png)`.
+
+### Images of confusion matrix and latent space
+
+Once 75% of training process is complete, images of the confusion matrix and latent space of models are generated every 50 epochs.
+These images are stored in the following directories:
+
+- Confusion matrices: `results/{result folder name}/images/normalized_confusion_matrix`
+- Latent space visualizations: `results/{result folder name}/images/latent_space`
 
 ## References
 
