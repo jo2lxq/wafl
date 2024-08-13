@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torchvision.models as models
 
-
+# prepare the model
 def Net_vgg19_bn(n_output, n_middle):
     net = models.vgg19_bn(pretrained=True)
     for param in net.parameters():

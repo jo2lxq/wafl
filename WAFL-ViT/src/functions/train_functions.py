@@ -19,17 +19,19 @@ from sklearn.metrics import confusion_matrix
 
 from .visualize import *
 
-# デフォルトフォントサイズ変更
+# Change the default font size
 # plt.rcParams['font.size'] = 14
-# # デフォルトグラフサイズ変更
+
+# Change the default figure size
 # plt.rcParams['figure.figsize'] = (6,6)
-# # デフォルトで方眼表示ON
+
+# Enable gird lines
 # plt.rcParams['axes.grid'] = True
 # np.set_printoptions(suppress=True, precision=5)
 
 class MyGPUdatasetFolder(
     datasets.DatasetFolder
-):  # use when put data on GPU in __getitem__
+):
     IMG_EXTENTIONS = [".jpg", ".jpeg", ".png"]
 
     def __init__(self, root, device, transform=None):
@@ -73,7 +75,7 @@ def pretrain(
             n_train_acc, n_val_acc = 0, 0
             train_loss, val_loss = 0, 0
             for data in train_loaders[n]:
-                # get the inputs; data is a list of [x_train, y_train]
+                # get the inputs; data is a list of [image (tensor), label]
                 x_train, y_train = data
                 batch_size = len(y_train)
                 if x_train.is_cuda is False:
