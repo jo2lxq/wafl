@@ -1,33 +1,36 @@
 import os
+
+import matplotlib
 import torch
 import torchvision
 import torchvision.transforms as transforms
 
-import matplotlib
-matplotlib.use('Agg')
+matplotlib.use("Agg")
+
+import math
+import statistics
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
 import numpy as np
-
 import torch.nn as nn
 import torch.nn.functional as F
-
-import statistics
-import math
-
+from matplotlib.ticker import MaxNLocator
 from net import Net
 
 #
 # Configuration
-# 
-output_code="rwp"                           # name of the file
-exp_codes=['rwp0500','rwp1000','rwp2000']   # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']  
+#
+output_code = "rwp"  # name of the file
+exp_codes = [
+    "rwp0500",
+    "rwp1000",
+    "rwp2000",
+]  # multiple experiment_cases can be listed like exp_codes=['rwp0500', 'rwp1000', 'rwp2000']
 
-max_epoch=5000     # default 5000
-n_device=10        # fixed to 10
+max_epoch = 5000  # default 5000
+n_device = 10  # fixed to 10
 
-batch_size=512
+batch_size = 512
 
 # prepare the output directory if not exists
 if not os.path.exists("../accuracy"):
@@ -36,61 +39,67 @@ if not os.path.exists("../accuracy"):
 
 #
 # Generate Epoch - Accuracy Graph
-# 
-def save_accuracy_trend(x,acc,classes,
-                        title='Accuracy Trend',
-                        save_path=None) :
+#
+def save_accuracy_trend(x, acc, classes, title="Accuracy Trend", save_path=None):
 
     plt.clf()
-    #plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    # plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
 
     plt.title(title)
-    for i in range(len(classes)) :
-        y=acc[i] 
-        plt.plot(x,y,label=classes[i])
+    for i in range(len(classes)):
+        y = acc[i]
+        plt.plot(x, y, label=classes[i])
 
-    if(len(classes)>1):
+    if len(classes) > 1:
         plt.legend()
-    plt.ylabel('Accuracy')
-    plt.xlabel('Epoch')
-    if(save_path==None):
+    plt.ylabel("Accuracy")
+    plt.xlabel("Epoch")
+    if save_path == None:
         plt.show()
     else:
-        plt.savefig(save_path,bbox_inches='tight')
-
+        plt.savefig(save_path, bbox_inches="tight")
 
 
 #
 # Setting up the processor and the training dataset.
-# 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print('using device', device)
+#
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("using device", device)
 
-testset = torchvision.datasets.MNIST(root='../data/MNIST',train=False,
-                                        download=True, transform=transforms.ToTensor())
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                          shuffle=True, num_workers=2)
-net=Net().to(device)
+testset = torchvision.datasets.MNIST(
+    root="../data/MNIST", train=False, download=True, transform=transforms.ToTensor()
+)
+testloader = torch.utils.data.DataLoader(
+    testset, batch_size=batch_size, shuffle=True, num_workers=2
+)
+net = Net().to(device)
 
 #
 # Memory space for storing values of the graph
 #
-x=np.linspace(1,max_epoch,max_epoch)
-acc=[ np.array([i for i in range(max_epoch)],dtype='float32')
-        for i in range(len(exp_codes))]
+x = np.linspace(1, max_epoch, max_epoch)
+acc = [
+    np.array([i for i in range(max_epoch)], dtype="float32")
+    for i in range(len(exp_codes))
+]
 
-# 
+#
 # Predictions and Summarizing the results
 #
-for epoch in range(1,max_epoch+1) :
+for epoch in range(1, max_epoch + 1):
     print(epoch)
 
-    for e in range(len(exp_codes)) : 
-        exp_code=exp_codes[e] 
+    for e in range(len(exp_codes)):
+        exp_code = exp_codes[e]
 
         accuracies = []
-        for n in range(n_device) :
-            net.load_state_dict(torch.load(f'../trained_net/{exp_code}/mnist_net_{n}_{epoch:04d}.pth',map_location=torch.device('cpu')))
+        for n in range(n_device):
+            net.load_state_dict(
+                torch.load(
+                    f"../trained_net/{exp_code}/mnist_net_{n}_{epoch:04d}.pth",
+                    map_location=torch.device("cpu"),
+                )
+            )
 
             correct = 0
             total = 0
@@ -112,13 +121,15 @@ for epoch in range(1,max_epoch+1) :
                         if groundtruth == prediction:
                             correct += 1
                         total += 1
-    
+
             # print accuracy for each node
             accuracy = float(correct) / float(total)
             accuracies.append(accuracy)
-            print(f'epoch={epoch}, node={n}, exp_code={exp_code}, accuracy={accuracy}')
+            print(f"epoch={epoch}, node={n}, exp_code={exp_code}, accuracy={accuracy}")
 
-        acc[e][epoch-1]=statistics.mean(accuracies)
+        acc[e][epoch - 1] = statistics.mean(accuracies)
 
 # Save the results in a Graph
-save_accuracy_trend(x,acc,exp_codes,title=f'',save_path=f'../accuracy/accuracy_{output_code}.png')
+save_accuracy_trend(
+    x, acc, exp_codes, title=f"", save_path=f"../accuracy/accuracy_{output_code}.png"
+)
