@@ -248,6 +248,7 @@ You can configure the parameters and settings for the experiment with `src/confi
 This file allows you to easily customize the training process.
 
 Below are the fields of `config.json`.
+
 ### model
 
 `model_name`(str): The model which you use in the experiment. This parameter should be either of [`vgg19_bn`, `mobilenet_v2`, `resnet_152`, `vit_b16`].
@@ -262,7 +263,7 @@ Below are the fields of `config.json`.
 
 `device`(str): Set the name of GPU which you want to use. (e.g. "cuda:0", "cuda:1")
 
-`transform_on_gpu`(boolean): This option speed up the training process by loading the images to GPU in advance & conduct data-augmentation in GPU. 
+`transform_on_gpu`(boolean): This option speed up the training process by loading the images to GPU in advance and conducting data-augmentation in GPU. 
 Set this option to `true` to enable the feature. 
 Note that this will consume more GPU memory. 
 For detailed explanation, please refer to the `src/functions/mydataset.py`.
@@ -303,7 +304,7 @@ You can use non-IID filters to simulate the non-IID scenarios. Set `use_noniid_f
 
 ### contact_pattern
 
-You have to prepare moving pattern of nodes that participate in the collaborative training. See `src/utils/generate_contact_pattern.py` & `visualize_contact_pattern.py` for more details.
+You have to prepare moving pattern of nodes that participate in the collaborative training. See `src/utils/generate_contact_pattern.py` and `visualize_contact_pattern.py` for more details.
 
 ## References
 
