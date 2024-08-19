@@ -144,7 +144,7 @@ Please note that this configuration expects model training has been finished upt
 python3 draw_accuracy_trend.py
 ```
 
-This draws the tree accuracy trends in a comparable form as follows. The generated image will be saved into "accuracy" directory.
+This draws the three accuracy trends in a comparable form as follows. The generated image will be saved into "accuracy" directory.
 
 <img src="./assets/accuracy_rwp.png" width="50%">
 
