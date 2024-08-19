@@ -82,7 +82,7 @@ After setting up the configuration, please execute by
 
 ```Linux
 cd src
-python3 main.py
+python main.py
 ```
 
 Then, it will give the following messages.
