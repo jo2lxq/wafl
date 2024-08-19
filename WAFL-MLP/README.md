@@ -119,7 +119,7 @@ nodes = [9]                     # specify the devices in a list like nodes = [0,
 Please note that this configuration expects model training has been finished upto 5000 epochs under the name rwp0500. Then, you can run
 
 ```Linux
-python3 draw_confusion_matrix.py
+python draw_confusion_matrix.py
 ```
 
 This gives four confusion matrics at device 9 at epochs 1, 100, 1000, 5000 as follows.
@@ -141,7 +141,7 @@ n_device=10        # fixed to 10
 Please note that this configuration expects model training has been finished upto 5000 epochs under the names rwp0500, rwp1000, and rwp2000. Then, you can run,
 
 ```Linux
-python3 draw_accuracy_trend.py
+python draw_accuracy_trend.py
 ```
 
 This draws the three accuracy trends in a comparable form as follows. The generated image will be saved into "accuracy" directory.
