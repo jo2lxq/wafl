@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
-from net import Net
+from net import Net # Import the Net class from net.py
 from torch.utils.data.dataset import Subset
 
 if __name__ == "__main__":
