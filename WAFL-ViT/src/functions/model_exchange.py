@@ -11,7 +11,7 @@ def update_nets_vgg(net, contact, fl_coefficient):
         nbr = contact[str(n)]  # the nodes n-th node contacted
         recv_models[n] = []
         for k in nbr:
-            recv_models[n].append(copy.deepcopy(net[k].classifier[6].state_dict())) # Using deepcopy to avoid reference passing
+            recv_models[n].append(copy.deepcopy(net[k].classifier[6].state_dict())) # create a new object to avoid modifying the original object
 
     # mixture of models
     for n in range(10):
@@ -44,11 +44,11 @@ def update_nets_res(net, contact, fl_coefficient):
         nbr = contact[str(n)]  # the nodes n-th node contacted
         recv_models[n] = []
         for k in nbr:
-            recv_models[n].append(copy.deepcopy(net[k].fc.state_dict())) # Using deepcopy to avoid reference passing
+            recv_models[n].append(copy.deepcopy(net[k].fc.state_dict())) # create a new object to avoid modifying the original object
 
     # mixture of models
     for n in range(10):
-        update_model = copy.deepcopy(recv_models[n]) # Using deepcopy to avoid reference passing
+        update_model = copy.deepcopy(recv_models[n]) # create a new object to avoid modifying the original object
         n_nbr = len(update_model)  # how many nodes n-th node contacted
 
         # put difference of n-th node models and k-th contacted node into update_model[k]
@@ -77,12 +77,12 @@ def update_nets_vit(net, contact, fl_coefficient):
         nbr = contact[str(n)]  # the nodes n-th node contacted
         recv_models[n] = []
         for k in nbr:
-            recv_models[n].append(copy.deepcopy(net[k].heads.state_dict())) # Using deepcopy to avoid reference passing
+            recv_models[n].append(copy.deepcopy(net[k].heads.state_dict())) # create a new object to avoid modifying the original object
             # recv_models[n].append(local_model[k])
 
     # mixture of models
     for n in range(10):
-        update_model = copy.deepcopy(recv_models[n]) # Using deepcopy to avoid reference passing
+        update_model = copy.deepcopy(recv_models[n]) # create a new object to avoid modifying the original object
         # update_model = recv_models[n]
         n_nbr = len(update_model)  # how many nodes n-th node contacted
 
@@ -113,12 +113,12 @@ def update_nets_mobile(net, contact, fl_coefficient):
         recv_models[n] = []
         for k in nbr:
             # recv_models[n].append(net[k].classifier[1].state_dict())
-            recv_models[n].append(copy.deepcopy(net[k].classifier[1].state_dict())) # Using deepcopy to avoid reference passing
+            recv_models[n].append(copy.deepcopy(net[k].classifier[1].state_dict())) # create a new object to avoid modifying the original object
             # recv_models[n].append(net[k].classifier[1].state_dict())
 
     # mixture of models
     for n in range(10):
-        update_model = copy.deepcopy(recv_models[n]) # Using deepcopy to avoid reference passing
+        update_model = copy.deepcopy(recv_models[n]) # create a new object to avoid modifying the original object
         # update_model = recv_models[n]
         n_nbr = len(update_model)  # how many nodes n-th node contacted
 
