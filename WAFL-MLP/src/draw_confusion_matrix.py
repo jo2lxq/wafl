@@ -27,7 +27,7 @@ epochs = [
     1000,
     5000,
 ]  # specify the epochs in a list like epochs = [1, 10, 100, 1000, 5000]
-devices = [9]  # specify the devices in a list like devices = [0, 1, 2]
+nodes = [9]  # specify the devices in a list like nodes = [0, 1, 2]
 
 batch_size = 256
 
@@ -102,7 +102,7 @@ net = Net()
 #  Predictions and Generate Confusion Matrices
 #
 for epoch in epochs:
-    for n in devices:
+    for n in nodes:
 
         net.load_state_dict(
             torch.load(
