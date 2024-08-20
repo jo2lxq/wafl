@@ -32,9 +32,7 @@ nodes = [9]  # specify the devices in a list like nodes = [0, 1, 2]
 batch_size = 256
 
 # prepare the output directory if not exists
-if not os.path.exists("../confusion_matrix"):
-    os.makedirs("../confusion_matrix")
-
+os.makedirs("../confusion_matrix", exist_ok=True)
 
 #
 # Generate Confusion Matrix
