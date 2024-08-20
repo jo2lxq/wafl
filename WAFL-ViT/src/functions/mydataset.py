@@ -7,7 +7,9 @@ from torch.utils.data import Dataset
 
 
 class FromSubsetDataset(Dataset):  # subset -> dataset
-    def __init__(self, data_list, device, transform=None, pre_transform=None, useGPUinTrans=None):
+    def __init__(
+        self, data_list, device, transform=None, pre_transform=None, useGPUinTrans=None
+    ):
         new_data_list = []
         for i in range(len(data_list)):
             image, label = data_list[i]
@@ -31,12 +33,13 @@ class FromSubsetDataset(Dataset):  # subset -> dataset
         return len(self.data_list)
 
 
-class MyGPUdataset(Dataset): # Custom Dataset to load the images to GPU in advance. 
+class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in advance.
     """
     This is used to speed up the training process.
     By loading the images to GPU in advance, you can avoid the overhead of loading images in every epoch during the training.
     However, this will consume more GPU memory. Therefore, make sure you have enough memory.
     """
+
     def __init__(self, root, device, transform=None, pre_transform=None):
         self.data = []
         self.labels = []
@@ -47,10 +50,16 @@ class MyGPUdataset(Dataset): # Custom Dataset to load the images to GPU in advan
             images_path.sort()
             for image_path in images_path:
                 full_path = os.path.join(dir, image_path)
-                image_buf = io.read_image(full_path).to(device) # load the image as torch.Tensor & send it to GPU
-                image_buf = pre_transform(image_buf) # apply pre-processing to the image (e.g. resizing)
+                image_buf = io.read_image(full_path).to(
+                    device
+                )  # load the image as torch.Tensor & send it to GPU
+                image_buf = pre_transform(
+                    image_buf
+                )  # apply pre-processing to the image (e.g. resizing)
                 self.data.append(image_buf)
-                self.labels.append((torch.tensor(i)).to(device)) # send the label to GPU as well
+                self.labels.append(
+                    (torch.tensor(i)).to(device)
+                )  # send the label to GPU as well
 
     def __getitem__(self, index):
         data = self.data[index]

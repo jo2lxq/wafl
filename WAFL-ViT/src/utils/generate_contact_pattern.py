@@ -1,7 +1,7 @@
+import json
 import math
 import os
 import random
-import json
 
 n_time = 10000
 
@@ -15,7 +15,9 @@ areasize_set = [500]
 randomseed_set = [1]
 
 current_path = os.path.dirname(os.path.abspath(__file__))
-contact_pattern_dir = os.path.normpath(os.path.join(current_path, '../../data/contact_pattern'))
+contact_pattern_dir = os.path.normpath(
+    os.path.join(current_path, "../../data/contact_pattern")
+)
 
 parameters = []
 for areasize in areasize_set:
@@ -48,9 +50,7 @@ for areasize, pose_time, randomseed in parameters:
                 ay = ty - y
                 # Calculate the velocity components
                 vx = node_travel_speed[i] * ax / math.sqrt(ax**2 + ay**2)
-                vy = (
-                    node_travel_speed[i] * ay / math.sqrt(ax**2 + ay**2)
-                )
+                vy = node_travel_speed[i] * ay / math.sqrt(ax**2 + ay**2)
                 x += vx
                 y += vy
 
@@ -75,9 +75,7 @@ for areasize, pose_time, randomseed in parameters:
                     )
 
         # The key is the node number. The value is the list of nodes which the node (key) can communicate with.
-        node_in_contact = {
-            i: [] for i in range(n_node)
-        }
+        node_in_contact = {i: [] for i in range(n_node)}
         for i in range(n_node):
             node_in_contact[i] = []
 

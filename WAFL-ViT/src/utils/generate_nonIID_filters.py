@@ -22,7 +22,7 @@ if __name__ == "__main__":
     random.seed(randomseed)
 
     # Specify the data and output file paths
-    current_path = os.path.dirname(os.path.abspath(__file__)) # WAFL-ViT/src/utils
+    current_path = os.path.dirname(os.path.abspath(__file__))  # WAFL-ViT/src/utils
     data_dir = os.path.normpath(os.path.join(current_path, "../../data"))
     filename = os.path.join(
         data_dir, f"non-IID_filter/filter_r{ratio:02d}_s{randomseed:02d}.pt"
@@ -30,9 +30,7 @@ if __name__ == "__main__":
     print(filename)
     print(f"Generating Non-IID filter ... {filename}")
 
-    train_dir = os.path.join(
-        data_dir, "train"
-    )  # Path to the dataset
+    train_dir = os.path.join(data_dir, "train")  # Path to the dataset
     tmp_transform = transforms.Compose(
         [
             transforms.Resize(256),
@@ -45,7 +43,9 @@ if __name__ == "__main__":
         trainset, batch_size=batch_size, num_workers=4, pin_memory=True
     )
 
-    indices = [[] for _ in range(0, n_node)]  # indices[i] represents the data of the i-th node
+    indices = [
+        [] for _ in range(0, n_node)
+    ]  # indices[i] represents the data of the i-th node
     means = [torch.zeros(3) for _ in range(n_node)]
     stds = [torch.zeros(3) for _ in range(n_node)]
 
