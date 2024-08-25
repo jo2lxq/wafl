@@ -33,8 +33,7 @@ n_device = 10  # fixed to 10
 batch_size = 512
 
 # prepare the output directory if not exists
-if not os.path.exists("../accuracy"):
-    os.makedirs("../accuracy")
+os.makedirs("../accuracy", exist_ok=True)
 
 
 #
