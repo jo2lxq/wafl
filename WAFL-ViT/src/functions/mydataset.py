@@ -52,7 +52,7 @@ class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in adva
                 full_path = os.path.join(dir, image_path)
                 image_buf = io.read_image(full_path).to(
                     device
-                )  # load the image as torch.Tensor & send it to GPU
+                )  # load the image as torch.Tensor and send it to GPU
                 image_buf = pre_transform(
                     image_buf
                 )  # apply pre-processing to the image (e.g. resizing)
