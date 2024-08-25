@@ -27,13 +27,21 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 if __name__ == "__main__":
     ## 1. Initial settings and paths
     # path
-    main_path = os.path.dirname(os.path.abspath(__file__)) # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
+    main_path = os.path.dirname(
+        os.path.abspath(__file__)
+    )  # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
     project_path = os.path.normpath(os.path.join(main_path, "../results"))
-    noniid_filter_path = os.path.normpath(os.path.join(main_path, "../data/non-IID_filter"))
-    contact_pattern_path = os.path.normpath(os.path.join(main_path, "../data/contact_pattern"))
-    mean_and_std_path = os.path.normpath(os.path.join(main_path, "../data/test_mean_and_std"))
-    config_path = os.path.join(main_path, 'config.json')
+    noniid_filter_path = os.path.normpath(
+        os.path.join(main_path, "../data/non-IID_filter")
+    )
+    contact_pattern_path = os.path.normpath(
+        os.path.join(main_path, "../data/contact_pattern")
+    )
+    mean_and_std_path = os.path.normpath(
+        os.path.join(main_path, "../data/test_mean_and_std")
+    )
+    config_path = os.path.join(main_path, "config.json")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
     train_path = os.path.join(data_path, "train")
     test_path = os.path.join(data_path, "val")
@@ -58,9 +66,13 @@ if __name__ == "__main__":
         config["gpu"]["device"] if torch.cuda.is_available() else "cpu"
     )
     n_node = config["data"]["n_node"]
-    model_name = config["model"]["model_name"]  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
+    model_name = config["model"][
+        "model_name"
+    ]  # select from {vgg19_bn, mobilenet_v2, resnet_152, vit_b16}
     n_middle = config["model"]["n_middle"]
-    useGPUinTrans = config["gpu"]["transform_on_GPU"]  # whether use GPU in transform or not
+    useGPUinTrans = config["gpu"][
+        "transform_on_GPU"
+    ]  # whether use GPU in transform or not
     # self-training
     batch_size = config["collaborative_training"]["batch_size"]
     pretrain_epoch = config["self_training"]["epochs"]
@@ -75,10 +87,14 @@ if __name__ == "__main__":
     momentum = config["collaborative_training"]["momentum"]
 
     # 2.3 Schedulers (lower the learning rate during training)
-    use_pretrain_scheduler = config["self_training"]["use_scheduler"]  # whether to use scheduler in pretrain phase. Set to True if using lr_decay in pretrain phase.
+    use_pretrain_scheduler = config["self_training"][
+        "use_scheduler"
+    ]  # whether to use scheduler in pretrain phase. Set to True if using lr_decay in pretrain phase.
     pretrain_scheduler_step = config["self_training"]["scheduler_step"]
     pretrain_scheduler_rate = config["self_training"]["scheduler_rate"]
-    use_scheduler = config["collaborative_training"]["use_scheduler"]  # if not using scheduler, set to False
+    use_scheduler = config["collaborative_training"][
+        "use_scheduler"
+    ]  # if not using scheduler, set to False
     scheduler_step = config["collaborative_training"]["scheduler_step"]
     scheduler_rate = config["collaborative_training"]["scheduler_rate"]
 
@@ -88,7 +104,7 @@ if __name__ == "__main__":
     filter_seed = config["non_IID_filter"]["filter_seed"]
 
     # 2.5 About contact patterns
-    contact_file = config["contact_pattern"]["contact_file"] 
+    contact_file = config["contact_pattern"]["contact_file"]
     contact_file_path = os.path.join(contact_pattern_path, contact_file)
 
     # 2.6 Select train mode
@@ -217,9 +233,8 @@ if __name__ == "__main__":
                 [
                     transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
                     transforms.ConvertImageDtype(torch.float32),
-                    transforms.Normalize(
-                        mean=tuple(mean), std=tuple(std)
-                    ),                    transforms.RandomErasing(
+                    transforms.Normalize(mean=tuple(mean), std=tuple(std)),
+                    transforms.RandomErasing(
                         p=0.5,
                         scale=(0.02, 0.33),
                         ratio=(0.3, 3.3),
@@ -246,20 +261,26 @@ if __name__ == "__main__":
         pre_transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.ConvertImageDtype(
-                    torch.uint8
-                ),
+                transforms.ConvertImageDtype(torch.uint8),
                 # Store the original image as uint8 to compress memory capacity
                 transforms.Resize(256),
             ]
         )
         # Perform common processing for all epochs using pre_transform
         train_dataset_new = FromSubsetDataset(
-            subset[i], device, transform=train_transform, pre_transform=pre_transform, useGPUinTrans=useGPUinTrans
+            subset[i],
+            device,
+            transform=train_transform,
+            pre_transform=pre_transform,
+            useGPUinTrans=useGPUinTrans,
         )
         # Specify different processing for each epoch, such as randomCrop, in the transform.
         train_dataset_new = FromSubsetDataset(
-            subset[i], device, transform=train_transform, pre_transform=pre_transform, useGPUinTrans=useGPUinTrans
+            subset[i],
+            device,
+            transform=train_transform,
+            pre_transform=pre_transform,
+            useGPUinTrans=useGPUinTrans,
         )
         if useGPUinTrans:
             trainloader.append(
@@ -354,18 +375,20 @@ if __name__ == "__main__":
 
     ## 6. Training Phase
     contact_list = []
-    histories = [np.zeros((0, 5)) for i in range(n_node)]  # Store the results of model training
+    histories = [
+        np.zeros((0, 5)) for i in range(n_node)
+    ]  # Store the results of model training
     pretrain_histories = [
         np.zeros((0, 5)) for i in range(n_node)
     ]  # Store the results of pretraining
 
     ## 7. Main Loop
-    os.makedirs(
-        cur_path
-    )  # Make a directory to store the execution results.
+    os.makedirs(cur_path)  # Make a directory to store the execution results.
     show_dataset_contents(data_path, classes, cur_path)
 
-    with open(os.path.join(cur_path, "log.txt"), "a") as f:  # Write the training settings to the log file
+    with open(
+        os.path.join(cur_path, "log.txt"), "a"
+    ) as f:  # Write the training settings to the log file
         for i in range(len(subset)):
             f.write(f"the number of data for training {i}-th node: {len(subset[i])}\n")
         f.write(f"batch_size: {batch_size}\n")
@@ -411,7 +434,9 @@ if __name__ == "__main__":
         pretrain_history_save_path = os.path.join(
             cur_path, "params", "pretrain_histories_data.pkl"
         )
-        with open(pretrain_history_save_path, "wb") as f:  # Save the results of pretraining
+        with open(
+            pretrain_history_save_path, "wb"
+        ) as f:  # Save the results of pretraining
             pickle.dump(pretrain_histories, f)
             print("saving pretrain histories...")
         exit(0)
@@ -421,9 +446,7 @@ if __name__ == "__main__":
     with open(contact_file_path) as f:
         contact_list = json.load(f)
 
-    for epoch in range(
-        load_epoch, max_epoch + load_epoch
-    ):
+    for epoch in range(load_epoch, max_epoch + load_epoch):
         contact = contact_list[epoch]
 
         model_exchange(

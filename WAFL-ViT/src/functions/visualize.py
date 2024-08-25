@@ -208,7 +208,7 @@ def make_latent_space(y_tests, y_outputs, epoch, ls_path, cur_node):
 def calc_res_mean_and_std(histories):
     raw_data = []
     for i in range(len(histories)):
-        for j in range(10):  # 何このデータを使って求めるか
+        for j in range(10):  # last 10 epochs
             raw_data.append(histories[i][-j - 1][4])
     mean = statistics.mean(raw_data)
     std = statistics.stdev(raw_data)
