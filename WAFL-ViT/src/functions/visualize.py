@@ -13,7 +13,7 @@ def evaluate_history(histories, cur_dir):
     cmap_name = "tab20"
     cm = plt.colormaps[cmap_name]
     with open(os.path.join(cur_dir, "log.txt"), "a") as f:
-        f.write(f"{len(histories[0])}epochまでの学習\n")
+        f.write(f"Training until {len(histories[0])} epoch\n")
         for i in range(len(histories)):
             f.write(
                 f"Initial Epoch (node{i}): Loss: {histories[i][0, 3]:.5f} Accuracy: {histories[i][0, 4]:.5f}\n"
@@ -208,7 +208,7 @@ def make_latent_space(y_tests, y_outputs, epoch, ls_path, cur_node):
 def calc_res_mean_and_std(histories):
     raw_data = []
     for i in range(len(histories)):
-        for j in range(10):  # 何このデータを使って求めるか
+        for j in range(10):  # last 10 epochs
             raw_data.append(histories[i][-j - 1][4])
     mean = statistics.mean(raw_data)
     std = statistics.stdev(raw_data)

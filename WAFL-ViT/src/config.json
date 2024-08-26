@@ -1,10 +1,10 @@
 {
+    "model": {
+        "model_name": "vit_b16",
+        "n_middle": 256
+    },
     "data": {
         "n_node": 10
-    },
-    "model": {
-        "model_name": "mobilenet_v2",
-        "n_middle": 256
     },
     "gpu": {
         "device": "cuda:1",

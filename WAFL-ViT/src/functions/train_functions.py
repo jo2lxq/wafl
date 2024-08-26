@@ -19,17 +19,18 @@ from sklearn.metrics import confusion_matrix
 
 from .visualize import *
 
-# デフォルトフォントサイズ変更
+# Change the default font size
 # plt.rcParams['font.size'] = 14
-# # デフォルトグラフサイズ変更
+
+# Change the default figure size
 # plt.rcParams['figure.figsize'] = (6,6)
-# # デフォルトで方眼表示ON
+
+# Enable gird lines
 # plt.rcParams['axes.grid'] = True
 # np.set_printoptions(suppress=True, precision=5)
 
-class MyGPUdatasetFolder(
-    datasets.DatasetFolder
-):  # use when put data on GPU in __getitem__
+
+class MyGPUdatasetFolder(datasets.DatasetFolder):
     IMG_EXTENTIONS = [".jpg", ".jpeg", ".png"]
 
     def __init__(self, root, device, transform=None):
@@ -53,6 +54,7 @@ class MyGPUdatasetFolder(
     def __len__(self):
         return len(self.samples)
 
+
 def pretrain(
     nets,
     train_loaders,
@@ -73,7 +75,7 @@ def pretrain(
             n_train_acc, n_val_acc = 0, 0
             train_loss, val_loss = 0, 0
             for data in train_loaders[n]:
-                # get the inputs; data is a list of [x_train, y_train]
+                # get the inputs; data is a list of [image (tensor), label]
                 x_train, y_train = data
                 batch_size = len(y_train)
                 if x_train.is_cuda is False:
@@ -134,6 +136,7 @@ def pretrain(
             nets[n].state_dict(), os.path.join(cur_dir, f"params/Pre-train-node{n}.pth")
         )
 
+
 def fit(
     net,
     optimizer,
@@ -193,6 +196,7 @@ def fit(
     history = np.vstack((history, item))
     return history
 
+
 def torch_seed(seed=123):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -202,10 +206,12 @@ def torch_seed(seed=123):
     random.seed(seed)
     np.random.seed(seed)
 
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
 
 def show_dataset_contents(
     data_path, classes, result_path
@@ -233,10 +239,10 @@ def show_dataset_contents(
 
     with open(os.path.join(result_path, "log.txt"), "w") as f:
         for i in range(len(num_test)):
-            # print(f'label: {classes[i]} train_data: {num_train[i]} test_data: {num_test[i]}')
             f.write(
                 f"label: {classes[i]} train_data: {num_train[i]} test_data: {num_test[i]}\n"
             )
+
 
 def calculate_mean_and_std(datapath):
     transform = transforms.Compose(
@@ -259,6 +265,7 @@ def calculate_mean_and_std(datapath):
     std /= total_samples
     return mean, std
 
+
 def calculate_mean_and_std_subset(subset):
     mean_list = [torch.zeros(3) for _ in range(len(subset))]
     std_list = [torch.zeros(3) for _ in range(len(subset))]
@@ -272,6 +279,7 @@ def calculate_mean_and_std_subset(subset):
         mean_list[i] /= total_samples
         std_list[i] /= total_samples
     return mean_list, std_list
+
 
 def train_for_cmls(
     cur_dir, epoch, n, cur_time_index, classes, net, criterion, test_loader, device
@@ -346,6 +354,7 @@ def train_for_cmls(
         os.path.join(ls_dir_path, f"ls-epoch{epoch+1:4d}-node{n}.png"),
         n,
     )
+
 
 def select_optimizer(model_name, net, optimizer_name, lr, momentum=None):
     if optimizer_name == "SGD":

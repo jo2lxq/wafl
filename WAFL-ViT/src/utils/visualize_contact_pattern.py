@@ -1,13 +1,14 @@
 import json
 import os
-import random
 
 import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
 import pandas as pd
 
-# このファイルはgenerate.pyで作ったものから読み込むので、事前にgenerateが必要で下記パラメータはそれに合わせる
+"""
+This file uses and checks the file created by generate.py, so you need to run generate.py before running this file.
+The following parameters should be consistent with generate.py.
+"""
 
 max_time = 1000
 
