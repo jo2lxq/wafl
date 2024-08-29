@@ -13,12 +13,12 @@ Wireless ad hoc federated learning (WAFL) allows collaborative learning via devi
 
 Each device trains a model individually with the local data it has. When a device encounters another device, they exchange their local models with each other through the ad hoc communication channel. Then, the device aggregates the models into a new model, which is expected to be more general compared to the locally trained models. With an adjustment process of the new model with the local training data, they repeat this process during they are in contact. Please note that there is no third-party server operated for the federation among multi-vendor devices.
 
-**Click [here](./assets/WAFL_project_en.pdf) to see the white paper.** <br /><br />
+**(*) Click [here](./assets/WAFL_project_en.pdf) to see the white paper.** <br /><br />
 [<img src="./assets/WAFL_project.png">](./assets/WAFL_project_en.pdf)
 
 ## WAFL-Variations
 
-| WAFL-Vision Transformer | WAFL Autoencoder | Multi-Task WAFL |
+| WAFL-Vision Transformer | WAFL-Autoencoder | Multi-Task WAFL |
 | --- | --- | --- |
 | [<img src="./assets/WAFL_ViT.png">](./assets/WAFL_ViT.pdf)　|　[<img src="./assets/WAFL_Autoencoder.png">](./assets/WAFL_Autoencoder.pdf) | [<img src="./assets/MT_WAFL.png">](./assets/MT_WAFL.pdf) |
 |This work studies the use of the Vision Transformer for image recoginition tasks. In this scenario, each device has a whole ViT model and exchanges a part of the model parameters with neighbors through device-to-device communications during its collaborative training phase. This work demonstrates that WAFL-ViT works efficiently for developing image recognition models.| This work studies the scenario that multiple IoT devices are installed in a remote site, such as in a building, and that they collaboratively detect anomalies from the observations. They are expected (1) to learn the normal features from daily observations and (2) to detect anomalies when they occurred. | People make various reactions to a presented object unconsciously. When looking at an object, some people may say about the object itself (e.g., Apple), others may say about the color (e.g., Purple), and others may say about the size (e.g., Big). By integrating these various reactions from many user sources, a machine will be able to provide answers at the same time, working as a brainstormer for a presented object. MT-WAFL allows to train such models collaboratively.|
