@@ -34,7 +34,7 @@ Each device trains a model individually with the local data it has. When a devic
 To be presented in IEEE WiMob CWN workshop 2024.
 
 ## Publications
-\[1\] Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779). 
+\[1\] **Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779).** 
 
 \[2\] Naoya Tezuka, Hideya Ochiai, Yuwei Sun, Hiroshi Esaki, "Resilience of Wireless Ad Hoc Federated Learning against Model Poisoning Attacks", IEEE International Conference on Trust, Privacy and Security in Intelligent Systems, and Applications (TPS-ISA), 2022 (https://ieeexplore.ieee.org/abstract/document/10063735).
 
@@ -42,7 +42,7 @@ To be presented in IEEE WiMob CWN workshop 2024.
 
 \[4\] Hideya Ochiai, Riku Nishihata, Eisuke Tomiyama, Yuwei Sun, and Hiroshi Esaki, "Detection of Global Anomalies on Distributed IoT Edges with Device-to-Device Communication", ACM MobiHoc, 2023 (https://dl.acm.org/doi/abs/10.1145/3565287.3616528).
 
-\[5\] Hideya Ochiai, Atsuya Muramatsu, Yudai Ueda, Ryuhei Yamaguchi, Kazuhiro Katoh, and Hiroshi Esaki, "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition", IEEE World Forum on Internet of Things (WF-IoT), 2023 (Best Paper Award) (https://ieeexplore.ieee.org/document/10539480).
+\[5\] **Hideya Ochiai, Atsuya Muramatsu, Yudai Ueda, Ryuhei Yamaguchi, Kazuhiro Katoh, and Hiroshi Esaki, "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition", IEEE World Forum on Internet of Things (WF-IoT), 2023 (Best Paper Award) (https://ieeexplore.ieee.org/document/10539480).**
 
 \[6\] Ryusei Higuchi, Hiroshi Esaki, and Hideya Ochiai, "Personalized Wireless Ad Hoc Federated Learning for Label Preference Skew", IEEE World Forum on Internet of Things (WF-IoT), 2023 (https://ieeexplore.ieee.org/document/10539563).
 
