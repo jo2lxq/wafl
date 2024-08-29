@@ -7,7 +7,7 @@ As of Aug 2024, this repository contains the following two projects.
 
 ## What is WAFL?
 
-Wireless ad hoc federated learning (WAFL) allows collaborative learning with device-to-device communications organized by the devices physically nearby. Here, each device has a wireless interface and can communicate with each other when they are within the radio range. The devices are expected to move with people, vehicles, or robots, producing opportunistic contacts with each other.
+Wireless ad hoc federated learning (WAFL) allows collaborative learning via device-to-device communications organized by the devices physically nearby. Here, each device has a wireless interface and can communicate with each other when they are within the radio range. The devices are expected to move with people, vehicles, or robots, producing opportunistic contacts with each other.
 
 <img src="./WAFL-MLP/assets/wafl_contact_model_aggregation.png">
 
