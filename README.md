@@ -5,6 +5,11 @@ As of Aug 2024, this repository contains the following two projects.
 1. [WAFL-MLP](./WAFL-MLP/): The most basic codes with a fully-connected neural network for starters. You can learn what the WAFL is.
 2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer for image recognition.
 
+## What is WAFL?
+
+Wireless ad hoc federated learning (WAFL) allows collaborative learning with device-to-device communications organized by the devices physically nearby. Here, each device has a wireless interface and can communicate with each other when they are within the radio range. The devices are expected to move with people, vehicles, or robots, producing opportunistic contacts with each other.
+
+
 
 ## Publications
 \[1\] Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779). 
