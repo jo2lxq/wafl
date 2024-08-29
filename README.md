@@ -15,11 +15,19 @@ Each device trains a model individually with the local data it has. When a devic
 
 ## White Papers
 
+[<img src="./assets/WAFL_project.png">](./assets/WAFL_project_en.pdf)
+
 ### WAFL with Vision Transformer
+
+[<img src="./assets/WAFL_ViT.png">](./assets/WAFL_ViT.pdf)
 
 ### WAFL for Anomaly Detection
 
+[<img src="./assets/WAFL_Autoencoder.png">](./assets/WAFL_Autoencoder.pdf)
+
 ### WAFL for Multi-Task Learning
+
+[<img src="./assets/MT_WAFL.png">](./assets/MT_WAFL.pdf)
 
 ### WAFL for Detection Transformer 
 
