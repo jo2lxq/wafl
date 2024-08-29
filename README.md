@@ -21,7 +21,9 @@ Each device trains a model individually with the local data it has. When a devic
 
 ### WAFL for Multi-Task Learning
 
+### WAFL for Detection Transformer 
 
+To be presented in IEEE WiMob CWN workshop 2024.
 
 ## Publications
 \[1\] Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779). 
