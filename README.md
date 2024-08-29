@@ -13,7 +13,7 @@ As of Aug 2024, this repository contains the following two projects.
 
 \[3\] Eisuke Tomiyama, Hiroshi Esaki, Hideya Ochiai, "WAFL-GAN: Wireless Ad Hoc Federated Learning for Distributed Generative Adversarial Networks", IEEE International Conference on Knowledge and Smart Technology, 2023 (https://ieeexplore.ieee.org/document/10086811).
 
-\[4\] Hideya Ochiai, Riku Nishihata, Eisuke Tomiyama, Yuwei Sun, and Hiroshi Esaki, "Detection of Global Anomalies on Distributed IoT Edges with Device-to-Device Communication", ACM MobiHoc, 2023.
+\[4\] Hideya Ochiai, Riku Nishihata, Eisuke Tomiyama, Yuwei Sun, and Hiroshi Esaki, "Detection of Global Anomalies on Distributed IoT Edges with Device-to-Device Communication", ACM MobiHoc, 2023 (https://dl.acm.org/doi/abs/10.1145/3565287.3616528).
 
 \[5\] Hideya Ochiai, Atsuya Muramatsu, Yudai Ueda, Ryuhei Yamaguchi, Kazuhiro Katoh, and Hiroshi Esaki, "Tuning Vision Transformer with Device-to-Device Communication for Targeted Image Recognition", IEEE World Forum on Internet of Things (WF-IoT), 2023 (Best Paper Award) (https://ieeexplore.ieee.org/document/10539480).
 
