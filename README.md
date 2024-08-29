@@ -13,7 +13,7 @@ Wireless ad hoc federated learning (WAFL) allows collaborative learning with dev
 
 Each device trains a model individually with the local data it has. When a device encounters another device, they exchange their local models with each other through the ad hoc communication channel. Then, the device aggregates the models into a new model, which is expected to be more general compared to the locally trained models. With an adjustment process of the new model with the local training data, they repeat this process during they are in contact. Please note that there is no third-party server operated for the federation among multi-vendor devices.
 
-### White Paper
+## White Papers
 
 ### WAFL with Vision Transformer
 
