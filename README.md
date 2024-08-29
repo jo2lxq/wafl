@@ -17,21 +17,10 @@ Each device trains a model individually with the local data it has. When a devic
 
 [<img src="./assets/WAFL_project.png">](./assets/WAFL_project_en.pdf)
 
+### Variations
 | WAFL-Vision Transformer | WAFL Autoencoder | Multi-Task WAFL |
 | --- | --- | --- |
 | [<img src="./assets/WAFL_ViT.png">](./assets/WAFL_ViT.pdf)　|　[<img src="./assets/WAFL_Autoencoder.png">](./assets/WAFL_Autoencoder.pdf) | [<img src="./assets/MT_WAFL.png">](./assets/MT_WAFL.pdf) |
-
-### WAFL for Anomaly Detection
-
-
-
-### WAFL for Multi-Task Learning
-
-
-
-### WAFL for Detection Transformer 
-
-To be presented in IEEE WiMob CWN workshop 2024.
 
 ## Publications
 \[1\] **Hideya Ochiai, Yuwei Sun, Qingzhe Jin, Nattanon Wongwiwatchai, Hiroshi Esaki, "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine Learning" in May 2022 (https://arxiv.org/abs/2205.11779).** 
