@@ -24,7 +24,12 @@ WAFL-DETR/data/custom/
   val2017 # val images
 ```
 
-Additionally, please download pretrained DETR model from [here](https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth) and place it under `WAFL-DETR` directory. We use DETR with ResNet-50. For more information about the model, please refer to [here](https://github.com/facebookresearch/detr).
+Additionally, please download pretrained DETR model by running `load_pretrained_model.py` like: 
+```
+python load_pretrained_model.py
+```
+
+We use DETR with ResNet-50. For more information about the model, please refer to [here](https://github.com/facebookresearch/detr).
 
 ## Usage
 
