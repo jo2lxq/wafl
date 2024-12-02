@@ -88,7 +88,7 @@ The number of clients which participates in the collaborative learning.
 The percentage of each client's class in the noniid scenario. 
 
 #### topology
-Select from `"line"`, `"tree"` and `"ringstar"`. `"tree"` is set as the default.
+Select from `"line"`, `"tree"` and `"ringstar"`. `"line"` is set as the default.
 
 #### iid_setting
 Set with boolean `True` and training starts with iid scenario. `False` is set as the default. 
