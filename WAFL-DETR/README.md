@@ -14,22 +14,15 @@ In this study, we verified three learning and model exchange methods. The first 
 
 Also, in this scenario, all the devices are assumed to be fixed and exchange their model with neighboring devices based on topology. We verified three types of topology : line, tree, and ringstar.
 
-## Data and pretrained-model preparation
+## Data preparation
 
-We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here](https://drive.google.com/file/d/1Isfu-4ojrI1xakTK6Aw9TX3zhIK31boT/view). We expect the directory strcture to be the following.
+We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here](https://drive.google.com/file/d/1Isfu-4ojrI1xakTK6Aw9TX3zhIK31boT/view) and set it in the `WAFL-DETR` directory. We expect the directory strcture to be the following.
 ```
 WAFL-DETR/data/custom/
   annotations # annotation json files
   train2017 # train images
   val2017 # val images
 ```
-
-Additionally, please download pretrained DETR model by running `load_pretrained_model.py` like: 
-```
-python load_pretrained_model.py
-```
-
-We use DETR with ResNet-50. For more information about the model, please refer to [here](https://github.com/facebookresearch/detr).
 
 ## Usage
 
@@ -47,6 +40,22 @@ pip install -r requirements.txt
 
 If you encounter any issues, you may need to modify the versions in `requirements.txt` to suit your specific setup. In particular, ensure that the `torch` and `torchvision` versions are compatible with your CUDA installation if you're using GPU acceleration.
 
+### Change directory
+We expect you to execute codes in the `src` directory, so please move there like:
+
+```
+cd src
+```
+
+### Pretrained-model preparation
+Please download pretrained DETR model by running `load_pretrained_model.py` like: 
+
+```
+python load_pretrained_model.py
+```
+
+We use DETR with ResNet-50. For more information about the model, please refer to [here](https://github.com/facebookresearch/detr).
+
 ### Training
 
 To train the models, please exectute `main_wafl.py` like:
@@ -54,7 +63,7 @@ To train the models, please exectute `main_wafl.py` like:
 ```
 python main_wafl.py \
     --dataset_file "custom" \
-    --coco_path "./data/custom/" \
+    --coco_path "../data/custom/" \
     --output_dir "outputs" \
     --resume "detr-r50_no-class-head.pth" \
     --num_classes 10 \
@@ -104,14 +113,14 @@ Set with boolean `True` and training starts with method HE. `False` is set as th
 after training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
 
 ```
-python mAP_plot.py
+python ./util/mAP_plot.py
 ```
 The trend graphs are made in `outputs` directory.
 
 If you want to check the image with bounding box infered, you can use `box_visualize.py` like:
 
 ```
-python box_visualize.py
+python ./util/box_visualize.py
 ```
 
 By rewriting the codes at the end of the file, you can set the model for which node, the model for which epoch, which image, and the threshold value for displaying the bounding box.
