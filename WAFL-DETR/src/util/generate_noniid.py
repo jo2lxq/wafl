@@ -9,10 +9,10 @@ import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
 
 
-def generate(dataset, batch_size, num_clients, num_classes, filename, random_seed=42):
+def generate(dataset, batch_size, num_clients, num_classes, filename, ratio=90, random_seed=42):
     random.seed(random_seed)
 
-    print(f'Generating IID filter...')
+    print(f'Generating NonIID filter...')
 
     sampler = torch.utils.data.SequentialSampler(dataset)
     batch_sampler = torch.utils.data.BatchSampler(
@@ -24,8 +24,6 @@ def generate(dataset, batch_size, num_clients, num_classes, filename, random_see
 
     dists = np.zeros((num_clients, num_classes), dtype=np.int64)
 
-    # anno_dists = np.zeros((num_classes, num_classes), dtype=np.int64)
-
     index = 0
     for imgs, targets in data_loader:
         labels = []
@@ -36,18 +34,22 @@ def generate(dataset, batch_size, num_clients, num_classes, filename, random_see
                 unique, freq = np.unique(arr, return_counts=True)
                 mode = unique[np.argmax(freq)]
                 labels.append(mode)
-                # for cat in target['labels'].tolist():
-                #     anno_dists[mode][cat] += 1
             else:
                 labels.append(target['labels'].item())
-                # anno_dists[target['labels'].item()][target['labels'].item()] += 1
 
         for i in range(len(labels)):
-            n = random.randint(0, 9)
-            indices[n].append(index + i)
-            dists[n][labels[i]] += 1
+            if random.randint(0, 99) < ratio: 
+                indices[labels[i]].append(index + i)
+                dists[labels[i]][labels[i]] += 1
+            else:
+                n = random.randint(0, 8)
+                if labels[i] <= n:
+                    n += 1
+                indices[n].append(index + i)
+                dists[n][labels[i]] += 1
 
         index += batch_size
 
     torch.save(indices, filename)
     print('Done!')
+

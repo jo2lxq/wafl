@@ -6,7 +6,6 @@ checkpoint = torch.hub.load_state_dict_from_url(
     check_hash=True
 )
 
-# 分類ヘッドの削除
 del checkpoint['model']['class_embed.weight']
 del checkpoint['model']['class_embed.bias']
 

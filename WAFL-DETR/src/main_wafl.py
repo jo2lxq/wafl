@@ -15,11 +15,12 @@ import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
 
-from engine_wafl import evaluate, train_one_epoch
-from models import build_wafl_models
-from aggregation import model_aggregate
+from functions.engine_wafl import evaluate, train_one_epoch
+from functions.aggregation import model_aggregate
 
-from filter import generate_noniid, generate_iid
+from models import build_wafl_models
+
+from util import generate_noniid, generate_iid
 
 
 def get_args_parser():
@@ -105,11 +106,6 @@ def get_args_parser():
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--num_workers', default=2, type=int)
 
-    # distributed training parameters
-    parser.add_argument('--world_size', default=1, type=int,
-                        help='number of distributed processes')
-    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-
     # WAFL training parameters
     parser.add_argument('--num_clients', default=1, type=int, help='number of clients participating in wafl')
     parser.add_argument('--noniid_ratio', default=90, type=int)
@@ -124,9 +120,6 @@ def get_args_parser():
 
 
 def main(args):
-    #以下distribuedを使うとエラーになるのでコメントアウト.
-    # utils.init_distributed_mode(args)
-    # print("git:\n  {}\n".format(utils.get_sha()))
     args.distributed = None
 
     if args.frozen_weights is not None:
@@ -146,12 +139,6 @@ def main(args):
 
     for i in range(args.num_clients):
         models[i] = models[i].to(device)
-
-
-    # model_without_ddp = models
-    # if args.distributed:
-    #     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-    #     model_without_ddp = model.module
     
     private_param = []
     if args.tle:
@@ -197,15 +184,12 @@ def main(args):
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
 
-    # if args.distributed:
-    #     sampler_train = DistributedSampler(dataset_train)
-    #     sampler_val = DistributedSampler(dataset_val, shuffle=False)
     if args.iid_setting:
-        filter_path = f'./filter/filter_s{args.seed}.pt'
+        filter_path = f'../config/filter_s{args.seed}.pt'
         if not os.path.isfile(filter_path):
             generate_iid.generate(dataset_train, args.batch_size, args.num_clients, args.num_classes, filter_path, args.seed)
     else:
-        filter_path = f'./filter/filter_r{args.noniid_ratio}_s{args.seed}.pt'
+        filter_path = f'../config/filter_r{args.noniid_ratio}_s{args.seed}.pt'
         if not os.path.isfile(filter_path):
             generate_noniid.generate(dataset_train, args.batch_size, args.num_clients, args.num_classes, filter_path, args.noniid_ratio, args.seed)
 
@@ -226,9 +210,6 @@ def main(args):
     else:
         base_ds = get_coco_api_from_dataset(dataset_val)
 
-    # if args.frozen_weights is not None:
-    #     checkpoint = torch.load(args.frozen_weights, map_location='cpu')
-    #     model_without_ddp.detr.load_state_dict(checkpoint['model'])
     if args.output_dir:
         os.makedirs(f'{args.output_dir}', exist_ok=True)
         for i in range(args.num_clients):
@@ -257,30 +238,14 @@ def main(args):
                 models[i].load_state_dict(checkpoint['model'], strict=False)
                 optimizers[i].load_state_dict(checkpoint['optimizer'])
                 lr_schedulers[i].load_state_dict(checkpoint['lr_scheduler'])
-        # if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-        #     optimizer.load_state_dict(checkpoint['optimizer'])
-        #     lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        #     args.start_epoch = checkpoint['epoch'] + 1
-
-
-    # if args.eval:
-    #     test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-    #                                           data_loader_val, base_ds, device, args.output_dir)
-    #     if args.output_dir:
-    #         utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
-    #     return
 
     if (not args.resume_from_preselftrained) and (args.start_epoch == 0):
         print("Start pre-self training")
         start_time = time.time()
         for epoch in range(args.start_epoch, args.preself_epochs):
-            # if args.distributed:
-            #     sampler_train.set_epoch(epoch)
             train_stats = train_one_epoch(
                 models, criterion, data_loaders_train, optimizers, device, epoch,
                 args.clip_max_norm)
-            # for i in range(args.num_clients):
-            #     lr_schedulers[i].step()
             if args.output_dir:
                 for i in range(args.num_clients):
                     checkpoint_paths = [output_dir / f'node{i}' / 'checkpoint_preself_train.pth']
@@ -333,8 +298,6 @@ def main(args):
     if args.start_epoch != 0:
         print(f"resume from epoch {args.start_epoch}")
     for epoch in range(args.start_epoch, args.epochs):
-        # if args.distributed:
-        #     sampler_train.set_epoch(epoch)
         if args.no_exchange:
             pass
         else:

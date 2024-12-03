@@ -2,7 +2,7 @@ import json
 import torch
 
 def model_aggregate(models, topology="line", private_param=[], coef=1.0):
-    with open('./graph.json') as f:
+    with open('../config/graph.json') as f:
         g_dict = json.load(f)
     graph = g_dict[topology]
     model_dicts = []
