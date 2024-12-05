@@ -16,7 +16,7 @@ Also, in this scenario, all the devices are assumed to be fixed and exchange the
 
 ## Data preparation
 
-We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here](https://drive.google.com/file/d/1Isfu-4ojrI1xakTK6Aw9TX3zhIK31boT/view) and set it in the `WAFL-DETR` directory. We expect the directory strcture to be the following.
+We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here](https://drive.google.com/file/d/1Isfu-4ojrI1xakTK6Aw9TX3zhIK31boT/view) and set it in the `data` directory. We expect the directory strcture to be the following.
 ```
 WAFL-DETR/data/custom/
   annotations # annotation json files
@@ -117,7 +117,7 @@ python ./util/mAP_plot.py
 ```
 The trend graphs are made in `outputs` directory.
 
-If you want to check the image with bounding box infered, you can use `box_visualize.py` like:
+If you want to check the image with infered bounding box, you can use `box_visualize.py` like:
 
 ```
 python ./util/box_visualize.py
