@@ -30,10 +30,8 @@ transform = T.Compose([
 ])
 
 def box_cxcywh_to_xyxy(x):
-    # (center_x, center_y, width, height)*N -> (center_x*N, center_y*N, width*N, height*N)
     x_c, y_c, w, h = x.unbind(1)
     b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
-    # (center_x, center_y, width, height)*N の形に戻す
     return torch.stack(b, dim=1)
 
 def rescale_bboxes(out_bbox, size):
@@ -67,8 +65,7 @@ def plot_finetuned_results(pil_img, image_name, threshold, prob=None, boxes=None
   plt.savefig(f'./outputs/{image_name}_{device}_{epoch}_{threshold}.png')
 
 # object detection
-def run_worflow(my_image, image_name, my_model, labels, device, epoch, topology, threshold=0.75):
-  # normalization of mean-std input images (batch size : 1)
+def run_worflow(my_image, image_name, my_model, labels, device, epoch, threshold=0.75):
   img = transform(my_image).unsqueeze(0)
   outputs = my_model(img)
 
@@ -82,8 +79,8 @@ if __name__ == "__main__":
 
   # please edit these configurations
   device = 5
-  epoch = '0049'
-  threshold = 0.75
+  epoch = '0079'
+  threshold = 0.5
   image_name = 'ade99cb3add1eb35.jpg'
 
   checkpoint = torch.load(f'./outputs/node{device}/checkpoint{epoch}.pth', map_location='cpu')
