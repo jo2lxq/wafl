@@ -126,4 +126,4 @@ python ./util/box_visualize.py
 By rewriting the codes at the end of the file, you can set the model for which node, the model for which epoch, which image, and the threshold value for displaying the bounding box.
 
 ## References
-[1] "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection" (IEEE WiMob CWN workshop, 2024)
+[1] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob CWN workshop, 2024
