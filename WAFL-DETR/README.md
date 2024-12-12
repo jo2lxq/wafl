@@ -120,7 +120,7 @@ Displays the training log in more detail if `True` set. `False` is set as the de
 ### Main indicators
 You will see some evaluation indicators in the standard output during the training. The main indicators are
 
-`loss`: Sum of all losses.
+`loss`: Weighted sum of all losses.
 
 `loss_ce`: Cross-entropy loss to measure the prediction error of class labels.
 
