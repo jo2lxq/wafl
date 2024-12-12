@@ -32,9 +32,15 @@ This code has been tested and verified to work with Python 3.11.4 and CUDA 11.6.
 
 However, please note that you may need to adjust the versions, especially for `torch` and `torchvision`, to match your specific environment and CUDA version.
 
-After ensuring versions of required dependencies, install them by following commands:
+First, please install cython and scipy via conda:
 
-```Linux
+```
+conda install cython scipy
+```
+
+then please install other dependencies by following commands:
+
+```
 pip install -r requirements.txt
 ```
 
@@ -126,4 +132,4 @@ python ./util/box_visualize.py
 By rewriting the codes at the end of the file, you can set the model for which node, the model for which epoch, which image, and the threshold value for displaying the bounding box.
 
 ## References
-[1] "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection" (IEEE WiMob CWN workshop, 2024)
+[1] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob CWN workshop, 2024
