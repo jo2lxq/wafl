@@ -82,7 +82,7 @@ python main_wafl.py \
     --lr_backbone 1e-6
 ```
 
-after training, `outputs` directory is created and it includes `log.txt` and checkpoints. The following explains some config parameters.
+After training, `outputs` directory is created and it includes `log.txt` and checkpoints. The following explains some config parameters.
 
 #### dataset_file
 Please specify "custom" as it uses a custom dataset.
@@ -132,7 +132,7 @@ Please refer to [the original paper](https://ai.meta.com/research/publications/e
 
 ### Visualization
 
-after training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
+After training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
 
 ```
 python ./util/mAP_plot.py
