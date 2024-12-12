@@ -116,6 +116,8 @@ def get_args_parser():
     parser.add_argument('--resume_from_preselftrained', type=str, default='')
     parser.add_argument('--resume_from_wafl', type=str, default='')
 
+    parser.add_argument('--detail_log', default=False, type=bool)
+
     return parser
 
 
@@ -245,7 +247,7 @@ def main(args):
         for epoch in range(args.start_epoch, args.preself_epochs):
             train_stats = train_one_epoch(
                 models, criterion, data_loaders_train, optimizers, device, epoch,
-                args.clip_max_norm)
+                args.clip_max_norm, args.detail_log)
             if args.output_dir:
                 for i in range(args.num_clients):
                     checkpoint_paths = [output_dir / f'node{i}' / 'checkpoint_preself_train.pth']
@@ -262,7 +264,7 @@ def main(args):
                         }, checkpoint_path)
 
             test_stats, coco_evaluators = evaluate(
-                models, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
+                models, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, args.detail_log
             )
 
             log_stats = [{**{f'train_{k}': v for k, v in train_stats[i].items()},

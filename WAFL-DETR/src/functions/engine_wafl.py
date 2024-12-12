@@ -16,18 +16,22 @@ from datasets.panoptic_eval import PanopticEvaluator
 
 def train_one_epoch(models: list[torch.nn.Module], criterion: torch.nn.Module,
                     data_loaders: list[Iterable], optimizers: list[torch.optim.Optimizer],
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    device: torch.device, epoch: int, max_norm: float = 0, detail_log: bool = False):
     trains_stats = []
     for i in range(len(models)):
         models[i].train()
         criterion.train()
-        metric_logger = utils.MetricLogger(delimiter="  ")
+        metric_logger = utils.MetricLogger(delimiter="  ", detail_log=detail_log)
         metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
         header = f'Node: [{i}] Epoch: [{epoch}]'
         print_freq = 10
-
-        for samples, targets in metric_logger.log_every(data_loaders[i], print_freq, header):
+        
+        if detail_log:
+            loader = metric_logger.log_every(data_loaders[i], print_freq, header)
+        else:
+            loader = data_loaders[i]
+        for samples, targets in loader:
             samples = samples.to(device)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -61,19 +65,19 @@ def train_one_epoch(models: list[torch.nn.Module], criterion: torch.nn.Module,
             metric_logger.update(lr=optimizers[i].param_groups[0]["lr"])
         # gather the stats from all processes
         metric_logger.synchronize_between_processes()
-        print(f"Node [{i}] Averaged stats:", metric_logger)
+        print(f"Node: [{i}] Epoch: [{epoch}] Averaged stats:", metric_logger)
         trains_stats.append({k: meter.global_avg for k, meter in metric_logger.meters.items()})
     return trains_stats
 
 @torch.no_grad()
-def evaluate(models, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+def evaluate(models, criterion, postprocessors, data_loader, base_ds, device, output_dir, detail_log):
     all_stats = []
     coco_evaluators = []
     for i in range(len(models)):
         models[i].eval()
         criterion.eval()
 
-        metric_logger = utils.MetricLogger(delimiter="  ")
+        metric_logger = utils.MetricLogger(delimiter="  ", detail_log=detail_log)
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
         header = 'Test:'
 
@@ -88,8 +92,13 @@ def evaluate(models, criterion, postprocessors, data_loader, base_ds, device, ou
                 data_loader.dataset.ann_folder,
                 output_dir=os.path.join(output_dir, "panoptic_eval"),
             )
-
-        for samples, targets in metric_logger.log_every(data_loader, 10, header):
+        
+        print_freq = 10
+        if detail_log:
+            loader = metric_logger.log_every(data_loader, print_freq, header)
+        else:
+            loader = data_loader
+        for samples, targets in loader:
             samples = samples.to(device)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -129,13 +138,12 @@ def evaluate(models, criterion, postprocessors, data_loader, base_ds, device, ou
 
         # gather the stats from all processes
         metric_logger.synchronize_between_processes()
+        print(f'============== node{i} evaluation results summary ==============')
         print("Averaged stats:", metric_logger)
         if coco_evaluator is not None:
             coco_evaluator.synchronize_between_processes()
         if panoptic_evaluator is not None:
             panoptic_evaluator.synchronize_between_processes()
-
-        print(f'============== node{i} evaluation results summary ==============')
 
         # accumulate predictions from all images
         if coco_evaluator is not None:

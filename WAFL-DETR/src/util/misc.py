@@ -157,9 +157,10 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger(object):
-    def __init__(self, delimiter="\t"):
+    def __init__(self, delimiter="\t", detail_log=False):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
+        self.detail_log = detail_log
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -178,10 +179,18 @@ class MetricLogger(object):
 
     def __str__(self):
         loss_str = []
+        main_keys = ['loss', 'loss_ce', 'loss_bbox', 'loss_giou']
         for name, meter in self.meters.items():
-            loss_str.append(
-                "{}: {}".format(name, str(meter))
-            )
+            if self.detail_log:
+                loss_str.append(
+                    "{}: {}".format(name, str(meter))
+                )
+            else:
+                if name in main_keys:
+                    loss_str.append(
+                        "{}: {}".format(name, str(meter))
+                    )
+                    
         return self.delimiter.join(loss_str)
 
     def synchronize_between_processes(self):
