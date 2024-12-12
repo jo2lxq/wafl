@@ -114,6 +114,22 @@ Set with boolean `True` and training starts with method TLE. `False` is set as t
 #### he
 Set with boolean `True` and training starts with method HE. `False` is set as the default. Training starts with method FPE in that case.
 
+#### detail_log
+Displays the training log in more detail if `True` set. `False` is set as the default.
+
+### Main indicators
+You will see some evaluation indicators in the standard output during the training. The main indicators are
+
+`loss`: Sum of all losses.
+
+`loss_ce`: Cross-entropy loss to measure the prediction error of class labels.
+
+`loss_bbox`: L1 loss to compare the positions of bounding boxes.
+
+`loss_giou`: Generalized IoU loss to evaluate the overlap between bounding boxes.
+
+Please refer to [the original paper](https://ai.meta.com/research/publications/end-to-end-object-detection-with-transformers/) for details.
+
 ### Visualization
 
 after training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
