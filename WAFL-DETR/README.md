@@ -135,14 +135,14 @@ Please refer to [the original paper](https://ai.meta.com/research/publications/e
 After training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
 
 ```
-python ./util/mAP_plot.py
+python ./util/bin/mAP_plot.py
 ```
 The trend graphs are made in `outputs` directory.
 
 If you want to check the image with infered bounding box, you can use `box_visualize.py` like:
 
 ```
-python ./util/box_visualize.py
+python ./util/bin/box_visualize.py
 ```
 
 By rewriting the codes at the end of the file, you can set the model for which node, the model for which epoch, which image, and the threshold value for displaying the bounding box.
