@@ -4,10 +4,8 @@ import os
 
 import util.misc as utils
 
-try:
-    from panopticapi.evaluation import pq_compute
-except ImportError:
-    pass
+from panopticapi.evaluation import pq_compute
+
 
 
 class PanopticEvaluator(object):

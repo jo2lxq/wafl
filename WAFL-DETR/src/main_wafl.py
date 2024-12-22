@@ -251,8 +251,8 @@ def main(args):
             if args.output_dir:
                 for i in range(args.num_clients):
                     checkpoint_paths = [output_dir / f'node{i}' / 'checkpoint_preself_train.pth']
-                    # extra checkpoint before LR drop and every 10 epochs
-                    if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 10 == 0:
+                    # extra checkpoint before LR drop and every 100 epochs
+                    if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
                         checkpoint_paths.append(output_dir / f'node{i}' / f'checkpoint{epoch:04}_preself_train.pth')
                     for checkpoint_path in checkpoint_paths:
                         utils.save_on_master({
@@ -312,8 +312,8 @@ def main(args):
         if args.output_dir:
             for i in range(args.num_clients):
                 checkpoint_paths = [output_dir / f'node{i}' / 'checkpoint.pth']
-                # extra checkpoint before LR drop and every 10 epochs
-                if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 10 == 0:
+                # extra checkpoint before LR drop and every 100 epochs
+                if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
                     checkpoint_paths.append(output_dir / f'node{i}' / f'checkpoint{epoch:04}.pth')
                 for checkpoint_path in checkpoint_paths:
                     utils.save_on_master({
