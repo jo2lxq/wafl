@@ -25,11 +25,11 @@ from util import generate_noniid, generate_iid
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
-    parser.add_argument('--lr', default=1e-4, type=float)
-    parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--lr', default=1e-5, type=float)
+    parser.add_argument('--lr_backbone', default=1e-6, type=float)
+    parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--lr_drop', default=1000, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
@@ -88,26 +88,26 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
 
     # dataset parameters
-    parser.add_argument('--num_classes', default=None, type=int,
+    parser.add_argument('--num_classes', default=10, type=int,
                         help='#classes in your dataset, which can override the value hard-coded in file models/detr.py')
-    parser.add_argument('--dataset_file', default='coco')
-    parser.add_argument('--coco_path', type=str)
+    parser.add_argument('--dataset_file', default='custom')
+    parser.add_argument('--coco_path', default='../data/custom', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
-    parser.add_argument('--output_dir', default='',
+    parser.add_argument('--output_dir', default='outputs',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume', default='detr-r50_no-class-head.pth', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--num_workers', default=2, type=int)
 
     # WAFL training parameters
-    parser.add_argument('--num_clients', default=1, type=int, help='number of clients participating in wafl')
+    parser.add_argument('--num_clients', default=10, type=int, help='number of clients participating in wafl')
     parser.add_argument('--noniid_ratio', default=90, type=int)
     parser.add_argument('--iid_setting', default=False, type=bool)
     parser.add_argument('--no_exchange', default=False, type=bool)
