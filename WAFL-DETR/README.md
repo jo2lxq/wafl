@@ -32,13 +32,7 @@ This code has been tested and verified to work with Python 3.11.4 and CUDA 11.6.
 
 However, please note that you may need to adjust the versions, especially for `torch` and `torchvision`, to match your specific environment and CUDA version.
 
-First, please install cython and scipy via conda:
-
-```
-conda install cython scipy
-```
-
-then please install other dependencies by following commands:
+After ensuring versions of required dependencies, install them by following commands:
 
 ```
 pip install -r requirements.txt
