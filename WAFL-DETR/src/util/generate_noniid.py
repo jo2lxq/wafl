@@ -42,7 +42,7 @@ def generate(dataset, batch_size, num_clients, num_classes, filename, ratio=90, 
                 indices[labels[i]].append(index + i)
                 dists[labels[i]][labels[i]] += 1
             else:
-                n = random.randint(0, 8)
+                n = random.randint(0, num_clients - 2)
                 if labels[i] <= n:
                     n += 1
                 indices[n].append(index + i)

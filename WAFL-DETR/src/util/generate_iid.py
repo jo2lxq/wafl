@@ -38,7 +38,7 @@ def generate(dataset, batch_size, num_clients, num_classes, filename, random_see
                 labels.append(target['labels'].item())
 
         for i in range(len(labels)):
-            n = random.randint(0, 9)
+            n = random.randint(0, num_clients - 1)
             indices[n].append(index + i)
             dists[n][labels[i]] += 1
 
