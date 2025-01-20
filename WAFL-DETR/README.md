@@ -133,13 +133,31 @@ python ./util/bin/mAP_plot.py
 ```
 The trend graphs are made in `outputs` directory.
 
-If you want to check the image with infered bounding box, you can use `box_visualize.py` like:
+If you want to check the image with infered bounding box, you can use `box_visualize.py`.
+First, please edit the codes at the end of the file. You can set the model for which device, the model for which epoch, which image, and the IoU threshold as change the value of `device`, `epoch`, `threshold`, and `image_name`. Please specify the epoch of the `.pth` file in the `outputs` for `epoch` and the filename in `data/custom/val2017` for `image_name`.
+
+Examples are shown below:
+
+```
+# please edit these configurations
+device = 5
+epoch = '0099'
+threshold = 0.5
+image_name = '0957f84aecdf874d.jpg'
+
+
+checkpoint = torch.load(f'./outputs/node{device}/checkpoint{epoch}.pth', map_location='cpu')
+model.load_state_dict(checkpoint['model'], strict=False)
+
+im = Image.open(f'../data/custom/val2017/{image_name}')
+run_worflow(im, image_name, model, oid_labels, device, epoch, threshold)
+```
+After that, please execute `box_visualize.py` like:
 
 ```
 python ./util/bin/box_visualize.py
 ```
 
-By rewriting the codes at the end of the file, you can set the model for which node, the model for which epoch, which image, and the threshold value for displaying the bounding box.
 
 ## References
 [1] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob CWN workshop, 2024
