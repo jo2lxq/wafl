@@ -144,13 +144,6 @@ device = 5
 epoch = '0099'
 threshold = 0.5
 image_name = '0957f84aecdf874d.jpg'
-
-
-checkpoint = torch.load(f'./outputs/node{device}/checkpoint{epoch}.pth', map_location='cpu')
-model.load_state_dict(checkpoint['model'], strict=False)
-
-im = Image.open(f'../data/custom/val2017/{image_name}')
-run_worflow(im, image_name, model, oid_labels, device, epoch, threshold)
 ```
 After that, please execute `box_visualize.py` like:
 
