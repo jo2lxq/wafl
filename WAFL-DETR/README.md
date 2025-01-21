@@ -134,7 +134,7 @@ python ./util/bin/mAP_plot.py
 The trend graphs are made in `outputs` directory.
 
 If you want to check the image with infered bounding box, you can use `box_visualize.py`.
-First, please edit the codes at the end of the file. You can set the model for which device, the model for which epoch, which image, and the IoU threshold as change the value of `device`, `epoch`, `threshold`, and `image_name`. Please specify the epoch of the `.pth` file in the `outputs` for `epoch` and the filename in `data/custom/val2017` for `image_name`.
+First, please edit the codes at the end of the file. You can set the model for which device, the model for which epoch, which image, and the confidence score threshold as change the value of `device`, `epoch`, `threshold`, and `image_name`. Please specify the epoch of the `.pth` file in the `outputs` for `epoch` and the filename in `data/custom/val2017` for `image_name`.
 
 Examples are shown below:
 
