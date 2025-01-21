@@ -1,9 +1,10 @@
 # Welcome to Wireless Ad Hoc Federated Learning (WAFL)
 This space provides the code for Wireless Ad Hoc Federated Learning (WAFL) -- A Fully Autonomous Collaborative Learning with Device-to-Device Communication.
 
-As of Aug 2024, this repository contains the following two projects.
+As of January 2025, this repository contains the following three projects.
 1. [WAFL-MLP](./WAFL-MLP/): The most basic codes with a fully-connected neural network for starters. You can learn what the WAFL is.
 2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer for image recognition.
+3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer for object detection.
 
 ## What is WAFL?
 
@@ -48,6 +49,6 @@ Each device trains a model individually with the local data it has. When a devic
 
 \[12\] Atsuya Muramatsu, Hideya Ochiai, Hiroshi Esaki, "Tuning Personalized Models by Two-Phase Parameter Decoupling with Device-to-Device Communication", IEEE International Conference on Knowledge and Smart Technology, 2024 (Best Paper Award) (https://ieeexplore.ieee.org/document/10499649).
 
-\[13\] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob CWN workshop, 2024 (in press).
+\[13\] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob, 2024 (https://ieeexplore.ieee.org/document/10770328).
 
-\[14\] Ryusei Higuchi, Hiroshi Esaki, Hideya Ochiai, "Neuron Personalization of Collaborative Federated Learning via Device-to-Device Communications", IEEE WiMob CWN workshop, 2024 (in press).
+\[14\] Ryusei Higuchi, Hiroshi Esaki, Hideya Ochiai, "Neuron Personalization of Collaborative Federated Learning via Device-to-Device Communications", IEEE WiMob, 2024 (https://ieeexplore.ieee.org/document/10770527).
