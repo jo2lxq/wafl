@@ -1,0 +1,16 @@
+path: /home/u01071/data-original/custom_yolo
+train: train
+val: val
+
+nc: 9
+
+names:  
+  0: switch
+  1: monitor
+  2: keyboard
+  3: light
+  4: books
+  5: airconditioner
+  6: cardboardbox
+  7: chair
+  8: server
