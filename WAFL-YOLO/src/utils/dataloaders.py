@@ -227,22 +227,16 @@ def create_dataloader(path,
                 generator=generator)
     
     if iid_setting:
-        filter_path = f'/home/u01071/yolov9/filter/filter_s42.pt'
+        filter_path = f'../config/filter/filter_s42.pt'
         if not os.path.isfile(filter_path):
             generate_iid(dl_filter, batch_size, num_clients, num_classes, filter_path)
     else:
-        filter_path = f'/home/u01071/yolov9/filter/filter_r90_s42.pt'
+        filter_path = f'../config/filter/filter_r90_s42.pt'
         if not os.path.isfile(filter_path):
             generate_noniid(dl_filter, batch_size, num_clients, num_classes, filter_path)
 
     if mode == "train":
-        # indices = torch.load(filter_path)
-        elab_obj_ds_numbers = [105, 105, 115, 115, 68, 87]
-        indices = []
-        idx = 0
-        for i in range(6):
-            indices.append([i for i in range(idx, idx + elab_obj_ds_numbers[i])])
-            idx += elab_obj_ds_numbers[i]
+        indices = torch.load(filter_path)
         subsets = [Subset(dataset, indices[i]) for i in range(num_clients)]
         loader = [DataLoader(subsets[i], 
                             batch_size=batch_size, 
@@ -692,12 +686,6 @@ class LoadImagesAndLabels(Dataset):
                     b += self.ims[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
             pbar.close()
-
-        print("in data loader")
-        print(self.indices[:10])
-        print(self.labels[:10])
-        print(self.im_files[:10])
-        print(self.label_files[:10])
 
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
         # Check image caching requirements vs available memory
