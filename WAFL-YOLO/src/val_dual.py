@@ -105,6 +105,7 @@ def run(
         callbacks=Callbacks(),
         compute_loss=None,
         node_i=None,
+        detail_log=False
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -171,14 +172,16 @@ def run(
         names = dict(enumerate(names))
     class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
     s = ('%22s' + '%11s' * 6) % ('Class', 'Images', 'Instances', 'P', 'R', 'mAP50', 'mAP50-95')
+    LOGGER.info(s)
     tp, fp, p, r, f1, mp, mr, map50, ap50, map = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     dt = Profile(), Profile(), Profile()  # profiling times
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
-    pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-        
-    for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
+    if detail_log:
+        dataloader = tqdm(dataloader, bar_format=TQDM_BAR_FORMAT)  # progress bar
+    
+    for batch_i, (im, targets, paths, shapes) in enumerate(dataloader):
         callbacks.run('on_val_batch_start')
         with dt[0]:
             if cuda:
@@ -195,8 +198,8 @@ def run(
         # Loss
         if compute_loss:
             preds = preds[1]
-            #train_out = train_out[1]
-            #loss += compute_loss(train_out, targets)[1]  # box, obj, cls
+            # train_out = train_out[1]
+            # loss += compute_loss(train_out, targets)[1]  # box, obj, cls
         else:
             preds = preds[0][1]
 
@@ -321,7 +324,7 @@ def run(
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
+    return (mp, mr, map50, map), maps, t
 
 
 def parse_opt():
