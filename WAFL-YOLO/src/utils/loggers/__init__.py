@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pkg_resources as pkg
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from utils.general import LOGGER, colorstr, cv2
 from utils.plots import plot_images, plot_labels, plot_results
