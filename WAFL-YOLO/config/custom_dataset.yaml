@@ -1,4 +1,4 @@
-path: /home/u01071/data/custom_yolo
+path: ../data/custom_yolo
 train: train
 val: val
 
