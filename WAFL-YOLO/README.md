@@ -96,7 +96,6 @@ python ./utils/bin/mAP_plot.py
 The trend graphs are made in `outputs` directory.
 
 If you want to check the image with infered bounding box, you can use `box_visualization.py` like:
-First, please edit the codes at the end of the file. You can select the image with `--source`, the model with `--weights`, and the confidence score threshold with `--conf-thres`. Please specify the filename in `data/custom/val2017` for `--source`.
 
 ```
 python ./utils/bin/box_visualization.py
@@ -104,3 +103,4 @@ python ./utils/bin/box_visualization.py
     --weights 'outputs/weights/node0/last.pt' \
     --conf-thres 0.5
 ```
+You can select the image with `--source`, the model with `--weights`, and the confidence score threshold with `--conf-thres`. Please specify the filename in `data/custom_yolo/val/images` for `--source`.
