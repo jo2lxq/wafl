@@ -21,10 +21,7 @@ LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
-try:
-    import thop  # for FLOPs computation
-except ImportError:
-    thop = None
+import thop
 
 # Suppress PyTorch warnings
 warnings.filterwarnings('ignore', message='User provided device_type of \'cuda\', but CUDA is not available. Disabling')
@@ -102,7 +99,6 @@ def device_count():
 
 
 def select_device(device='', batch_size=0, newline=True):
-    # device = None or 'cpu' or 0 or '0' or '0,1,2,3'
     s = f'YOLO 🚀 {git_describe() or file_date()} Python-{platform.python_version()} torch-{torch.__version__} '
     device = str(device).strip().lower().replace('cuda:', '').replace('none', '')  # to string, 'cuda:0' to '0'
     cpu = device == 'cpu'
@@ -315,14 +311,6 @@ def smart_optimizer(model, name='Adam', lr=0.001, momentum=0.9, decay=1e-5):
     # YOLOv5 3-param group optimizer: 0) weights with decay, 1) weights no decay, 2) biases no decay
     g = [], [], []  # optimizer parameter groups
     bn = tuple(v for k, v in nn.__dict__.items() if 'Norm' in k)  # normalization layers, i.e. BatchNorm2d()
-    #for v in model.modules():
-    #    for p_name, p in v.named_parameters(recurse=0):
-    #        if p_name == 'bias':  # bias (no decay)
-    #            g[2].append(p)
-    #        elif p_name == 'weight' and isinstance(v, bn):  # weight (no decay)
-    #            g[1].append(p)
-    #        else:
-    #            g[0].append(p)  # weight (with decay)
                 
     for v in model.modules():
         if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):  # bias (no decay)
@@ -543,7 +531,6 @@ class ModelEMA:
             if v.dtype.is_floating_point:  # true for FP16 and FP32
                 v *= d
                 v += (1 - d) * msd[k].detach()
-        # assert v.dtype == msd[k].dtype == torch.float32, f'{k}: EMA {v.dtype} and model {msd[k].dtype} must be FP32'
 
     def update_attr(self, model, include=(), exclude=('process_group', 'reducer')):
         # Update EMA attributes

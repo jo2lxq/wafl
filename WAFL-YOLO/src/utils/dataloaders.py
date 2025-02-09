@@ -138,7 +138,6 @@ def create_dataloader_self(path,
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
-    #loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     loader = DataLoader if image_weights or close_mosaic else InfiniteDataLoader
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
@@ -172,6 +171,7 @@ def create_dataloader(path,
                       shuffle=False,
                       num_clients=10,
                       num_classes=10,
+                      noniid_ratio=90,
                       iid_setting=False,
                       mode='train'):
     if rect and shuffle:
@@ -212,7 +212,6 @@ def create_dataloader(path,
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
-    # loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     loader = DataLoader if image_weights or close_mosaic else InfiniteDataLoader
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
@@ -231,7 +230,7 @@ def create_dataloader(path,
         if not os.path.isfile(filter_path):
             generate_iid(dl_filter, batch_size, num_clients, num_classes, filter_path)
     else:
-        filter_path = f'../config/filter/filter_r90_s42.pt'
+        filter_path = f'../config/filter/filter_r{noniid_ratio}_s42.pt'
         if not os.path.isfile(filter_path):
             generate_noniid(dl_filter, batch_size, num_clients, num_classes, filter_path)
 
@@ -293,7 +292,6 @@ class _RepeatSampler:
 class LoadScreenshots:
     # YOLOv5 screenshot dataloader, i.e. `python detect.py --source "screen 0 100 100 512 256"`
     def __init__(self, source, img_size=640, stride=32, auto=True, transforms=None):
-        # source = [screen_number left top width height] (pixels)
         check_requirements('mss')
         import mss
 
@@ -399,7 +397,6 @@ class LoadImages:
                 ret_val, im0 = self.cap.read()
 
             self.frame += 1
-            # im0 = self._cv2_rotate(im0)  # for use if cv2 autorotation is False
             s = f'video {self.count + 1}/{self.nf} ({self.frame}/{self.frames}) {path}: '
 
         else:
@@ -424,7 +421,6 @@ class LoadImages:
         self.cap = cv2.VideoCapture(path)
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) / self.vid_stride)
         self.orientation = int(self.cap.get(cv2.CAP_PROP_ORIENTATION_META))  # rotation degrees
-        # self.cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)  # disable https://github.com/ultralytics/yolov5/issues/8493
 
     def _cv2_rotate(self, im):
         # Rotate a cv2 video manually
@@ -568,17 +564,14 @@ class LoadImagesAndLabels(Dataset):
                 p = Path(p)  # os-agnostic
                 if p.is_dir():  # dir
                     f += glob.glob(str(p / '**' / '*.*'), recursive=True)
-                    # f = list(p.rglob('*.*'))  # pathlib
                 elif p.is_file():  # file
                     with open(p) as t:
                         t = t.read().strip().splitlines()
                         parent = str(p.parent) + os.sep
                         f += [x.replace('./', parent, 1) if x.startswith('./') else x for x in t]  # to global path
-                        # f += [p.parent / x.lstrip(os.sep) for x in t]  # to global path (pathlib)
                 else:
                     raise FileNotFoundError(f'{prefix}{p} does not exist')
             self.im_files = sorted(x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in IMG_FORMATS)
-            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert self.im_files, f'{prefix}No images found'
         except Exception as e:
             raise Exception(f'{prefix}Error loading data from {path}: {e}\n{HELP_URL}') from e
@@ -745,12 +738,6 @@ class LoadImagesAndLabels(Dataset):
     def __len__(self):
         return len(self.im_files)
 
-    # def __iter__(self):
-    #     self.count = -1
-    #     print('ran dataset iter')
-    #     #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
-    #     return self
-
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
         hyp = self.hyp
@@ -809,10 +796,6 @@ class LoadImagesAndLabels(Dataset):
                 img = np.fliplr(img)
                 if nl:
                     labels[:, 1] = 1 - labels[:, 1]
-
-            # Cutouts
-            # labels = cutout(img, labels, p=0.5)
-            # nl = len(labels)  # update after cutout
 
         labels_out = torch.zeros((nl, 6))
         if nl:
@@ -889,7 +872,6 @@ class LoadImagesAndLabels(Dataset):
         labels4 = np.concatenate(labels4, 0)
         for x in (labels4[:, 1:], *segments4):
             np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
-        # img4, labels4 = replicate(img4, labels4)  # replicate
 
         # Augment
         img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp['copy_paste'])
@@ -966,7 +948,6 @@ class LoadImagesAndLabels(Dataset):
 
         for x in (labels9[:, 1:], *segments9):
             np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
-        # img9, labels9 = replicate(img9, labels9)  # replicate
 
         # Augment
         img9, labels9, segments9 = copy_paste(img9, labels9, segments9, p=self.hyp['copy_paste'])
@@ -1052,7 +1033,6 @@ def extract_boxes(path=DATASETS_DIR / 'coco128'):  # from utils.dataloaders impo
                         f.parent.mkdir(parents=True)
 
                     b = x[1:] * [w, h, w, h]  # box
-                    # b[2:] = b[2:].max()  # rectangle to square
                     b[2:] = b[2:] * 1.2 + 3  # pad
                     b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(int)
 

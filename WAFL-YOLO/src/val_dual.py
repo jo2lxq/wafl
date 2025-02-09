@@ -67,7 +67,6 @@ def process_batch(detections, labels, iouv):
             if x[0].shape[0] > 1:
                 matches = matches[matches[:, 2].argsort()[::-1]]
                 matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
-                # matches = matches[matches[:, 2].argsort()[::-1]]
                 matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
             correct[matches[:, 1].astype(int), i] = True
     return torch.tensor(correct, dtype=torch.bool, device=iouv.device)
@@ -139,7 +138,6 @@ def run(
     # Configure
     model.eval()
     cuda = device.type != 'cpu'
-    #is_coco = isinstance(data.get('val'), str) and data['val'].endswith(f'coco{os.sep}val2017.txt')  # COCO dataset
     is_coco = isinstance(data.get('val'), str) and data['val'].endswith(f'val2017.txt')  # COCO dataset
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
@@ -198,8 +196,6 @@ def run(
         # Loss
         if compute_loss:
             preds = preds[1]
-            # train_out = train_out[1]
-            # loss += compute_loss(train_out, targets)[1]  # box, obj, cls
         else:
             preds = preds[0][1]
 

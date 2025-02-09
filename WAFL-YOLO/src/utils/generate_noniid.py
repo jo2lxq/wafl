@@ -17,8 +17,6 @@ def generate_noniid(dl, batch_size, num_clients, num_classes, filename, ratio=90
 
     dists = np.zeros((num_clients, num_classes), dtype=np.int64)
 
-    # anno_dists = np.zeros((num_classes, num_classes), dtype=np.int64)
-
     index = 0
     for imgs, targets, path, _ in dl:
         labels = []
@@ -32,11 +30,8 @@ def generate_noniid(dl, batch_size, num_clients, num_classes, filename, ratio=90
                 unique, freq = np.unique(arr, return_counts=True)
                 mode = unique[np.argmax(freq)]
                 labels.append(int(mode))
-                # for cat in target['labels'].tolist():
-                #     anno_dists[mode][cat] += 1
             elif target.shape[0] == 1:
                 labels.append(int(target[0, 0].item()))
-                # anno_dists[target['labels'].item()][target['labels'].item()] += 1
             else:
                 raise RuntimeError("There is a data with no label")
 
@@ -53,8 +48,6 @@ def generate_noniid(dl, batch_size, num_clients, num_classes, filename, ratio=90
 
         index += batch_size
 
-    print(dists)
     torch.save(indices, filename)
-    raise RuntimeError("test completed")
     print('Done!')
 

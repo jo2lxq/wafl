@@ -36,7 +36,6 @@ from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, ch
                            labels_to_image_weights, methods, one_cycle, print_args, print_mutation, strip_optimizer,
                            yaml_save, one_flat_cycle)
 from utils.loggers import Loggers
-from utils.loggers.comet.comet_utils import check_comet_resume
 from utils.loss_tal_dual import ComputeLoss
 from utils.metrics import fitness
 from utils.plots import plot_evolve
@@ -52,9 +51,9 @@ GIT_INFO = None#check_git_info()
 
 
 def train(hyp, opt, device, callbacks, preself=False):  # hyp is path/to/hyp.yaml or hyp dictionary
-    save_dir, epochs, preself_epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, num_clients, iid_setting, topology, dhe, hle, detail_log = \
+    save_dir, epochs, preself_epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, num_clients, iid_setting, noniid_ratio, topology, dhe, hle, detail_log = \
         Path(opt.save_dir), opt.epochs, opt.preself_epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-        opt.resume, opt.noval, opt.nosave, opt.workers, opt.num_clients, opt.iid_setting, opt.topology, opt.dhe, opt.hle, opt.detail_log
+        opt.resume, opt.noval, opt.nosave, opt.workers, opt.num_clients, opt.iid_setting, opt.noniid_ratio, opt.topology, opt.dhe, opt.hle, opt.detail_log
     callbacks.run('on_pretrain_routine_start')
 
     if preself:
@@ -441,9 +440,9 @@ def train(hyp, opt, device, callbacks, preself=False):  # hyp is path/to/hyp.yam
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='./yolov9-c.pt', help='initial weights path')
-    parser.add_argument('--cfg', type=str, default='yolo.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default=ROOT / 'src/config/custom_dataset.yaml', help='dataset.yaml path')
-    parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-high.yaml', help='hyperparameters path')
+    parser.add_argument('--cfg', type=str, default=ROOT / 'models/detect/yolov9-c.yaml', help='model.yaml path')
+    parser.add_argument('--data', type=str, default=ROOT / '../config/custom_dataset.yaml', help='dataset.yaml path')
+    parser.add_argument('--hyp', type=str, default=ROOT / '../config/hyps/hyp.scratch-high.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
     parser.add_argument('--preself-epochs', type=int, default=30, help='number of preself epochs')
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
@@ -487,6 +486,7 @@ def parse_opt(known=False):
     # WAFL arguments
     parser.add_argument('--num_clients', type=int, default=10, help='The number of clients participatin in learning')
     parser.add_argument('--iid_setting', type=bool, default=False)
+    parser.add_argument('--noniid_ratio', type=int, default=90)
     parser.add_argument('--topology', type=str, default="line")
     parser.add_argument('--dhe', type=bool, default=False)
     parser.add_argument('--hle', type=bool, default=False)
@@ -502,7 +502,7 @@ def main(opt, callbacks=Callbacks()):
         print_args(vars(opt))
 
     # Resume (from specified or most recent last.pt)
-    if opt.resume and not check_comet_resume(opt) and not opt.evolve:
+    if opt.resume and not opt.evolve:
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
         opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
         opt_data = opt.data  # original dataset

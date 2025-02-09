@@ -60,8 +60,6 @@ class Ensemble(nn.ModuleList):
 
     def forward(self, x, augment=False, profile=False, visualize=False):
         y = [module(x, augment, profile, visualize)[0] for module in self]
-        # y = torch.stack(y).max(0)[0]  # max ensemble
-        # y = torch.stack(y).mean(0)  # mean ensemble
         y = torch.cat(y, 1)  # nms ensemble
         return y, None  # inference, train output
 
@@ -256,9 +254,6 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
         t = type(m)
         if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model):
             m.inplace = inplace  # torch 1.7.0 compatibility
-            # if t is Detect and not isinstance(m.anchor_grid, list):
-            #    delattr(m, 'anchor_grid')
-            #    setattr(m, 'anchor_grid', [torch.zeros(1)] * m.nl)
         elif t is nn.Upsample and not hasattr(m, 'recompute_scale_factor'):
             m.recompute_scale_factor = None  # torch 1.11.0 compatibility
 

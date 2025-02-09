@@ -84,9 +84,8 @@ class ADown(nn.Module):
 
 
 class RepConvN(nn.Module):
-    """RepConv is a basic rep-style block, including training and deploy status
-    This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
-    """
+    # RepConv is a basic rep-style block, including training and deploy status
+    # This code is based on https://github.com/DingXiaoH/RepVGG/blob/main/repvgg.py
     default_act = nn.SiLU()  # default activation
 
     def __init__(self, c1, c2, k=3, s=1, p=1, g=1, d=1, act=True, bn=False, deploy=False):
@@ -236,12 +235,10 @@ class DFL(nn.Module):
         self.conv = nn.Conv2d(c1, 1, 1, bias=False).requires_grad_(False)
         self.conv.weight.data[:] = nn.Parameter(torch.arange(c1, dtype=torch.float).view(1, c1, 1, 1)) # / 120.0
         self.c1 = c1
-        # self.bn = nn.BatchNorm2d(4)
 
     def forward(self, x):
         b, c, a = x.shape  # batch, channels, anchors
         return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
-        # return self.conv(x.view(b, self.c1, 4, a).softmax(1)).view(b, 4, a)
 
 
 class BottleneckBase(nn.Module):
@@ -480,7 +477,6 @@ class SPPF(nn.Module):
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_ * 4, c2, 1, 1)
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
-        # self.m = SoftPool2d(kernel_size=k, stride=1, padding=k // 2)
 
     def forward(self, x):
         x = self.cv1(x)
@@ -807,11 +803,7 @@ class DetectMultiBackend(nn.Module):
                 gd.ParseFromString(f.read())
             frozen_func = wrap_frozen_graph(gd, inputs="x:0", outputs=gd_outputs(gd))
         elif tflite or edgetpu:  # https://www.tensorflow.org/lite/guide/python#install_tensorflow_lite_for_python
-            try:  # https://coral.ai/docs/edgetpu/tflite-python/#update-existing-tf-lite-code-for-the-edge-tpu
-                from tflite_runtime.interpreter import Interpreter, load_delegate
-            except ImportError:
-                import tensorflow as tf
-                Interpreter, load_delegate = tf.lite.Interpreter, tf.lite.experimental.load_delegate,
+            from tflite_runtime.interpreter import Interpreter, load_delegate
             if edgetpu:  # TF Edge TPU https://coral.ai/software/#edgetpu-runtime
                 LOGGER.info(f'Loading {w} for TensorFlow Lite Edge TPU inference...')
                 delegate = {
@@ -1174,9 +1166,6 @@ class Detections:
         # return a list of Detections objects, i.e. 'for result in results.tolist():'
         r = range(self.n)  # iterable
         x = [Detections([self.ims[i]], [self.pred[i]], [self.files[i]], self.times, self.names, self.s) for i in r]
-        # for d in x:
-        #    for k in ['ims', 'pred', 'xyxy', 'xyxyn', 'xywh', 'xywhn']:
-        #        setattr(d, k, getattr(d, k)[0])  # pop out of list
         return x
 
     def print(self):

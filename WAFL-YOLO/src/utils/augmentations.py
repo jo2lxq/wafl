@@ -19,26 +19,21 @@ class Albumentations:
     def __init__(self, size=640):
         self.transform = None
         prefix = colorstr('albumentations: ')
-        try:
-            import albumentations as A
-            check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+        import albumentations as A
+        check_version(A.__version__, '1.0.3', hard=True)  # version requirement
 
-            T = [
-                A.RandomResizedCrop(height=size, width=size, scale=(0.8, 1.0), ratio=(0.9, 1.11), p=0.0),
-                A.Blur(p=0.01),
-                A.MedianBlur(p=0.01),
-                A.ToGray(p=0.01),
-                A.CLAHE(p=0.01),
-                A.RandomBrightnessContrast(p=0.0),
-                A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
-            self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+        T = [
+            A.RandomResizedCrop(height=size, width=size, scale=(0.8, 1.0), ratio=(0.9, 1.11), p=0.0),
+            A.Blur(p=0.01),
+            A.MedianBlur(p=0.01),
+            A.ToGray(p=0.01),
+            A.CLAHE(p=0.01),
+            A.RandomBrightnessContrast(p=0.0),
+            A.RandomGamma(p=0.0),
+            A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+        self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
 
-            LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
-        except ImportError:  # package not installed, skip
-            pass
-        except Exception as e:
-            LOGGER.info(f'{prefix}{e}')
+        LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
 
     def __call__(self, im, labels, p=1.0):
         if self.transform and random.random() < p:
@@ -145,8 +140,6 @@ def random_perspective(im,
                        shear=10,
                        perspective=0.0,
                        border=(0, 0)):
-    # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(0.1, 0.1), scale=(0.9, 1.1), shear=(-10, 10))
-    # targets = [cls, xyxy]
 
     height = im.shape[0] + border[0] * 2  # shape(h,w,c)
     width = im.shape[1] + border[1] * 2
@@ -164,9 +157,7 @@ def random_perspective(im,
     # Rotation and Scale
     R = np.eye(3)
     a = random.uniform(-degrees, degrees)
-    # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
     s = random.uniform(1 - scale, 1 + scale)
-    # s = 2 ** random.uniform(-scale, scale)
     R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
 
     # Shear
@@ -187,11 +178,6 @@ def random_perspective(im,
         else:  # affine
             im = cv2.warpAffine(im, M[:2], dsize=(width, height), borderValue=(114, 114, 114))
 
-    # Visualize
-    # import matplotlib.pyplot as plt
-    # ax = plt.subplots(1, 2, figsize=(12, 6))[1].ravel()
-    # ax[0].imshow(im[:, :, ::-1])  # base
-    # ax[1].imshow(im2[:, :, ::-1])  # warped
 
     # Transform label coordinates
     n = len(targets)
@@ -313,39 +299,32 @@ def classify_albumentations(
         auto_aug=False):
     # YOLOv5 classification Albumentations (optional, only used if package is installed)
     prefix = colorstr('albumentations: ')
-    try:
-        import albumentations as A
-        from albumentations.pytorch import ToTensorV2
-        check_version(A.__version__, '1.0.3', hard=True)  # version requirement
-        if augment:  # Resize and crop
-            T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
-            if auto_aug:
-                # TODO: implement AugMix, AutoAug & RandAug in albumentation
-                LOGGER.info(f'{prefix}auto augmentations are currently not supported')
-            else:
-                if hflip > 0:
-                    T += [A.HorizontalFlip(p=hflip)]
-                if vflip > 0:
-                    T += [A.VerticalFlip(p=vflip)]
-                if jitter > 0:
-                    color_jitter = (float(jitter),) * 3  # repeat value for brightness, contrast, satuaration, 0 hue
-                    T += [A.ColorJitter(*color_jitter, 0)]
-        else:  # Use fixed crop for eval set (reproducibility)
-            T = [A.SmallestMaxSize(max_size=size), A.CenterCrop(height=size, width=size)]
-        T += [A.Normalize(mean=mean, std=std), ToTensorV2()]  # Normalize and convert to Tensor
-        LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
-        return A.Compose(T)
-
-    except ImportError:  # package not installed, skip
-        LOGGER.warning(f'{prefix}⚠️ not found, install with `pip install albumentations` (recommended)')
-    except Exception as e:
-        LOGGER.info(f'{prefix}{e}')
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+    check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+    if augment:  # Resize and crop
+        T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
+        if auto_aug:
+            # TODO: implement AugMix, AutoAug & RandAug in albumentation
+            LOGGER.info(f'{prefix}auto augmentations are currently not supported')
+        else:
+            if hflip > 0:
+                T += [A.HorizontalFlip(p=hflip)]
+            if vflip > 0:
+                T += [A.VerticalFlip(p=vflip)]
+            if jitter > 0:
+                color_jitter = (float(jitter),) * 3  # repeat value for brightness, contrast, satuaration, 0 hue
+                T += [A.ColorJitter(*color_jitter, 0)]
+    else:  # Use fixed crop for eval set (reproducibility)
+        T = [A.SmallestMaxSize(max_size=size), A.CenterCrop(height=size, width=size)]
+    T += [A.Normalize(mean=mean, std=std), ToTensorV2()]  # Normalize and convert to Tensor
+    LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
+    return A.Compose(T)
 
 
 def classify_transforms(size=224):
     # Transforms to apply if albumentations not installed
     assert isinstance(size, int), f'ERROR: classify_transforms size {size} must be integer, not (list, tuple)'
-    # T.Compose([T.ToTensor(), T.Resize(size), T.CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
     return T.Compose([CenterCrop(size), ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 
