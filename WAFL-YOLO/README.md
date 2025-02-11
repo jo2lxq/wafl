@@ -100,7 +100,7 @@ If you want to check the image with infered bounding box, you can use `box_visua
 ```
 python ./utils/bin/box_visualization.py \
     --source '../data/custom_yolo/val/images/0957f84aecdf874d.jpg' \
-    --weights 'outputs/weights/node0/last.pt' \
-    --conf-thres 0.5
+    --weights 'outputs/weights/node1/last.pt' \
+    --conf-thres 0.3
 ```
 You can select the image with `--source`, the model with `--weights`, and the confidence score threshold with `--conf-thres`. Please specify the filename in `data/custom_yolo/val/images` for `--source`.
