@@ -60,7 +60,7 @@ python train_wafl.py \
     --topology "line"
 ```
 
-After training, `outputs` directory is created and it includes `log.txt` and checkpoints. The following explains some config parameters.
+After training, `outputs` directory is created and it includes `results.csv` and checkpoints. The following explains some config parameters.
 
 #### weights
 The path to the file of model parameters. The parameters set here will be used as the initial values when training starts.
