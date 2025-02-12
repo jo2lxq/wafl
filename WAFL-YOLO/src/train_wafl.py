@@ -432,7 +432,11 @@ def train(hyp, opt, device, callbacks, preself=False):  # hyp is path/to/hyp.yam
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
-
+    del models
+    del ckpts
+    del emas
+    del scalers
+    del optimizers
     torch.cuda.empty_cache()
     return results
 
