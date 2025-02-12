@@ -10,7 +10,7 @@ Also, in this scenario, all the devices are assumed to be fixed and exchange the
 
 ## Data preparation
 
-We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here]() and set it in the `data` directory. We expect the directory strcture to be the following.
+We created the target dataset by selecting 10 categories from the Open Image Dataset and used it. Please download the custom dataset from [here](https://drive.google.com/file/d/1dFmatagowqRz7zAf0sZNxREe0sp5kX4Z/view?usp=sharing) and set it in the `data` directory. We expect the directory strcture to be the following.
 ```
 WAFL-YOLO/data/custom_yolo/
   train # train images and labels
