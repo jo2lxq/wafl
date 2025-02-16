@@ -60,7 +60,7 @@ python train_wafl.py \
     --topology "line"
 ```
 
-After training, `outputs` directory is created and it includes `results.csv` and checkpoints. The following explains some config parameters.
+After training, `outputs` directory is created and it includes `results.csv` and checkpoints (If the `outputs` directory already exists, a new directory named `outputs1` will be created. If `outputs1` exists, `outputs2` will be created, and so on). The following explains some config parameters.
 
 #### weights
 The path to the file of model parameters. The parameters set here will be used as the initial values when training starts.
@@ -88,7 +88,7 @@ Displays the training log in more detail if `True` set. `False` is set as the de
 
 ### Visualization
 
-After training, `outputs` directory is made. (If the `outputs` directory already exists, a new directory named `outputs1` will be created. If `outputs1` exists, `outputs2` will be created, and so on). It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
+The `outputs` directory includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
 
 ```
 python ./utils/bin/mAP_plot.py --dirname "outputs"
