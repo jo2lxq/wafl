@@ -6,6 +6,7 @@ import csv
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--preself', type=bool, default=False)
+parser.add_argument('--dirname', type=str, default="outputs")
 
 args = parser.parse_args()
 
@@ -28,9 +29,9 @@ if __name__ == '__main__':
     plt.figure(figsize=(10, 6))
     all_node_mAPs = []
     for i in range(6):
-        filepath = f'outputs/node{i}/results.csv'
+        filepath = f'{args.dirname}/node{i}/results.csv'
         if args.preself:
-            filepath = f'outputs/preself/node{i}/results.csv'
+            filepath = f'{args.dirname}/preself/node{i}/results.csv'
         mAPs = read_mAP_data_from_csv(filepath)
         epochs = range(1, len(mAPs) + 1)
         plt.plot(epochs, mAPs, label=f'node{i}')
@@ -41,7 +42,7 @@ if __name__ == '__main__':
     plt.ylabel('mAP')
     plt.legend()
     plt.grid(True)
-    plt.savefig("./outputs/mAP.png")
+    plt.savefig(f"./{args.dirname}/mAP.png")
     plt.close()
 
     plt.figure(figsize=(10, 6))
@@ -52,5 +53,5 @@ if __name__ == '__main__':
     plt.xlabel('Epochs')
     plt.ylabel('mAP')
     plt.grid(True)
-    plt.savefig("./outputs/mAP_avg.png")
+    plt.savefig(f"./{args.dirname}/mAP_avg.png")
     plt.close()
