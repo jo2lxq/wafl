@@ -88,12 +88,12 @@ Displays the training log in more detail if `True` set. `False` is set as the de
 
 ### Visualization
 
-After training, `outputs` directory is made. It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
+After training, `outputs` directory is made. (If the `outputs` directory already exists, a new directory named `outputs1` will be created. If `outputs1` exists, `outputs2` will be created, and so on). It includes the results of training. If you want to visualize the trends in mAP, you can run `mAP_plot.py` like: 
 
 ```
-python ./utils/bin/mAP_plot.py
+python ./utils/bin/mAP_plot.py --dirname "outputs"
 ```
-The trend graphs are made in `outputs` directory.
+Please specify the directory name for reading data and saving plot results with `--dirname`.
 
 If you want to check the image with infered bounding box, you can use `box_visualization.py` like:
 
@@ -101,6 +101,7 @@ If you want to check the image with infered bounding box, you can use `box_visua
 python ./utils/bin/box_visualization.py \
     --source '../data/custom_yolo/val/images/0957f84aecdf874d.jpg' \
     --weights 'outputs/weights/node1/last.pt' \
-    --conf-thres 0.3
+    --conf-thres 0.3 \
+    --project "outputs"
 ```
-You can select the image with `--source`, the model with `--weights`, and the confidence score threshold with `--conf-thres`. Please specify the filename in `data/custom_yolo/val/images` for `--source`.
+You can select the image with `--source`, the model with `--weights`, the confidence score threshold with `--conf-thres`, and in which directory to save with `--project`. Please specify the filename in `data/custom_yolo/val/images` for `--source`.
