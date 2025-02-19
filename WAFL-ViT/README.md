@@ -182,7 +182,7 @@ To start the training and store its results, please follow these steps:
 
     ```Linux
     python utils/generate_contact_pattern.py
-    python utils/generate_nonIID_filter.py
+    python utils/generate_nonIID_filters.py
     ```
 
 5. Review and adjust the experimental settings in the config file(`src/config.json`). For detailed instructions on how to write and configure the setting file, please refer to the [Configuration File Guide](#configuration-file-guide):
