@@ -165,8 +165,10 @@ if __name__ == "__main__":
             pre_transform=transforms.Resize(256),
         )
     else:
-        train_data = datasets.ImageFolder(train_path)
-        test_data = datasets.ImageFolder(test_path, transform=test_transform)
+        # train_data = datasets.ImageFolder(train_path)
+        # test_data = datasets.ImageFolder(test_path, transform=test_transform)
+        train_data = Mydataset(train_path, len(classes))
+        test_data = Mydataset(test_path, len(classes), test_transform)
 
     # 4.2 loading filter file or not. Load Non-IID Filter
     filter_file = f"filter_r{filter_rate:02d}_s{filter_seed:02d}.pt"

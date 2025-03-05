@@ -3,13 +3,12 @@ import os
 import torch
 import torchvision.io as io
 import torchvision.transforms as transforms
+from PIL import Image
 from torch.utils.data import Dataset
 
 
 class FromSubsetDataset(Dataset):  # subset -> dataset
-    def __init__(
-        self, data_list, device, transform=None, useGPUinTrans=None
-    ):
+    def __init__(self, data_list, device, transform=None, useGPUinTrans=None):
         new_data_list = []
         for i in range(len(data_list)):
             image, label = data_list[i]
@@ -67,3 +66,28 @@ class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in adva
 
     def __len__(self):
         return len(self.data)
+
+
+class Mydataset(Dataset):  # Custom Dataset to load the images to GPU in advance.
+    def __init__(self, root, n_output, transform=None):
+        self.img_paths = []
+        self.labels = []
+        self.transform = transform
+        for i in range(0, n_output):  # i: label
+            dir = os.path.join(root, str(i))
+            images_path = os.listdir(dir)
+            for image_path in images_path:
+                full_path = os.path.join(dir, image_path)
+                self.img_paths.append(full_path)
+                self.labels.append(i)  # send the label to GPU as well
+
+    def __getitem__(self, index):
+        img_path = self.img_paths[index]
+        data = Image.open(img_path).convert("RGB")
+        label = self.labels[index]
+        if self.transform is not None:
+            data = self.transform(data)
+        return data, label
+
+    def __len__(self):
+        return len(self.img_paths)
