@@ -27,7 +27,10 @@ if __name__ == "__main__":
     filename = os.path.join(
         data_dir, f"non-IID_filter/filter_r{ratio:02d}_s{randomseed:02d}.pt"
     )
-    print(filename)
+    meanfile = os.path.join(
+        data_dir, f"noniid_filter/mean_r{ratio:02d}_s{randomseed:02d}.pt"
+    )
+    stdfile = os.path.join(data_dir, f"noniid_filter/std_r{ratio:02d}_s{randomseed:02d}.pt")
     print(f"Generating Non-IID filter ... {filename}")
 
     train_dir = os.path.join(data_dir, "train")  # Path to the dataset
@@ -60,13 +63,27 @@ if __name__ == "__main__":
         for i in range(len(label)):
             if random.randint(0, 99) < ratio:
                 indices[label[i]].append(index + i)
+                means[label[i]] += image[i].mean(dim=(1, 2))
+                stds[label[i]] += image[i].std(dim=(1, 2))
             else:
                 n = random.randint(0, 8)
                 if label[i] <= n:
                     n += 1
                 indices[n].append(index + i)
+                means[n] += image[i].mean(dim=(1, 2))
+                stds[n] += image[i].std(dim=(1, 2))
 
         index += batch_size
 
+    ## 4. Calculating the mean and standard deviation of each node
+    for i in range(len(indices)):
+        means[i] /= len(indices[i])
+        stds[i] /= len(indices[i])
+        means[i] = means[i].to("cpu")
+        stds[i] = stds[i].to("cpu")
+        print(f"node_{i}:{indices[i]}\n")
+
     torch.save(indices, filename)
+    torch.save(means, meanfile)
+    torch.save(stds, stdfile)
     print("Done")
