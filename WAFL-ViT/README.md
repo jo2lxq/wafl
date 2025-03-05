@@ -27,8 +27,9 @@ This figure shows the examples -- target buildings were taken from the front, ba
 We then pre-processed the photos to distribute to virtual ten devices for both IID and Non-IID scenarios described in the previous section. The following table below shows the distributions. In the IID scenario, all the nodes have relatively the same label distributions, whereas, in the Non-IID scenario, the label distributions are dependent on the device. For example, device 0 has a larger amount of label 0 photos. Please note that even if the label distribution is IID, the devices' local photos do not cover all the scenes equally with other devices because the number of stored photos for one building is around 10 to 20.
 
 **Table 1: Label Distribution of IID Data**
-| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
+
+| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | L10 | SUM |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | 0 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
 | 1 | 11 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 135 |
 | 2 | 11 | 16 | 10 | 10 | 11 | 14 | 12 | 17 | 14 | 20 | 135 |
@@ -41,8 +42,9 @@ We then pre-processed the photos to distribute to virtual ten devices for both I
 | 9 | 10 | 16 | 10 | 10 | 12 | 13 | 12 | 17 | 14 | 20 | 134 |
 
 **Table2: Label Distribution of Non-IID Data**
-| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | SUM |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | 
+
+| Device | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | L10 | SUM |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | 0 | 44 | 4 | 5 | 4 | 8 | 4 | 8 | 8 | 11 | 12 | 108 |
 | 1 | 10 | 95 | 7 | 6 | 5 | 6 | 8 | 9 | 6 | 15 | 167 |
 | 2 | 4 | 7 | 59 | 3 | 8 | 10 | 5 | 9 | 11 | 11 | 127 |
