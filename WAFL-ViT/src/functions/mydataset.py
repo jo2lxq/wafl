@@ -40,14 +40,13 @@ class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in adva
     However, this will consume more GPU memory. Therefore, make sure you have enough memory.
     """
 
-    def __init__(self, root, device, transform=None, pre_transform=None):
+    def __init__(self, root, device, n_output, transform=None, pre_transform=None):
         self.data = []
         self.labels = []
         self.transform = transform
-        for i in range(0, 10):  # i: label
+        for i in range(0, n_output):  # i: label
             dir = os.path.join(root, str(i))
             images_path = os.listdir(dir)
-            images_path.sort()
             for image_path in images_path:
                 full_path = os.path.join(dir, image_path)
                 image_buf = io.read_image(full_path).to(

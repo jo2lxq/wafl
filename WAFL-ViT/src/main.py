@@ -155,13 +155,13 @@ if __name__ == "__main__":
     ## 4. Prepare data
     # 4.1 Create dataset with ImageFolder & custom dataset
     if useGPUinTrans:  # If performing transform on GPU
-        # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
         train_data = ImageFolder(
             train_path
         )  # Train data will be normalized based on the mean and standard deviation of each node later
         test_data = MyGPUdataset(
             test_path,
             device,
+            len(classes),
             transform=test_transform,
             pre_transform=transforms.Resize(256),
         )
@@ -358,7 +358,7 @@ if __name__ == "__main__":
             optim.lr_scheduler.StepLR(
                 optimizers[i], step_size=scheduler_step, gamma=scheduler_rate
             )
-            for i in range(10)
+            for i in range(n_node)
         ]
 
     pretrain_schedulers = None
@@ -370,7 +370,7 @@ if __name__ == "__main__":
                 step_size=pretrain_scheduler_step,
                 gamma=pretrain_scheduler_rate,
             )
-            for i in range(10)
+            for i in range(n_node)
         ]
 
     ## 6. Training Phase
