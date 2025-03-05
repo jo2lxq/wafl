@@ -4,7 +4,7 @@ import torch
 
 
 def update_nets_vgg(net, contact, fl_coefficient):
-    n_node = len(contact)
+    n_node = len(contact) # the element of "contact" is neighbors for each node
     local_model = [{} for _ in range(n_node)]
     recv_models = [[] for _ in range(n_node)]
     for n in range(n_node):
@@ -40,7 +40,7 @@ def update_nets_vgg(net, contact, fl_coefficient):
 
 
 def update_nets_res(net, contact, fl_coefficient):
-    n_node = len(contact)
+    n_node = len(contact) # the element of "contact" is neighbors for each node
     local_model = [{} for _ in range(n_node)]
     recv_models = [[] for _ in range(n_node)]
     for n in range(n_node):
@@ -78,7 +78,7 @@ def update_nets_res(net, contact, fl_coefficient):
 
 
 def update_nets_vit(net, contact, fl_coefficient):
-    n_node = len(contact)
+    n_node = len(contact) # the element of "contact" is neighbors for each node
     local_model = [{} for _ in range(n_node)]
     recv_models = [[] for _ in range(n_node)]
     for n in range(n_node):
@@ -118,7 +118,7 @@ def update_nets_vit(net, contact, fl_coefficient):
 
 
 def update_nets_mobile(net, contact, fl_coefficient):
-    n_node = len(contact)
+    n_node = len(contact) # the element of "contact" is neighbors for each node
     local_model = [{} for _ in range(n_node)]
     recv_models = [[] for _ in range(n_node)]
     for n in range(n_node):
