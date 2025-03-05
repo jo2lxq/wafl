@@ -19,7 +19,6 @@ from functions.visualize import *
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Subset
 from torchinfo import summary
-from torchvision.datasets import ImageFolder
 
 warnings.simplefilter("ignore")
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
@@ -155,9 +154,9 @@ if __name__ == "__main__":
     ## 4. Prepare data
     # 4.1 Create dataset with ImageFolder & custom dataset
     if useGPUinTrans:  # If performing transform on GPU
-        train_data = ImageFolder(
-            train_path
-        )  # Train data will be normalized based on the mean and standard deviation of each node later
+        train_data = MyGPUdataset(
+            train_path, device, len(classes), pre_transform=transforms.Resize(256)
+        )   # Train data will be normalized based on the mean and standard deviation of each node later
         test_data = MyGPUdataset(
             test_path,
             device,
@@ -191,31 +190,25 @@ if __name__ == "__main__":
     # Load files for normalization
     if is_use_noniid_filter:  # If using Non-IID filter
         train_mean_file_path = os.path.join(
-            mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt"
+            noniid_filter_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt"
         )
         train_std_file_path = os.path.join(
-            mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt"
+            noniid_filter_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt"
         )
-        if os.path.exists(train_mean_file_path) and os.path.exists(
+        mean_list = torch.load(
+            train_mean_file_path
+        )  # Get the mean and standard deviation of pixel values for each node
+        std_list = torch.load(
             train_std_file_path
-        ):  # If already calculated
-            mean_list = torch.load(
-                train_mean_file_path
-            )  # Get the mean and standard deviation of pixel values for each node
-            std_list = torch.load(
-                train_std_file_path
-            )  # Get the mean and standard deviation of pixel values for each node
-        else:  # Calculate
-            mean_list, std_list = calculate_mean_and_std_subset(subset)
-            torch.save(mean_list, train_mean_file_path)
-            torch.save(std_list, train_std_file_path)
+        )  # Get the mean and standard deviation of pixel values for each node
     else:  # If not using Non-IID filter
-        train_mean_file_path = os.path.join(mean_and_std_path, "IID_train_mean.pt")
-        train_std_file_path = os.path.join(mean_and_std_path, "IID_train_std.pt")
+        train_mean_file_path = os.path.join(noniid_filter_path, "IID_train_mean.pt")
+        train_std_file_path = os.path.join(noniid_filter_path, "IID_train_std.pt")
         if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path):
             mean_list = torch.load(train_mean_file_path)
             std_list = torch.load(train_std_file_path)
         else:
+            # TODO: calculate_mean_and_std_subset doesn't move. (probably due to pre-transform) It must be revised.
             mean_list, std_list = calculate_mean_and_std_subset(subset)
             torch.save(mean_list, train_mean_file_path)
             torch.save(std_list, train_std_file_path)
@@ -267,19 +260,11 @@ if __name__ == "__main__":
             ]
         )
         # Perform common processing for all epochs using pre_transform
-        train_dataset_new = FromSubsetDataset(
-            subset[i],
-            device,
-            transform=train_transform,
-            pre_transform=pre_transform,
-            useGPUinTrans=useGPUinTrans,
-        )
         # Specify different processing for each epoch, such as randomCrop, in the transform.
         train_dataset_new = FromSubsetDataset(
             subset[i],
             device,
             transform=train_transform,
-            pre_transform=pre_transform,
             useGPUinTrans=useGPUinTrans,
         )
         if useGPUinTrans:
