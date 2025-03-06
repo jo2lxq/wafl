@@ -32,13 +32,13 @@ if __name__ == "__main__":
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
     project_path = os.path.normpath(os.path.join(main_path, "../results"))
     noniid_filter_path = os.path.normpath(
-        os.path.join(main_path, "../data/non-IID_filter")
+        os.path.join(data_path, "non-IID_filter")
     )
     contact_pattern_path = os.path.normpath(
-        os.path.join(main_path, "../data/contact_pattern")
+        os.path.join(data_path, "contact_pattern")
     )
     mean_and_std_path = os.path.normpath(
-        os.path.join(main_path, "../data/test_mean_and_std")
+        os.path.join(data_path, "test_mean_and_std")
     )
     config_path = os.path.join(main_path, "config.json")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
@@ -165,8 +165,6 @@ if __name__ == "__main__":
             pre_transform=transforms.Resize(256),
         )
     else:
-        # train_data = datasets.ImageFolder(train_path)
-        # test_data = datasets.ImageFolder(test_path, transform=test_transform)
         train_data = Mydataset(train_path, len(classes))
         test_data = Mydataset(test_path, len(classes), test_transform)
 
@@ -210,8 +208,7 @@ if __name__ == "__main__":
             mean_list = torch.load(train_mean_file_path)
             std_list = torch.load(train_std_file_path)
         else:
-            # TODO: calculate_mean_and_std_subset doesn't move. (probably due to pre-transform) It must be revised.
-            mean_list, std_list = calculate_mean_and_std_subset(subset)
+            mean_list, std_list = calculate_mean_and_std_subset(subset, useGPUinTrans)
             torch.save(mean_list, train_mean_file_path)
             torch.save(std_list, train_std_file_path)
     print("Loading of mean and std in train data finished")
@@ -241,6 +238,8 @@ if __name__ == "__main__":
         else:
             train_transform = transforms.Compose(
                 [
+                    transforms.ToTensor(),
+                    transforms.Resize(256),
                     transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
                     transforms.ConvertImageDtype(torch.float32),
                     transforms.Normalize(mean=tuple(mean), std=tuple(std)),
@@ -253,15 +252,6 @@ if __name__ == "__main__":
                     ),
                 ]
             )
-        pre_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.ConvertImageDtype(torch.uint8),
-                # Store the original image as uint8 to compress memory capacity
-                transforms.Resize(256),
-            ]
-        )
-        # Perform common processing for all epochs using pre_transform
         # Specify different processing for each epoch, such as randomCrop, in the transform.
         train_dataset_new = FromSubsetDataset(
             subset[i],
@@ -516,5 +506,5 @@ if __name__ == "__main__":
     with open(os.path.join(cur_path, "log.txt"), "a") as f:
         f.write(f"the average of the last 10 epoch: {mean}\n")
         f.write(f"the std of the last 10 epoch: {std}\n")
-    evaluate_history(histories, cur_path)
+    # evaluate_history(histories, cur_path)
     print("Finished Training")

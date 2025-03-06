@@ -266,14 +266,17 @@ def calculate_mean_and_std(datapath):
     return mean, std
 
 
-def calculate_mean_and_std_subset(subset):
+def calculate_mean_and_std_subset(subset, useGPUinTrans):
     mean_list = [torch.zeros(3) for _ in range(len(subset))]
     std_list = [torch.zeros(3) for _ in range(len(subset))]
     for i in range(len(subset)):
         total_samples = len(subset[i])
         for j in range(total_samples):
             image, _ = subset[i][j]
-            image = transforms.ToTensor()(image)
+            if useGPUinTrans:
+                image = transforms.ConvertImageDtype(torch.float32)(image).to("cpu")
+            else:
+                image = transforms.ToTensor()(image)
             mean_list[i] += image.mean(dim=(1, 2))
             std_list[i] += image.std(dim=(1, 2))
         mean_list[i] /= total_samples
