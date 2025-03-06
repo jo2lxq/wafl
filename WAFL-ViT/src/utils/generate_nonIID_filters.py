@@ -6,16 +6,19 @@
 
 import os
 import random
+import sys
 
 import torch
-import torchvision.datasets as datasets
+# import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-from ..functions.mydataset import Mydataset
+
+sys.path.append("../")  # to import Mydataset
+from functions.mydataset import Mydataset
 
 if __name__ == "__main__":
     ## 1. Modifiable parameters
     randomseed = 1
-    ratio = 50  # the rate that the n-th node has n-labeled picture
+    ratio = 90  # the rate that the n-th node has n-labeled picture
     n_node = 10
     n_output = 10
 
@@ -30,16 +33,18 @@ if __name__ == "__main__":
         data_dir, f"non-IID_filter/filter_r{ratio:02d}_s{randomseed:02d}.pt"
     )
     meanfile = os.path.join(
-        data_dir, f"noniid_filter/mean_r{ratio:02d}_s{randomseed:02d}.pt"
+        data_dir, f"non-IID_filter/mean_r{ratio:02d}_s{randomseed:02d}.pt"
     )
-    stdfile = os.path.join(data_dir, f"noniid_filter/std_r{ratio:02d}_s{randomseed:02d}.pt")
+    stdfile = os.path.join(
+        data_dir, f"non-IID_filter/std_r{ratio:02d}_s{randomseed:02d}.pt"
+    )
     print(f"Generating Non-IID filter ... {filename}")
 
     train_dir = os.path.join(data_dir, "train")  # Path to the dataset
     tmp_transform = transforms.Compose(
         [
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            # transforms.Resize(256),
+            # transforms.CenterCrop(224),
             transforms.ToTensor(),
         ]
     )
@@ -69,7 +74,7 @@ if __name__ == "__main__":
                 means[labels[i]] += images[i].mean(dim=(1, 2))
                 stds[labels[i]] += images[i].std(dim=(1, 2))
             else:
-                n = random.randint(0, n_node-2)
+                n = random.randint(0, n_node - 2)
                 if labels[i] <= n:
                     n += 1
                 indices[n].append(index + i)
