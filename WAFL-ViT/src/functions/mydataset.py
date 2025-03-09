@@ -3,21 +3,18 @@ import os
 import torch
 import torchvision.io as io
 import torchvision.transforms as transforms
+from PIL import Image
 from torch.utils.data import Dataset
 
 
 class FromSubsetDataset(Dataset):  # subset -> dataset
-    def __init__(
-        self, data_list, device, transform=None, pre_transform=None, useGPUinTrans=None
-    ):
+    def __init__(self, data_list, device, transform=None, useGPUinTrans=None):
         new_data_list = []
         for i in range(len(data_list)):
             image, label = data_list[i]
             if useGPUinTrans is True:
-                image = pre_transform(image).to(device)
                 label = torch.tensor(label).to(device)
             elif useGPUinTrans is False:
-                image = pre_transform(image)
                 label = torch.tensor(label)
             new_data_list.append([image, label])
         self.transform = transform
@@ -40,14 +37,13 @@ class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in adva
     However, this will consume more GPU memory. Therefore, make sure you have enough memory.
     """
 
-    def __init__(self, root, device, transform=None, pre_transform=None):
+    def __init__(self, root, device, n_output, transform=None, pre_transform=None):
         self.data = []
         self.labels = []
         self.transform = transform
-        for i in range(0, 10):  # i: label
+        for i in range(0, n_output):  # i: label
             dir = os.path.join(root, str(i))
             images_path = os.listdir(dir)
-            images_path.sort()
             for image_path in images_path:
                 full_path = os.path.join(dir, image_path)
                 image_buf = io.read_image(full_path).to(
@@ -70,3 +66,28 @@ class MyGPUdataset(Dataset):  # Custom Dataset to load the images to GPU in adva
 
     def __len__(self):
         return len(self.data)
+
+
+class Mydataset(Dataset):  # Custom Dataset to load the images to GPU in advance.
+    def __init__(self, root, n_output, transform=None):
+        self.img_paths = []
+        self.labels = []
+        self.transform = transform
+        for i in range(0, n_output):  # i: label
+            dir = os.path.join(root, str(i))
+            images_path = os.listdir(dir)
+            for image_path in images_path:
+                full_path = os.path.join(dir, image_path)
+                self.img_paths.append(full_path)
+                self.labels.append(i)  # send the label to GPU as well
+
+    def __getitem__(self, index):
+        img_path = self.img_paths[index]
+        data = Image.open(img_path).convert("RGB")
+        label = self.labels[index]
+        if self.transform is not None:
+            data = self.transform(data)
+        return data, label
+
+    def __len__(self):
+        return len(self.img_paths)

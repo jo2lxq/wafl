@@ -19,7 +19,6 @@ from functions.visualize import *
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Subset
 from torchinfo import summary
-from torchvision.datasets import ImageFolder
 
 warnings.simplefilter("ignore")
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
@@ -33,13 +32,13 @@ if __name__ == "__main__":
     data_path = os.path.normpath(os.path.join(main_path, "../data"))
     project_path = os.path.normpath(os.path.join(main_path, "../results"))
     noniid_filter_path = os.path.normpath(
-        os.path.join(main_path, "../data/non-IID_filter")
+        os.path.join(data_path, "non-IID_filter")
     )
     contact_pattern_path = os.path.normpath(
-        os.path.join(main_path, "../data/contact_pattern")
+        os.path.join(data_path, "contact_pattern")
     )
     mean_and_std_path = os.path.normpath(
-        os.path.join(main_path, "../data/test_mean_and_std")
+        os.path.join(data_path, "test_mean_and_std")
     )
     config_path = os.path.join(main_path, "config.json")
     classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
@@ -155,19 +154,19 @@ if __name__ == "__main__":
     ## 4. Prepare data
     # 4.1 Create dataset with ImageFolder & custom dataset
     if useGPUinTrans:  # If performing transform on GPU
-        # train_data = MyGPUdataset(train_path, device, pre_transform=transforms.Resize(256))
-        train_data = ImageFolder(
-            train_path
-        )  # Train data will be normalized based on the mean and standard deviation of each node later
+        train_data = MyGPUdataset(
+            train_path, device, len(classes), pre_transform=transforms.Resize(256)
+        )   # Train data will be normalized based on the mean and standard deviation of each node later
         test_data = MyGPUdataset(
             test_path,
             device,
+            len(classes),
             transform=test_transform,
             pre_transform=transforms.Resize(256),
         )
     else:
-        train_data = datasets.ImageFolder(train_path)
-        test_data = datasets.ImageFolder(test_path, transform=test_transform)
+        train_data = Mydataset(train_path, len(classes))
+        test_data = Mydataset(test_path, len(classes), test_transform)
 
     # 4.2 loading filter file or not. Load Non-IID Filter
     filter_file = f"filter_r{filter_rate:02d}_s{filter_seed:02d}.pt"
@@ -191,32 +190,25 @@ if __name__ == "__main__":
     # Load files for normalization
     if is_use_noniid_filter:  # If using Non-IID filter
         train_mean_file_path = os.path.join(
-            mean_and_std_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt"
+            noniid_filter_path, f"mean_r{filter_rate:02d}_s{filter_seed:02d}.pt"
         )
         train_std_file_path = os.path.join(
-            mean_and_std_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt"
+            noniid_filter_path, f"std_r{filter_rate:02d}_s{filter_seed:02d}.pt"
         )
-        if os.path.exists(train_mean_file_path) and os.path.exists(
+        mean_list = torch.load(
+            train_mean_file_path
+        )  # Get the mean and standard deviation of pixel values for each node
+        std_list = torch.load(
             train_std_file_path
-        ):  # If already calculated
-            mean_list = torch.load(
-                train_mean_file_path
-            )  # Get the mean and standard deviation of pixel values for each node
-            std_list = torch.load(
-                train_std_file_path
-            )  # Get the mean and standard deviation of pixel values for each node
-        else:  # Calculate
-            mean_list, std_list = calculate_mean_and_std_subset(subset)
-            torch.save(mean_list, train_mean_file_path)
-            torch.save(std_list, train_std_file_path)
+        )  # Get the mean and standard deviation of pixel values for each node
     else:  # If not using Non-IID filter
-        train_mean_file_path = os.path.join(mean_and_std_path, "IID_train_mean.pt")
-        train_std_file_path = os.path.join(mean_and_std_path, "IID_train_std.pt")
+        train_mean_file_path = os.path.join(noniid_filter_path, "IID_train_mean.pt")
+        train_std_file_path = os.path.join(noniid_filter_path, "IID_train_std.pt")
         if os.path.exists(train_mean_file_path) and os.path.exists(train_std_file_path):
             mean_list = torch.load(train_mean_file_path)
             std_list = torch.load(train_std_file_path)
         else:
-            mean_list, std_list = calculate_mean_and_std_subset(subset)
+            mean_list, std_list = calculate_mean_and_std_subset(subset, useGPUinTrans)
             torch.save(mean_list, train_mean_file_path)
             torch.save(std_list, train_std_file_path)
     print("Loading of mean and std in train data finished")
@@ -246,6 +238,8 @@ if __name__ == "__main__":
         else:
             train_transform = transforms.Compose(
                 [
+                    transforms.ToTensor(),
+                    transforms.Resize(256),
                     transforms.RandomResizedCrop(size=224, scale=(0.4, 1.0)),
                     transforms.ConvertImageDtype(torch.float32),
                     transforms.Normalize(mean=tuple(mean), std=tuple(std)),
@@ -258,28 +252,11 @@ if __name__ == "__main__":
                     ),
                 ]
             )
-        pre_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.ConvertImageDtype(torch.uint8),
-                # Store the original image as uint8 to compress memory capacity
-                transforms.Resize(256),
-            ]
-        )
-        # Perform common processing for all epochs using pre_transform
-        train_dataset_new = FromSubsetDataset(
-            subset[i],
-            device,
-            transform=train_transform,
-            pre_transform=pre_transform,
-            useGPUinTrans=useGPUinTrans,
-        )
         # Specify different processing for each epoch, such as randomCrop, in the transform.
         train_dataset_new = FromSubsetDataset(
             subset[i],
             device,
             transform=train_transform,
-            pre_transform=pre_transform,
             useGPUinTrans=useGPUinTrans,
         )
         if useGPUinTrans:
@@ -358,7 +335,7 @@ if __name__ == "__main__":
             optim.lr_scheduler.StepLR(
                 optimizers[i], step_size=scheduler_step, gamma=scheduler_rate
             )
-            for i in range(10)
+            for i in range(n_node)
         ]
 
     pretrain_schedulers = None
@@ -370,7 +347,7 @@ if __name__ == "__main__":
                 step_size=pretrain_scheduler_step,
                 gamma=pretrain_scheduler_rate,
             )
-            for i in range(10)
+            for i in range(n_node)
         ]
 
     ## 6. Training Phase
@@ -529,5 +506,5 @@ if __name__ == "__main__":
     with open(os.path.join(cur_path, "log.txt"), "a") as f:
         f.write(f"the average of the last 10 epoch: {mean}\n")
         f.write(f"the std of the last 10 epoch: {std}\n")
-    evaluate_history(histories, cur_path)
+    # evaluate_history(histories, cur_path)
     print("Finished Training")
