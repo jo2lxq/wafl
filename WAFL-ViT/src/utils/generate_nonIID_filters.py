@@ -12,7 +12,7 @@ import torch
 # import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 
-sys.path.append("../")  # to import Mydataset
+sys.path.append("./")  # to import Mydataset
 from functions.mydataset import Mydataset
 
 if __name__ == "__main__":
