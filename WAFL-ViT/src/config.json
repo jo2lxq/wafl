@@ -1,6 +1,6 @@
 {
     "model": {
-        "model_name": "vit_b16",
+        "model_name": "vgg19_bn",
         "n_middle": 256
     },
     "data": {
@@ -14,7 +14,7 @@
         "self_train_only": false
     },
     "self_training": {
-        "epochs": 100,
+        "epochs": 500,
         "learning_rate": 0.01,
         "optimizer_name": "SGD",
         "momentum": 0.9,
@@ -23,7 +23,7 @@
         "scheduler_rate": 0.3
     },
     "collaborative_training": {
-        "epochs": 3000,
+        "epochs": 500,
         "batch_size": 16,
         "learning_rate": 0.01,
         "fl_coefficient": 0.1,

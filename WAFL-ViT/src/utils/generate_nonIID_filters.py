@@ -9,6 +9,7 @@ import random
 import sys
 
 import torch
+import tqdm
 # import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 
@@ -20,10 +21,10 @@ if __name__ == "__main__":
     randomseed = 1
     ratio = 90  # the rate that the n-th node has n-labeled picture
     n_node = 10
-    n_output = 10
+    n_output = 32 # label num
 
     ## 2. Other parameters and settings
-    batch_size = 20
+    batch_size = 16
     random.seed(randomseed)
 
     # Specify the data and output file paths
@@ -43,8 +44,8 @@ if __name__ == "__main__":
     train_dir = os.path.join(data_dir, "train")  # Path to the dataset
     tmp_transform = transforms.Compose(
         [
-            # transforms.Resize(256),
-            # transforms.CenterCrop(224),
+            transforms.Resize((256,256)),
+            #transforms.CenterCrop(224),
             transforms.ToTensor(),
         ]
     )
@@ -64,14 +65,18 @@ if __name__ == "__main__":
 
     ## 3. Creating the Non-IID filter (creating a list that represents which index of data each node has in the entire dataset)
     for data in trainloader:
+        
         images, labels = data
+        print(f"Batch images shape: {images.shape}, labels shape: {labels.shape}")
+
         batch_size = len(labels)
         labels = labels.tolist()
 
         for i in range(batch_size):
             if random.randint(0, 99) < ratio:
-                indices[labels[i]].append(index + i)
-                means[labels[i]] += images[i].mean(dim=(1, 2))
+                print(labels[i])
+                indices[labels[i]%n_node].append(index + i)
+                means[labels[i]%n_node] += images[i].mean(dim=(1, 2))
                 stds[labels[i]] += images[i].std(dim=(1, 2))
             else:
                 n = random.randint(0, n_node - 2)
