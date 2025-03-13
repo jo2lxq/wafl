@@ -1,20 +1,84 @@
-# WAFL-ViT
+# CUBR Report
 
-This README explains Chulalongkorn University building recognition dataset
+This README explains the Chulalongkorn University Building Recognition Dataset (CUBR).
+
+## Background
+
+In previous research on the UTBR Dataset, it was demonstrated that WAFL is effective for the UTBR Dataset, which consists of 10 labeled buildings. However, there is a lack of research examining how WAFL performs under conditions different from UTBR.
+
+In our research, we investigate the performance of WAFL on a different dataset. To evaluate the robustness of WAFL, we constructed a new dataset, the Chulalongkorn University Buildings Recognition Dataset (CUBR), which contains 32 labeled buildings.
+
+In our experiment, we evaluated WAFL using different models, including Resnet, VGG, Mobilenet, and ViT with 10 nodes. As a result of our experiment, we found that WAFL also works effectively with the CUBR dataset.
+
+In conclusion, our contributions are as follows:
+- Constructed a new dataset containing 32 buildings.
+- Demonstrated that WAFL works under condition different from UTBR, indicating the robustness of WAFL.
 
 ## Chulalongkorn Building Recognition Dataset
 
 <img src="./assets/20250313_chulamap_dataset.png" width="100%" />
 
-As a mission-oriented task, we have generated Chulalongkorn University Building Recognition Dataset (CUBR) to provide a smart-campus service. 
-The photos were captured by 3 persons with their own cameras individually. 
-We have chosen 32 buildings as the photo target, and each of the photos is labeled manually.
+We have developed the Chulalongkorn University Building Recognition Dataset (CUBR) to provide smart-campus services. The photos were captured by three individuals using their own cameras.
+We selected 32 buildings as the target for these photographs, and each photo was manually labeled.
 
-We pre-processed the photos to distribute to virtual ten devices for the scenario where all labels are uniformly distributed among devices. This scinario is denoted as IID-case. 
+To simulate a scenario where labels are uniformly distributed across devices, we pre-processed the photos and distributed them to ten virtual devices. This scenario is referred to as the IID-case.
+
+## Experimental Results
+
+Notations of SELF-ViT and WAFL-ViT follow from previous research [1]. 
+Also, parameter configurations of models and virtual areas follow from previous research [1].
+For SELF-ViT, training is conducted under the condition where 32 buildings are used with 10 virtual devices.
+
+For SELF-\*, we carried out simulations up to 1000 epochs. 
+For WAFL-\*, we conducted 500 epochs of self-training and 500 epochs of collaborative training.
+
+| Model         | Accuracy     | Standard Deviation |
+|---------------|--------------|--------------------|
+| WAFL-ViT      | **0.810381773**  | 0.01248877         |
+| WAFL-Resnet   | 0.689482759  | 0.038941167        |
+| WAFL-VGG      | 0.6358867    | 0.019503771        |
+| WAFL-Mobilenet| 0.690504926  | 0.035886394        |
+| SELF-ViT      | 0.603202     | 0.01723009         |
+| SELF-Resnet   | 0.348892     | 0.181951853        |
+| SELF-VGG      | 0.452338     | 0.016476866        |
+| SELF-Mobilenet| 0.485469     | 0.036404398        |
+
+WAFL-ViT achieved the highest accuracy of 0.810381773, indicating that it is the most robust and accurate model among the tested configurations. 
+
+In addition, WAFL-\* achieved higher performance of its counterpart of SELF-\*.
+Therefore, WAFL enhances the performance even though CUBR dataset is used.
+
+## Trend graphs
+
+We obtained learning curves of WAFL-ViT node 0. We observed that accuracy can be sometimes unstable.
+
+![alt text](./assets/loss_last.png)
+
+![alt text](./assets/acc_last.png)
+
+## Confusion matrix
+
+Also, we obtained confusion matrix of WAFL-ViT node 0.
+Label 10 and 11 are mistakenly recognized according to the figure.
+
+![conf](./assets/Conf_matrix.png)
+
+## Conclusion
+
+## Conclusion
+
+In this study, we introduced the Chulalongkorn University Building Recognition Dataset (CUBR) to evaluate the robustness of WAFL under different conditions from the previously used UTBR dataset. 
+Our experiments demonstrated that WAFL performs effectively on the CUBR dataset, achieving the highest accuracy with the WAFL-ViT model. This indicates that WAFL is robust and can generalize well to different datasets.
+
+The experimental results showed that WAFL-\* models consistently outperformed their SELF-\* counterparts, further validating the effectiveness of WAFL. 
+
+Overall, our research confirms that WAFL is a robust and effective approach for building recognition tasks, even when applied to new and diverse dataset CUBR.
+
+# Code details
 
 ## Concept of this folder
 
-- We checked that WAFL works in the condition where the number of labels is larger than previous research.
+- We examined that WAFL works in the condition where the number of labels is larger than previous research.
 
 - We compared multiple models and clarified VisionTransformer experimentally showed the best result.
 
@@ -185,7 +249,12 @@ the std of the last 10 epoch: 0.004650926644612355
 
 ### Trend graph
 
-After model training is successfully completed, trend graphs for all nodes are created in `results/{result folder name}/images/acc.png (or loss.png)`.
+To show learning curve, run the code below.
+```plain text
+python utils/visualizer.py ../results/{result folder name}/params/histories_d
+ata.pkl
+```
+Then, trend graphs for all nodes are created in `results/{result folder name}/images/acc.png (or loss.png)`.
 
 ### Images of confusion matrix and latent space
 
@@ -194,6 +263,7 @@ These images are stored in the following directories:
 
 - Confusion matrices: `results/{result folder name}/images/normalized_confusion_matrix`
 - Latent space visualizations: `results/{result folder name}/images/latent_space`
+
 
 ## Configuration File Guide
 
