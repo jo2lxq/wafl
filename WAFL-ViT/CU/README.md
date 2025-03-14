@@ -21,6 +21,41 @@ In conclusion, our contributions are as follows:
 We have developed the Chulalongkorn University Building Recognition Dataset (CUBR) to provide smart-campus services. The photos were captured by three individuals using their own cameras.
 We selected 32 buildings as the target for these photographs, and each photo was manually labeled.
 
+| Folder | Train Count | Val Count |
+|--------|-------------|-----------|
+| 0      | 98          | 25        |
+| 1      | 125         | 32        |
+| 2      | 101         | 26        |
+| 3      | 88          | 21        |
+| 4      | 83          | 20        |
+| 5      | 93          | 24        |
+| 6      | 103         | 26        |
+| 7      | 101         | 26        |
+| 8      | 104         | 26        |
+| 9      | 88          | 22        |
+| 10     | 120         | 31        |
+| 11     | 86          | 22        |
+| 12     | 104         | 26        |
+| 13     | 84          | 22        |
+| 14     | 86          | 22        |
+| 15     | 110         | 28        |
+| 16     | 103         | 26        |
+| 17     | 84          | 22        |
+| 18     | 120         | 30        |
+| 19     | 126         | 32        |
+| 20     | 99          | 25        |
+| 21     | 84          | 22        |
+| 22     | 107         | 27        |
+| 23     | 104         | 25        |
+| 24     | 120         | 30        |
+| 25     | 92          | 23        |
+| 26     | 113         | 29        |
+| 27     | 103         | 26        |
+| 28     | 102         | 26        |
+| 29     | 83          | 21        |
+| 30     | 86          | 22        |
+| 31     | 106         | 27        |
+
 To simulate a scenario where labels are uniformly distributed across devices, we pre-processed the photos and distributed them to ten virtual devices. This scenario is referred to as the IID-case.
 
 ## Experimental Results
