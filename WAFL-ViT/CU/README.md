@@ -56,7 +56,7 @@ We selected 32 buildings as the target for these photographs, and each photo was
 | 30     | 86          | 22        |
 | 31     | 106         | 27        |
 
-To simulate a scenario where labels are uniformly distributed across devices, we pre-processed the photos and distributed them to ten virtual devices. This scenario is referred to as the IID-case. The image distribution per each device is shown in below.
+To simulate a scenario where labels are uniformly distributed across devices, we pre-processed the photos and distributed them to ten virtual devices. This scenario is referred to as the IID-case. 
 
 ## Experimental Results
 
