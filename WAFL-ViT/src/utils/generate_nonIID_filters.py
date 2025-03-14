@@ -21,7 +21,7 @@ if __name__ == "__main__":
     randomseed = 1
     ratio = 90  # the rate that the n-th node has n-labeled picture
     n_node = 10
-    n_output = 32 # label num
+    n_output = 10 # label num
 
     ## 2. Other parameters and settings
     batch_size = 16

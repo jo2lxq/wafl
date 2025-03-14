@@ -5,8 +5,7 @@
     },
     "data": {
         "n_node": 10,
-        "num_classes": 32,
-        "dataset_name": "divided_cubr_dataset"
+        "num_classes": 32
     },
     "gpu": {
         "device": "cuda:3",

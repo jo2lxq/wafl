@@ -3,7 +3,7 @@ import os
 import pickle
 import warnings
 from datetime import datetime
-
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
@@ -25,6 +25,19 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
 if __name__ == "__main__":
     ## 1. Initial settings and paths
+    parser = argparse.ArgumentParser(description="Training script for WAFL-ViT")
+    parser.add_argument('--config', type=str, required=True, help='Path to the config file')
+    parser.add_argument('--exp_datetime', type=str, default=None, help='Path to the exp_dir file')
+    parser.add_argument('--load_data', type=bool, default=False, help='Load data from saved files')    
+    args = parser.parse_args()
+    ## 1. Initial settings and paths
+    main_path = os.path.dirname(
+        os.path.abspath(__file__)
+    )  # Absolute path to main.py. Note that "main_path" does not include file name i.e. "main.py".
+    config_path = os.path.join(main_path,args.config)
+    with open(config_path) as f:
+        config = json.load(f)
+    num_classes = config["data"]["num_classes"]
     # path
     main_path = os.path.dirname(
         os.path.abspath(__file__)
@@ -40,8 +53,7 @@ if __name__ == "__main__":
     mean_and_std_path = os.path.normpath(
         os.path.join(data_path, "test_mean_and_std")
     )
-    config_path = os.path.join(main_path, "config.json")
-    classes = ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
+    classes = tuple(str(i) for i in range(num_classes))
     train_path = os.path.join(data_path, "train")
     test_path = os.path.join(data_path, "val")
     meant_file_path = os.path.join(
@@ -176,8 +188,18 @@ if __name__ == "__main__":
         indices = [[] for _ in range(n_node)]
         for i in range(len(train_data)):
             indices[i % n_node].append(i)
-
-    # 4.3 Assign training data to each node
+    """
+    # Count the labels for each node
+    label_counts_per_node = [{} for _ in range(n_node)]
+    for node_idx in range(n_node):
+        for idx in indices[node_idx]:
+            _, label = train_data[idx]
+            if label not in label_counts_per_node[node_idx]:
+                label_counts_per_node[node_idx][label] = 0
+            label_counts_per_node[node_idx][label] += 1
+    for node_idx in range(n_node):
+        print(f"Node {node_idx}: {{}}".format({k.item(): v for k, v in label_counts_per_node[node_idx].items()}))    # 4.3 Assign training data to each node"
+    """
     subset = [Subset(train_data, indices[i]) for i in range(n_node)]
     # nums = [[0 for i in range(n_node)] for j in range(n_node)]
     # for i in range(n_node): # Output data distribution

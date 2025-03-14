@@ -122,6 +122,8 @@ The mapping between labels and buildings is shown in the image above.
 
 You can access our dataset from [this link](https://drive.google.com/file/d/1GKbMyfAkvCVT1a6g2KyvkC3MYxf5VPrZ/view).
 
+If you use CUBR dataset, please read [CUBR README](./CU/README.md).
+
 After downloading zip file, please extract its contents into the `WAFL-ViT/data` directory of the project root.
 If you're using the command line and are in the project root (`wafl` directory), you can use the following command to extract the files:
 
