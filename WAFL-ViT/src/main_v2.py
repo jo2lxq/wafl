@@ -188,18 +188,8 @@ if __name__ == "__main__":
         indices = [[] for _ in range(n_node)]
         for i in range(len(train_data)):
             indices[i % n_node].append(i)
-    """
-    # Count the labels for each node
-    label_counts_per_node = [{} for _ in range(n_node)]
-    for node_idx in range(n_node):
-        for idx in indices[node_idx]:
-            _, label = train_data[idx]
-            if label not in label_counts_per_node[node_idx]:
-                label_counts_per_node[node_idx][label] = 0
-            label_counts_per_node[node_idx][label] += 1
-    for node_idx in range(n_node):
-        print(f"Node {node_idx}: {{}}".format({k.item(): v for k, v in label_counts_per_node[node_idx].items()}))    # 4.3 Assign training data to each node"
-    """
+
+
     subset = [Subset(train_data, indices[i]) for i in range(n_node)]
     # nums = [[0 for i in range(n_node)] for j in range(n_node)]
     # for i in range(n_node): # Output data distribution
