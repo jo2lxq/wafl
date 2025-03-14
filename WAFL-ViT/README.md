@@ -14,6 +14,9 @@ In our scenario, each device has ad hoc wireless interfaces and exchanges the ML
 
 Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
+## Chulalongkorn University Building Recognition Dataset
+If you want to use CUBR dataset, please read [CUBR README](./CU/README.md).
+
 ## UTokyo Building Recognition Dataset
 
 <img src="./assets/target_buildings.png" width="75%" />
