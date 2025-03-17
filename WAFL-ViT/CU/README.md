@@ -16,7 +16,7 @@ In conclusion, our contributions are as follows:
 
 ## Chulalongkorn Building Recognition Dataset
 
-<img src="./assets/20250313_chulamap_dataset.png" width="100%" />
+<img src="./assets/20250317chula_map_v2.png" width="100%" />
 
 We have developed the Chulalongkorn University Building Recognition Dataset (CUBR) to provide smart-campus services. The photos were captured by three individuals using their own cameras.
 We selected 32 buildings as the target for these photographs, and each photo was manually labeled. The distribution of images are shown in below.
