@@ -73,7 +73,6 @@ def evaluate_history(histories, cur_dir):
     plt.legend(ncol=2)
     plt.savefig(os.path.join(cur_dir, "images/acc.png"))
 
-
 def show_image_labels(loader, classes, net, device, loaded_epoch, cur_dir, all_images):
     if all_images:
         plt.figure(figsize=(20, 100))
@@ -134,6 +133,7 @@ def save_confusion_matrix(
     title=f"Confusion matrix",
     cmap=plt.cm.Blues,
     save_path=None,
+    figsize=(120, 100),
 ):
     """
     This function prints and plots the confusion matrix.
@@ -146,7 +146,7 @@ def save_confusion_matrix(
     #     print('Confusion matrix, without normalization')
 
     # print(cm)
-
+    plt.figure(figsize=figsize)
     plt.clf()
     plt.imshow(cm, interpolation="nearest", cmap=cmap)
     plt.title(title)
