@@ -17,10 +17,8 @@ Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is
 ## Datasets for WAFL-ViT Evaluation
 
 As of April 2025, we provide two datasets for WAFL-ViT evaluation.
-1. UTokyo Building Recognition Dataset (UTBR)
-   Please follow the instructions below to use UTBR.  
-2. Chulalongkorn University Building Recognition Dataset (CUBR)
-   If you want to use CUBR, please visit [CUBR README](./CU/README.md).
+1. UTokyo Building Recognition Dataset (UTBR): Please follow the instructions below to use UTBR.  
+2. Chulalongkorn University Building Recognition Dataset (CUBR): If you want to use CUBR, please visit [CUBR README](./CU/README.md).
 
 ## UTokyo Building Recognition Dataset
 
