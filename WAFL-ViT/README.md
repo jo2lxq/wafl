@@ -14,8 +14,13 @@ In our scenario, each device has ad hoc wireless interfaces and exchanges the ML
 
 Here, $n$ and $k$ are the devices that participated in the training. $nbr(n)$ is the set of neighbor nodes of device $n$. $W^n$ indicates the parameters of MLP head of device $n$. $\lambda$ is the coefficient which should be between 0 and 1.
 
-## Chulalongkorn University Building Recognition Dataset
-If you want to use CUBR dataset, please read [CUBR README](./CU/README.md).
+## Datasets for WAFL-ViT Evaluation
+
+As of April 2025, we provide two datasets for WAFL-ViT evaluation.
+1. UTokyo Building Recognition Dataset (UTBR)
+   Please follow the instructions below to use UTBR.  
+2. Chulalongkorn University Building Recognition Dataset (CUBR)
+   If you want to use CUBR, please visit [CUBR README](./CU/README.md).
 
 ## UTokyo Building Recognition Dataset
 
