@@ -8,3 +8,4 @@ WAFL-ViT/training_logs
 **/__pycache__/**
 WAFL-DETR/data/*
 !WAFL-DETR/data/.gitkeep
+WAFL-Whisper/data/*
