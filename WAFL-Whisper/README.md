@@ -4,6 +4,7 @@
 
 ## 環境構築
 
+### Singularity イメージ
 1. Singularity イメージのビルド:
 
 ```bash
@@ -19,6 +20,14 @@ singularity shell --nv --bind /path/to/elab_wafl:/path/to/elab_wafl --contain gt
 3. contact_info ファイルの準備:
 
 contact_info/以下に必要なファイルを配置
+
+### conda
+
+```bash
+conda create -n WAFL-Whisper python=3.10 -y
+conda activate WAFL-Whisper
+pip install -r requirements.txt
+```
 
 ## 設定ファイル
 

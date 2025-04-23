@@ -58,8 +58,11 @@ def eval_cer_of_each_node(device, n, net, test_data_loader, directory, cer_resul
     sorted_idx = sorted(range(len(label_text_all)), key=lambda x: label_text_all[x])
     sorted_pred_text_all = [pred_text_all[i] for i in sorted_idx]
     sorted_label_text_all = [label_text_all[i] for i in sorted_idx]
-
-    cer_average_list.append(sum([cer_result_list[i][-1] for i in range(len(net))]) / len(net))
+    valid_results = [cer_result_list[i][-1] for i in range(len(cer_result_list)) if cer_result_list[i]]
+    if valid_results:
+        cer_average_list.append(sum(valid_results) / len(valid_results))
+    else:
+        cer_average_list.append(None)
 
     for i in range(len(pred_text_all)):
         if not os.path.exists(f"{directory}/text/node{n}/native"):
