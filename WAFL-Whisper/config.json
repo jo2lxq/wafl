@@ -9,5 +9,8 @@
     "data_name_list": [ "name1", "name2", "name3", "name4", "name5", "name6" ],
     "fl_coefficiency": ,
     "data_dir": "",
-    "output_dir": ""
+    "output_dir": "",
+    "whisper_model_size": "tiny",
+    "train_batch_size": 1,
+    "test_batch_size": 1
 }

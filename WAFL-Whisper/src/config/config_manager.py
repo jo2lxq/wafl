@@ -33,6 +33,7 @@ class ConfigManager:
         self.output_dir = config["output_dir"]
         self.train_batch_size = config["train_batch_size"]
         self.test_batch_size = config["test_batch_size"]
+        self.whisper_model_size = config.get("whisper_model_size", "tiny")  # デフォルト値は "tiny"
 
     def _set_seed(self, seed):
         random.seed(seed)

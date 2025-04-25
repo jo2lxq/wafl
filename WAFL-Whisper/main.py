@@ -19,7 +19,7 @@ def main(config_path="config.json"):
     woptions = whisper.DecodingOptions(language="ja", without_timestamps=True)
     wtokenizer = whisper.tokenizer.get_tokenizer(True, language="ja", task=woptions.task)
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
-    net = [whisper.load_model("tiny", device="cpu") for _ in range(config.n_node)]
+    net = [whisper.load_model(config.whisper_model_size, device="cpu") for _ in range(config.n_node)]
 
     # Optimizer configuration
     optimizer = [
