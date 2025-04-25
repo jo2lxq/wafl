@@ -10,18 +10,18 @@ from src.utils.train import train_all_model
 
 
 def main(config_path="config.json"):
-    # 設定の初期化
+    # Initialize configuration
     config = ConfigManager(config_path)
     device = config.get_device()
     config.setup_output_directory()
 
-    # モデルの設定
+    # Model configuration
     woptions = whisper.DecodingOptions(language="ja", without_timestamps=True)
     wtokenizer = whisper.tokenizer.get_tokenizer(True, language="ja", task=woptions.task)
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
     net = [whisper.load_model("tiny", device="cpu") for _ in range(config.n_node)]
 
-    # オプティマイザの設定
+    # Optimizer configuration
     optimizer = [
         torch.optim.SGD(
             [param for param in net[i].parameters() if param.requires_grad],
@@ -40,7 +40,7 @@ def main(config_path="config.json"):
     total_cer_average_list = []
     local_model_parameter = [{} for _ in range(config.n_node)]
 
-    # pretrained modelの評価
+    # Evaluate pretrained model
     cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
         device,
         net,
@@ -50,7 +50,7 @@ def main(config_path="config.json"):
         total_cer_average_list,
     )
 
-    # 事前学習フェーズ
+    # Pre-training phase
     for epoch in range(config.pre_epoch):
         train_all_model(device, net, train_loader_list, optimizer, criterion)
         
@@ -63,15 +63,15 @@ def main(config_path="config.json"):
             total_cer_average_list,
         )
 
-    # pre epoch後のモデルを保存
+    # Save model after pre-training epochs
     save_model(net, config.output_dir, "preepoch")
 
-    # 協調学習フェーズ
+    # Collaborative learning phase
     for epoch in range(config.num_epoch):
         contact = contact_list[epoch]
         print(f"at t={epoch} : ", contact)
 
-        # TODO ロードもまとめて一つの関数にしたい
+        # TODO Want to consolidate loading into a single function
         local_model_parameter = exchange_parameter_with_close_nodes(
             net, contact, config.n_node, config.fl_coefficiency
         )
@@ -81,10 +81,10 @@ def main(config_path="config.json"):
             if len(nbr) > 0:
                 net[n].load_state_dict(local_model_parameter[n])
 
-        # 各モデルでの学習(Training)
+        # Training for each model
         train_all_model(device, net, train_loader_list, optimizer, criterion, contact)
 
-        # 各モデルでの評価(Evaluation)
+        # Evaluation for each model
         cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
             device,
             net,
@@ -95,10 +95,10 @@ def main(config_path="config.json"):
             contact,
         )
 
-    # モデルと結果の保存
+    # Save model and results
     save_model(net, config.output_dir, "final_epoch")
     
-    # 結果の保存とグラフ描画
+    # Save results and draw graphs
     config.save_results(cer_result_of_each_node, total_cer_average_list)
 
 

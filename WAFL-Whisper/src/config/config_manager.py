@@ -73,10 +73,10 @@ class ConfigManager:
             
     def get_contact_list(self):
         """
-        通信パターンファイルからcontact_listを読み込む
+        Load contact_list from communication pattern file
         
         Returns:
-            list: 各エポックでの通信パターンを格納したリスト
+            list: List containing communication patterns for each epoch
         """
         with open(self.contact_file) as f:
             contact_list = json.load(f)
@@ -84,33 +84,33 @@ class ConfigManager:
         
     def save_results(self, cer_result_of_each_node, total_cer_average_list):
         """
-        実験結果を保存し、グラフを描画する
+        Save experiment results and draw graphs
         
         Args:
-            cer_result_of_each_node: 各ノードのCER結果
-            total_cer_average_list: エポックごとの平均CER
+            cer_result_of_each_node: CER results for each node
+            total_cer_average_list: Average CER for each epoch
         """
-        # 結果の保存、グラフの描画
+        # Save results and draw graphs
         with open(f"{self.output_dir}/all_result.txt", "w") as f:
-            f.write("=== 実験設定 ===\n")
-            f.write(f"実験メモ: {self.memo}\n")
-            f.write(f"ノード数: {self.n_node}\n")
-            f.write(f"事前学習エポック数: {self.pre_epoch}\n")
-            f.write(f"協調学習エポック数: {self.num_epoch}\n")
-            f.write(f"学習率: {self.lr}\n")
-            f.write(f"学習用バッチサイズ: {self.train_batch_size}\n")
-            f.write(f"テスト用バッチサイズ: {self.test_batch_size}\n")
-            f.write(f"通信パターンファイル: {self.contact_file}\n")
-            f.write(f"データセット: {self.data_name_list}\n")
-            f.write(f"データディレクトリ: {self.data_dir}\n")
-            f.write(f"連合学習係数: {self.fl_coefficiency}\n")
-            f.write(f"乱数シード: {self.seed}\n")
-            f.write(f"出力ディレクトリ: {self.output_dir}\n")
-            f.write(f"実行日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("\n=== 結果 ===\n")
-            f.write(f"最終平均CER: {total_cer_average_list[-1]}\n")
+            f.write("=== Experiment Settings ===\n")
+            f.write(f"Experiment Memo: {self.memo}\n")
+            f.write(f"Number of Nodes: {self.n_node}\n")
+            f.write(f"Pre-training Epochs: {self.pre_epoch}\n")
+            f.write(f"Collaborative Learning Epochs: {self.num_epoch}\n")
+            f.write(f"Learning Rate: {self.lr}\n")
+            f.write(f"Training Batch Size: {self.train_batch_size}\n")
+            f.write(f"Testing Batch Size: {self.test_batch_size}\n")
+            f.write(f"Communication Pattern File: {self.contact_file}\n")
+            f.write(f"Datasets: {self.data_name_list}\n")
+            f.write(f"Data Directory: {self.data_dir}\n")
+            f.write(f"Federated Learning Coefficient: {self.fl_coefficiency}\n")
+            f.write(f"Random Seed: {self.seed}\n")
+            f.write(f"Output Directory: {self.output_dir}\n")
+            f.write(f"Execution Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("\n=== Results ===\n")
+            f.write(f"Final Average CER: {total_cer_average_list[-1]}\n")
 
-        # CER結果をJSON形式で保存
+        # Save CER results in JSON format
         cer_results = {
             "node_results": {f"node_{node}": cer_result_of_each_node[node] for node in range(self.n_node)},
             "average_results": total_cer_average_list,
@@ -118,7 +118,7 @@ class ConfigManager:
         with open(f"{self.output_dir}/cer_results.json", "w", encoding="utf-8") as f:
             json.dump(cer_results, f, indent=2, ensure_ascii=False)
 
-        # グラフの描画
+        # Draw graph
         plt.plot(total_cer_average_list)
         plt.xlabel("epoch")
         plt.ylabel("CER")

@@ -5,9 +5,9 @@ from tqdm import tqdm
 
 
 def train_all_model(device, net, train_loader_list, optimizer, criterion, contact=None):
-    # 全てのノードに対して学習を行う
+    # Train for all nodes
     for node_idx in range(len(net)):
-        # 協調学習フェーズで隣接ノードがない場合は学習をスキップ
+        # Skip training if there are no adjacent nodes in the collaborative learning phase
         if contact is not None:
             nbr = contact[str(node_idx)]
             if len(nbr) == 0:
@@ -34,7 +34,7 @@ def train_all_model(device, net, train_loader_list, optimizer, criterion, contac
 
             pbar.set_postfix(loss=loss.item())
 
-        # 学習直後にいったんGC
+        # Run garbage collection immediately after training
         net[node_idx].to("cpu")
         gc.collect()
         if torch.cuda.is_available():

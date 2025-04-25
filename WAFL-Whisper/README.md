@@ -1,25 +1,25 @@
 # WAFL-Whisper
 
-このプロジェクトは、Whisper モデルを使用した音声認識のための連合学習（Federated Learning）フレームワークです。
+This project is a Federated Learning framework for speech recognition using the Whisper model.
 
-## 環境構築
+## Environment Setup
 
-### Singularity イメージ
-1. Singularity イメージのビルド:
+### Singularity Image
+1. Build the Singularity image:
 
 ```bash
 singularity build gtune_wafl.sif gtune_wafl.def
 ```
 
-2. コンテナの実行:
+2. Run the container:
 
 ```bash
 singularity shell --nv --bind /path/to/elab_wafl:/path/to/elab_wafl --contain gtune_wafl.sif
 ```
 
-3. contact_info ファイルの準備:
+3. Prepare contact_info files:
 
-contact_info/以下に必要なファイルを配置
+Place the necessary files in the contact_info/ directory
 
 ### conda
 
@@ -29,100 +29,99 @@ conda activate WAFL-Whisper
 pip install -r requirements.txt
 ```
 
-## 設定ファイル
+## Configuration File
 
-プロジェクトを実行する前に、`config.json`ファイルを作成する必要があります。以下のパラメータを含める必要があります：
+Before running the project, you need to create a `config.json` file. It should include the following parameters:
 
 ```json
 {
-    "memo": "実験のメモ",
-    "n_node": "ノード数",
-    "pre_epoch": "事前学習のエポック数",
-    "num_epoch": "協調学習のエポック数",
-    "lr": "学習率",
-    "contact_file": "通信パターンファイルのパス",
-    "data_dir": "データディレクトリのパス",
-    "data_name_list": ["data_dirの中で使用するフォルダのリスト"],
-    "fl_coefficiency": "モデルのパラメータ合成時の係数(0以上1以下)",
-    "seed": "乱数シード",
-    "output_dir": "出力ディレクトリのパス",
-    "train_batch_size": "学習用バッチサイズ",
-    "test_batch_size": "テスト用バッチサイズ"
+    "memo": "Experiment memo",
+    "n_node": "Number of nodes",
+    "pre_epoch": "Number of pre-training epochs",
+    "num_epoch": "Number of collaborative learning epochs",
+    "lr": "Learning rate",
+    "contact_file": "Path to communication pattern file",
+    "data_dir": "Path to data directory",
+    "data_name_list": ["List of folders to use in data_dir"],
+    "fl_coefficiency": "Coefficient for model parameter synthesis (between 0 and 1)",
+    "seed": "Random seed",
+    "output_dir": "Path to output directory",
+    "train_batch_size": "Training batch size",
+    "test_batch_size": "Testing batch size"
 }
 ```
 
-## データセットの準備
+## Dataset Preparation
 
-1. データディレクトリ構造:
+1. Data directory structure:
 
 ```
 data_dir/
-    ├── dataset1/              # 各ノードごとのデータセット
-    │   ├── audio/             # 音声ファイルを格納
-    │   │   ├── sample1.wav    # 音声ファイル
+    ├── dataset1/              # Dataset for each node
+    │   ├── audio/             # Store audio files
+    │   │   ├── sample1.wav    # Audio file
     │   │   ├── sample2.wav
     │   │   └── ...
-    │   └── script/            # テキストファイルを格納
-    │       ├── sample1.txt    # 音声ファイルに対応するテキスト
+    │   └── script/            # Store text files
+    │       ├── sample1.txt    # Text corresponding to audio file
     │       ├── sample2.txt
     │       └── ...
-    ├── dataset2/              # 別のノードのデータセット
+    ├── dataset2/              # Dataset for another node
     │   ├── audio/
     │   └── script/
-    └── test/                  # テストデータ
+    └── test/                  # Test data
         ├── audio/
         └── script/
 ```
 
-2. データセットの要件:
+2. Dataset requirements:
 
-- 各データセットフォルダ（dataset1, dataset2, test）には`audio`と`script`の 2 つのサブフォルダが必要です
-- `audio`フォルダには音声ファイル（.wav）を格納します
-- `script`フォルダには対応するテキストファイル（.txt）を格納します
-- 音声ファイルとテキストファイルは同じ名前（拡張子は異なる）で対応付けられます
-  - 例：`audio/sample1.wav` ↔ `script/sample1.txt`
+- Each dataset folder (dataset1, dataset2, test) must have two subfolders: `audio` and `script`
+- The `audio` folder contains audio files (.wav)
+- The `script` folder contains corresponding text files (.txt)
+- Audio files and text files are matched by having the same name (with different extensions)
+  - Example: `audio/sample1.wav` ↔ `script/sample1.txt`
 
-## 実行方法
+## Execution
 
-Singularity コンテナ内で以下のコマンドを実行:
+Run the following command inside the Singularity container:
 
 ```bash
 python chula_wafl_main.py
 ```
 
-## 出力
+## Output
 
-実行後、以下のディレクトリ構造で結果が保存されます：
+After execution, results will be saved in the following directory structure:
 
 ```
 output_dir/
-    ├── graph/              # グラフ画像
-    │   └── average_cer.png # 平均CERの推移グラフ
-    ├── text/               # テキスト出力
-    │   └── node{0..n}/    # 各ノードの出力
-    ├── model/              # 学習済みモデル
-    ├── all_result.txt      # 実験設定と結果のサマリー
-    └── cer_results.json    # CER結果（JSON形式）
+    ├── graph/              # Graph images
+    │   └── average_cer.png # Graph of average CER progression
+    ├── text/               # Text output
+    │   └── node{0..n}/     # Output for each node
+    ├── model/              # Trained models
+    ├── all_result.txt      # Summary of experiment settings and results
+    └── cer_results.json    # CER results (JSON format)
 ```
 
-### 出力ファイルの説明
+### Output File Description
 
 1. `all_result.txt`
 
-   - 実験設定（config.json の内容）
-   - 実行日時
-   - 最終的な平均 CER
+   - Experiment settings (contents of config.json)
+   - Execution date and time
+   - Final average CER
 
 2. `cer_results.json`
-   - 各ノードの全エポックでの CER と平均 CER を JSON 形式で保存
-   - 構造例：
+   - CER for each node across all epochs and average CER in JSON format
+   - Structure example:
      ```json
      {
        "node_results": {
-         "node_0": [0.123, 0.115, 0.108, ...],  // ノード0の各エポックでのCER
-         "node_1": [0.134, 0.128, 0.121, ...],  // ノード1の各エポックでのCER
+         "node_0": [0.123, 0.115, 0.108, ...],  // CER for node 0 at each epoch
+         "node_1": [0.134, 0.128, 0.121, ...],  // CER for node 1 at each epoch
          ...
        },
-       "average_results": [0.129, 0.122, 0.115, ...]  // 全ノードの平均CERの推移
+       "average_results": [0.129, 0.122, 0.115, ...]  // Progression of average CER across all nodes
      }
-     ```

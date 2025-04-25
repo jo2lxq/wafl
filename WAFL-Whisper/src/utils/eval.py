@@ -8,16 +8,16 @@ from tqdm import tqdm
 
 def eval_cer_of_all_node(device, net, test_data_loader, directory, cer_result_list, total_cer_average_list, contact=None):
     metrics_cer = evaluate.load("cer")
-    # 全てのノードに対して評価を行う
+    # Evaluate for all nodes
     for node_idx in range(len(net)):
-        # 協調学習フェーズで隣接ノードがない場合は前回の結果を再利用
+        # Reuse previous results if there are no adjacent nodes in the collaborative learning phase
         if contact is not None:
             nbr = contact[str(node_idx)]
             if len(nbr) == 0 and (len(cer_result_list[node_idx]) != 0):
                 cer_result_list[node_idx].append(cer_result_list[node_idx][-1])
                 continue
         
-        # 各モデルでの評価
+        # Evaluation for each model
         net[node_idx].to(device)
         net[node_idx].eval()
         step = 0
@@ -25,7 +25,7 @@ def eval_cer_of_all_node(device, net, test_data_loader, directory, cer_result_li
         pred_text_all = []
         label_text_all = []
 
-        # バッチのループ、プログレスバー対応
+        # Batch loop with progress bar
         with torch.no_grad():
             for input_ids, labels, dec_input_ids, script, audio in tqdm(test_data_loader, desc=f"Evaluating Node {node_idx}"):
                 input_ids = input_ids.to(device)
@@ -34,7 +34,7 @@ def eval_cer_of_all_node(device, net, test_data_loader, directory, cer_result_li
                 label_str = []
                 step += 1
 
-                # 予測計算　本番用の model.transcribe 関数を用いて予測するため、val_loss と val_acc は計算しない。
+                # Prediction calculation: Using model.transcribe function for production, so val_loss and val_acc are not calculated.
                 pred_str = []
 
                 for audio_path in audio:
@@ -51,13 +51,13 @@ def eval_cer_of_all_node(device, net, test_data_loader, directory, cer_result_li
 
                 print(result["text"], script_text)
 
-                # cer 算出
+                # Calculate CER
                 cer = 100 * metrics_cer.compute(predictions=pred_str, references=label_str)
                 cer_sum += cer
-                # cer と wer の平均値計算。
+                # Calculate average of CER and WER.
                 avg_cer = cer_sum / step
 
-                # プログレスバーに cer 表示
+                # Display CER in progress bar
                 tqdm(test_data_loader, desc=f"Evaluating Node {node_idx}").set_postfix(cer=avg_cer)
 
         avg_cer = cer_sum / (step)
@@ -79,7 +79,7 @@ def eval_cer_of_all_node(device, net, test_data_loader, directory, cer_result_li
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
-    # 全ノードの平均CERを計算
+    # Calculate average CER for all nodes
     if total_cer_average_list is not None:
         total_cer_average_list.append(sum([cer_result_list[i][-1] for i in range(len(net))]) / len(net))
     

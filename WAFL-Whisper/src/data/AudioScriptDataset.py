@@ -26,11 +26,11 @@ class AudioScriptDataset(Dataset):
         audio_path = self.audio_paths[idx]
         script_path = self.scripts[idx]
 
-        # スクリプトファイルの読み込み
+        # Load script file
         with open(script_path, "r", encoding="utf-8") as file:
             text = file.read().strip()
 
-        # 音声ファイルの読み込み
+        # Load audio file
         audio = self._load_wave(audio_path, sample_rate=self.sample_rate)
         audio = whisper.pad_or_trim(audio.flatten())
         mel = whisper.log_mel_spectrogram(audio)
@@ -39,9 +39,9 @@ class AudioScriptDataset(Dataset):
         labels = text[1:] + [self.tokenizer.eot]
 
         return {
-            "input_ids": mel,  # 音声データ
-            "dec_input_ids": text,  # デコーダーへの入力 #TODO:ここのdec_input_idsの最後、eotいるくない？
-            "labels": labels,  # 正解データ
+            "input_ids": mel,  # Audio data
+            "dec_input_ids": text,  # Input to decoder
+            "labels": labels,  # Ground truth data
             "audio_path": audio_path,
             "script_path": script_path,
         }
