@@ -10,7 +10,7 @@ from src.config.config_manager import ConfigManager
 from src.data.dataset import prepare_datasets, prepare_test_dataset
 from src.model.exchange import exchange_parameter_with_close_nodes, save_model
 from src.utils.eval import eval_cer_of_all_node
-from src.utils.train import train_each_model
+from src.utils.train import train_all_model
 
 
 def main(config_path="config.json"):
@@ -57,8 +57,7 @@ def main(config_path="config.json"):
 
     # 事前学習フェーズ
     for epoch in range(config.pre_epoch):
-        for n in range(config.n_node):
-            train_each_model(device, net, n, train_loader_list, optimizer, criterion)
+        train_all_model(device, net, train_loader_list, optimizer, criterion)
         
         cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
             device,
@@ -88,12 +87,7 @@ def main(config_path="config.json"):
                 net[n].load_state_dict(local_model_parameter[n])
 
         # 各モデルでの学習(Training)
-        for n in range(config.n_node):
-            nbr = contact[str(n)]
-            if len(nbr) == 0:
-                print(f"Node {n} has no neighbor")
-            else:
-                train_each_model(device, net, n, train_loader_list, optimizer, criterion)
+        train_all_model(device, net, train_loader_list, optimizer, criterion, contact)
 
         # 各モデルでの評価(Evaluation)
         cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
