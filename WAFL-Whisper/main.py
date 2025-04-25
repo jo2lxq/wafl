@@ -1,7 +1,3 @@
-import json
-from datetime import datetime
-
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import whisper
@@ -38,8 +34,7 @@ def main(config_path="config.json"):
     train_loader_list = prepare_datasets(config.data_name_list, config.data_dir, wtokenizer, config.train_batch_size)
     test_data_loader = prepare_test_dataset(config.data_dir, wtokenizer, config.test_batch_size)
 
-    with open(config.contact_file) as f:
-        contact_list = json.load(f)
+    contact_list = config.get_contact_list()
 
     cer_result_of_each_node = [[] for _ in range(config.n_node)]
     total_cer_average_list = []
@@ -102,41 +97,9 @@ def main(config_path="config.json"):
 
     # モデルと結果の保存
     save_model(net, config.output_dir, "final_epoch")
-
-    # 結果の保存、グラフの描画
-    with open(f"{config.output_dir}/all_result.txt", "w") as f:
-        f.write("=== 実験設定 ===\n")
-        f.write(f"実験メモ: {config.memo}\n")
-        f.write(f"ノード数: {config.n_node}\n")
-        f.write(f"事前学習エポック数: {config.pre_epoch}\n")
-        f.write(f"協調学習エポック数: {config.num_epoch}\n")
-        f.write(f"学習率: {config.lr}\n")
-        f.write(f"学習用バッチサイズ: {config.train_batch_size}\n")
-        f.write(f"テスト用バッチサイズ: {config.test_batch_size}\n")
-        f.write(f"通信パターンファイル: {config.contact_file}\n")
-        f.write(f"データセット: {config.data_name_list}\n")
-        f.write(f"データディレクトリ: {config.data_dir}\n")
-        f.write(f"連合学習係数: {config.fl_coefficiency}\n")
-        f.write(f"乱数シード: {config.seed}\n")
-        f.write(f"出力ディレクトリ: {config.output_dir}\n")
-        f.write(f"実行日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write("\n=== 結果 ===\n")
-        f.write(f"最終平均CER: {total_cer_average_list[-1]}\n")
-
-    # CER結果をJSON形式で保存
-    cer_results = {
-        "node_results": {f"node_{node}": cer_result_of_each_node[node] for node in range(config.n_node)},
-        "average_results": total_cer_average_list,
-    }
-    with open(f"{config.output_dir}/cer_results.json", "w", encoding="utf-8") as f:
-        json.dump(cer_results, f, indent=2, ensure_ascii=False)
-
-    plt.plot(total_cer_average_list)
-    plt.xlabel("epoch")
-    plt.ylabel("CER")
-    plt.title("Average CER of All Nodes")
-    plt.savefig(f"{config.output_dir}/graph/average_cer.png")
-    plt.close()
+    
+    # 結果の保存とグラフ描画
+    config.save_results(cer_result_of_each_node, total_cer_average_list)
 
 
 if __name__ == "__main__":
