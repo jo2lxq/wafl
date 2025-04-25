@@ -9,7 +9,7 @@ import whisper
 from src.config.config_manager import ConfigManager
 from src.data.dataset import prepare_datasets, prepare_test_dataset
 from src.model.exchange import exchange_parameter_with_close_nodes, save_model
-from src.utils.eval import eval_cer_of_each_node
+from src.utils.eval import eval_cer_of_all_node
 from src.utils.train import train_each_model
 
 
@@ -46,37 +46,28 @@ def main(config_path="config.json"):
     local_model_parameter = [{} for _ in range(config.n_node)]
 
     # pretrained modelの評価
-    for n in range(config.n_node):
-        (
-            cer_result_of_each_node,
-            total_cer_average_list,
-        ) = eval_cer_of_each_node(
+    cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
+        device,
+        net,
+        test_data_loader,
+        config.output_dir,
+        cer_result_of_each_node,
+        total_cer_average_list,
+    )
+
+    # 事前学習フェーズ
+    for epoch in range(config.pre_epoch):
+        for n in range(config.n_node):
+            train_each_model(device, net, n, train_loader_list, optimizer, criterion)
+        
+        cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
             device,
-            n,
             net,
             test_data_loader,
             config.output_dir,
             cer_result_of_each_node,
             total_cer_average_list,
         )
-
-    # 事前学習フェーズ
-    for epoch in range(config.pre_epoch):
-        for n in range(config.n_node):
-            train_each_model(device, net, n, train_loader_list, optimizer, criterion)
-        for n in range(config.n_node):
-            (
-                cer_result_of_each_node,
-                total_cer_average_list,
-            ) = eval_cer_of_each_node(
-                device,
-                n,
-                net,
-                test_data_loader,
-                config.output_dir,
-                cer_result_of_each_node,
-                total_cer_average_list,
-            )
 
     # pre epoch後のモデルを保存
     save_model(net, config.output_dir, "preepoch")
@@ -86,6 +77,7 @@ def main(config_path="config.json"):
         contact = contact_list[epoch]
         print(f"at t={epoch} : ", contact)
 
+        # TODO ロードもまとめて一つの関数にしたい
         local_model_parameter = exchange_parameter_with_close_nodes(
             net, contact, config.n_node, config.fl_coefficiency
         )
@@ -104,23 +96,15 @@ def main(config_path="config.json"):
                 train_each_model(device, net, n, train_loader_list, optimizer, criterion)
 
         # 各モデルでの評価(Evaluation)
-        for n in range(config.n_node):
-            nbr = contact[str(n)]
-            if len(nbr) == 0 and (len(cer_result_of_each_node[n]) != 0):
-                cer_result_of_each_node[n].append(cer_result_of_each_node[n][-1])
-                continue
-            (
-                cer_result_of_each_node,
-                total_cer_average_list,
-            ) = eval_cer_of_each_node(
-                device,
-                n,
-                net,
-                test_data_loader,
-                config.output_dir,
-                cer_result_of_each_node,
-                total_cer_average_list,
-            )
+        cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
+            device,
+            net,
+            test_data_loader,
+            config.output_dir,
+            cer_result_of_each_node,
+            total_cer_average_list,
+            contact,
+        )
 
     # モデルと結果の保存
     save_model(net, config.output_dir, "final_epoch")
