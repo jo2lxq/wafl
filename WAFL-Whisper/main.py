@@ -38,7 +38,6 @@ def main(config_path="config.json"):
 
     cer_result_of_each_node = [[] for _ in range(config.n_node)]
     total_cer_average_list = []
-    local_model_parameter = [{} for _ in range(config.n_node)]
 
     # Evaluate pretrained model
     cer_result_of_each_node, total_cer_average_list = eval_cer_of_all_node(
