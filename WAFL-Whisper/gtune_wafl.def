@@ -1,0 +1,29 @@
+Bootstrap: docker
+From: pytorch/pytorch
+%post
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y sudo python3-dev python3-pip gcc g++ libsndfile1-dev git
+    pip install matplotlib
+    pip install japanize_matplotlib
+    pip install torchinfo
+    pip install numpy==1.24.0 
+    pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu121
+    pip install torchviz
+    pip install scikit-learn
+    pip install tqdm
+    pip install Pillow
+    pip install pyheif
+    pip install umap-learn
+    pip install opencv-python
+    pip install opencv-contrib-python
+    pip install whisper
+    pip install evaluate
+    pip install ginza
+    pip install jiwer
+    pip install ja_ginza
+    pip install librosa
+    pip install git+https://github.com/openai/whisper.git
+%environment
+    export PATH="/usr/local/bin:$PATH"
+%runscript
+    exec python "$@"

@@ -5,6 +5,8 @@ WAFL-MLP/trained_net
 WAFL-ViT/data/train
 WAFL-ViT/data/val
 WAFL-ViT/training_logs
-**/__pycache__/**
+**/__pycache__/
 WAFL-DETR/data/*
 !WAFL-DETR/data/.gitkeep
+WAFL-Whisper/data/
+WAFL-Whisper/output_dir
