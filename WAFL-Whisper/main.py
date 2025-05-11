@@ -71,15 +71,10 @@ def main(config_path="config.json"):
         contact = contact_list[epoch]
         print(f"at t={epoch} : ", contact)
 
-        # TODO Want to consolidate loading into a single function
-        local_model_parameter = exchange_parameter_with_close_nodes(
+        # Exchange parameters between nodes
+        net = exchange_parameter_with_close_nodes(
             net, contact, config.n_node, config.fl_coefficiency
         )
-
-        for n in range(config.n_node):
-            nbr = contact[str(n)]
-            if len(nbr) > 0:
-                net[n].load_state_dict(local_model_parameter[n])
 
         # Training for each model
         train_all_model(device, net, train_loader_list, optimizer, criterion, contact)

@@ -29,7 +29,13 @@ def exchange_parameter_with_close_nodes(net, contact, n_node, fl_coefficiency):
             for key in update_model[k]:
                 local_model[n][key] += update_model[k][key] * fl_coefficiency / (n_nbr + 1)
 
-    return local_model
+    # Load updated parameters back to the models
+    for n in range(n_node):
+        nbr = contact[str(n)]
+        if len(nbr) > 0:
+            net[n].load_state_dict(local_model[n])
+
+    return net
 
 
 def save_model(net, output_dir, epoch_type):
