@@ -16,9 +16,6 @@ from functions.eval import evaluate
 from functions.model_exchange import update_nets
 
 parser = argparse.ArgumentParser(description="Hyper Parameters")
-parser.add_argument("--class_num", default = 100, type=int)
-parser.add_argument("--node_num", default = 10, type=int)
-parser.add_argument("--fl_coefficiency", default = 1, type=float)
 parser.add_argument("--pre_epoch", default = 10, type=int)
 parser.add_argument("--max_epoch", default = 100, type=int)
 parser.add_argument("--batch_size", default = 64, type=int)
@@ -30,9 +27,6 @@ parser.add_argument("--K", default = 0.1, type=float, help = "sparsification rat
 parser.add_argument("--Q", default = 1, type=float, help = "quatization bit")
 
 args = parser.parse_args()
-class_num = args.class_num
-node_num = args.node_num
-fl_coefficiency = args.fl_coefficiency
 pre_epoch = args.pre_epoch
 max_epoch = args.max_epoch
 batch_size = args.batch_size
@@ -43,6 +37,10 @@ reduce = args.reduce
 K = args.K
 Q = args.Q
 
+fl_coefficiency = 1
+class_num = 100
+node_num = 10
+
 # setup
 start_time = time.time()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -52,7 +50,7 @@ torch.random.manual_seed(1)
 random.seed(1)
 
 # directory for storing the prev_net data
-tmp_dir = "../tmp/" 
+tmp_dir = "./tmp/" 
 if os.path.isdir(tmp_dir):
 	for filename in os.listdir(tmp_dir):
 		os.remove(tmp_dir + filename)
@@ -215,19 +213,18 @@ for epoch in range(max_epoch):
 			correct += (predicted == labels).sum().item()
 		print(f"Epoch [{epoch+1}/{max_epoch}] Node {n} Loss {running_loss/len(trainloader):.4f} Accuracy {100 * correct/total:.2f}%")
 
+	# evaluation
+    sum = 0
+    for n in range(node_num):
+        acc = evaluate(nets[n], valloader, device)
+        print(f"Epoch [{epoch+1}/{max_epoch}] Node {n} Validation Accuracy {acc:.2f}%")
+        sum += acc
+    print(f"Epoch [{epoch+1}/{max_epoch}] Avg Validation Accuracy {sum / node_num:.2f}%")
+
 	# save
 	if (epoch + 1) == max_epoch:
 		for n in range(node_num):
 			torch.save(nets[n].state_dict(), f"../trained_net/net_e{epoch+1}_n{n}.pth")
-
-	# evaluation (per 100 epochs)
-	if (epoch + 1) % 100 == 0 or (epoch + 1) == max_epoch:
-		sum = 0
-		for n in range(node_num):
-			acc = evaluate(nets[n], valloader, device)
-			print(f"Epoch [{epoch+1}/{max_epoch}] Node {n} Validation Accuracy {acc:.2f}%")
-			sum += acc
-		print(f"Epoch [{epoch+1}/{max_epoch}] Avg Validation Accuracy {sum / node_num:.2f}%")
 		
 for filename in os.listdir(tmp_dir):
 	os.remove(file_path)
