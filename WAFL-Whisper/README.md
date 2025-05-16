@@ -8,13 +8,13 @@ This project is a Federated Learning framework for speech recognition using the 
 1. Build the Singularity image:
 
 ```bash
-singularity build gtune_wafl.sif gtune_wafl.def
+singularity build --fakeroot wafl_whisper.sif wafl_whisper.def
 ```
 
 2. Run the container:
 
 ```bash
-singularity shell --nv --bind /path/to/elab_wafl:/path/to/elab_wafl --contain gtune_wafl.sif
+singularity shell --nv --bind /dir/to/WAFL-Whisper:/dir/to/WAFL-Whisper --contain /path/to/wafl_whisper.sif
 ```
 
 3. Prepare contact_info files:
@@ -87,7 +87,7 @@ data_dir/
 Run the following command inside the Singularity container:
 
 ```bash
-python chula_wafl_main.py
+python main.py
 ```
 
 ## Output
