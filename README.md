@@ -6,6 +6,7 @@ As of February 2025, this repository contains the following three projects.
 2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer for image recognition.
 3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer for object detection.
 4. [WAFL-YOLO](./WAFL-YOLO/): WAFL with YOLOv9 for object detection.
+4. [WAFL-Whisper](./WAFL-Whisper/): WAFL with Whisper for speech recognition.
 
 ## What is WAFL?
 
