@@ -52,21 +52,21 @@ random.seed(1)
 # directory for storing the prev_net data
 tmp_dir = "./tmp/" 
 if os.path.isdir(tmp_dir):
-	for filename in os.listdir(tmp_dir):
-		os.remove(tmp_dir + filename)
+    for filename in os.listdir(tmp_dir):
+        os.remove(tmp_dir + filename)
 else:
-	os.makedirs(tmp_dir)
+    os.makedirs(tmp_dir)
 
 # prepare dataloader
 train_transform = transforms.Compose([
-	transforms.Resize(224),  
-	transforms.ToTensor(),
-	transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
+    transforms.Resize(224),  
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
 ])
 val_transform = transforms.Compose([
-	transforms.Resize(224),  
-	transforms.ToTensor(),
-	transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
+    transforms.Resize(224),  
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
 ])
 
 trainset = torchvision.datasets.CIFAR100(root='../data', train = True, download=True, transform=train_transform)
@@ -78,29 +78,29 @@ trainloaders = []
 print("Data loaded")
 
 if noniid == 0: # iid
-	trainset_size = int(len(trainset) / node_num)
-	for n in range(node_num):
-		indices = list(range(n * trainset_size, (n + 1) * trainset_size))
-		traindataset = Subset(trainset, indices)
-		trainloaders.append(torch.utils.data.DataLoader(traindataset, batch_size = batch_size, shuffle = True))
+    trainset_size = int(len(trainset) / node_num)
+    for n in range(node_num):
+        indices = list(range(n * trainset_size, (n + 1) * trainset_size))
+        traindataset = Subset(trainset, indices)
+        trainloaders.append(torch.utils.data.DataLoader(traindataset, batch_size = batch_size, shuffle = True))
 elif 0 < noniid and noniid <= 1: # noniid
-	for i in range(len(trainset)): 
-		data, label = trainset[i]
-		if random.random() < 0.9:
-			node_index = label % node_num
-		else:
-			node_index = random.randint(0, node_num - 1)
-		data_each[node_index].append(data)
-		label_each[node_index].append(label)
-	for n in range(node_num):
-		data_tensor = torch.stack(data_each[n])
-		label_tensor = torch.tensor(label_each[n])
-		traindatasets.append(TensorDataset(data_tensor, label_tensor))
-	for n in range(node_num):
-		trainloaders.append(torch.utils.data.DataLoader(traindatasets[n], batch_size = batch_size, shuffle = True))
+    for i in range(len(trainset)): 
+        data, label = trainset[i]
+        if random.random() < 0.9:
+            node_index = label % node_num
+        else:
+            node_index = random.randint(0, node_num - 1)
+        data_each[node_index].append(data)
+        label_each[node_index].append(label)
+    for n in range(node_num):
+        data_tensor = torch.stack(data_each[n])
+        label_tensor = torch.tensor(label_each[n])
+        traindatasets.append(TensorDataset(data_tensor, label_tensor))
+    for n in range(node_num):
+        trainloaders.append(torch.utils.data.DataLoader(traindatasets[n], batch_size = batch_size, shuffle = True))
 else:
-	print(f"argument error : noniid = {noniid}")
-	sys.exit()
+    print(f"argument error : noniid = {noniid}")
+    sys.exit()
 
 valset = torchvision.datasets.CIFAR100(root='../data', train = False, download=True, transform=val_transform)
 valloader = torch.utils.data.DataLoader(valset, batch_size = batch_size, shuffle=True)
@@ -110,26 +110,26 @@ del valset
 
 nets = [timm.create_model('vit_base_patch16_224', pretrained=True) for _ in range(node_num)]
 for n in range(node_num):
-	nets[n].head = nn.Linear(nets[n].head.in_features, 100)  
+    nets[n].head = nn.Linear(nets[n].head.in_features, 100)  
 
 prev_net = [[None] * node_num for _ in range(node_num)]
 init_net = None
-if zero_initialization == True:	# initializa the prev_nets with zero
-	init_net = copy.deepcopy(nets[0].state_dict())
-	init_net["head.weight"] = torch.zeros_like(init_net["head.weight"])
-	init_net["head.bias"] = torch.zeros_like(init_net["head.bias"])
+if zero_initialization == True: # initializa the prev_nets with zero
+    init_net = copy.deepcopy(nets[0].state_dict())
+    init_net["head.weight"] = torch.zeros_like(init_net["head.weight"])
+    init_net["head.bias"] = torch.zeros_like(init_net["head.bias"])
 for net in nets:
-	net.to(device)
+    net.to(device)
 
 print("Model loaded")
 
 optimizers = [optim.AdamW([
-	{'params': [nets[i].cls_token], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-	{'params': [nets[i].pos_embed], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-	{'params':nets[i].patch_embed.parameters(), 'lr': 1e-5},  # 学習済みバックボーンの一部（小さな学習率）
-	{'params': nets[i].blocks.parameters(), 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-	{'params': nets[i].norm.parameters(), 'lr': 1e-5},	# 正規化層（小さな学習率）
-	{'params': nets[i].head.parameters(), 'lr': 1e-3},	# 新しいhead（大きな学習率）
+    {'params': [nets[i].cls_token], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
+    {'params': [nets[i].pos_embed], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
+    {'params':nets[i].patch_embed.parameters(), 'lr': 1e-5},  # 学習済みバックボーンの一部（小さな学習率）
+    {'params': nets[i].blocks.parameters(), 'lr': 1e-5},  # Transformerブロック（小さな学習率）
+    {'params': nets[i].norm.parameters(), 'lr': 1e-5},  # 正規化層（小さな学習率）
+    {'params': nets[i].head.parameters(), 'lr': 1e-3},  # 新しいhead（大きな学習率）
 ]) for i in range(node_num)]
 criterion = nn.CrossEntropyLoss()
 
@@ -137,38 +137,38 @@ print("Start Pre-self Training")
 
 # pre_self training
 for epoch in range(pre_epoch):
-	for n in range(node_num):
-		net = nets[n]
-		optimizer = optimizers[n]
-		trainloader = trainloaders[n]
+    for n in range(node_num):
+        net = nets[n]
+        optimizer = optimizers[n]
+        trainloader = trainloaders[n]
 
-		net.train()
-		running_loss = 0.0
-		correct = 0
-		total = 0
+        net.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
 
-		for batch_index, (inputs, labels) in enumerate(trainloader):
-			if batch_index == steps_per_epoch:
-				break
-			inputs, labels = inputs.to(device), labels.to(device)
-			optimizer.zero_grad()
-			outputs = net(inputs)
-			loss = criterion(outputs, labels)
-			loss.backward()
-			optimizer.step()
-			running_loss += loss.item()
-			_, predicted = torch.max(outputs, 1)
-			total += labels.size(0)
-			correct += (predicted == labels).sum().item()
-		print(f"Epoch [{epoch+1}/{pre_epoch}] Node {n} Loss {running_loss/len(trainloader):.4f} Accuracy {100 * correct/total:.2f}%")
+        for batch_index, (inputs, labels) in enumerate(trainloader):
+            if batch_index == steps_per_epoch:
+                break
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = net(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        print(f"Epoch [{epoch+1}/{pre_epoch}] Node {n} Loss {running_loss/len(trainloader):.4f} Accuracy {100 * correct/total:.2f}%")
 
 # save (after pre self traininig)
 for n in range(node_num):
-	torch.save(nets[n].state_dict(), f"../trained_net/prenet_e{pre_epoch}_n{n}.pth")
+    torch.save(nets[n].state_dict(), f"../trained_net/prenet_e{pre_epoch}_n{n}.pth")
 
 for n in range(node_num):
-	acc = evaluate(nets[n], valloader, device)
-	print(f"Node {n} Validation Accuracy {acc:.2f}%")
+    acc = evaluate(nets[n], valloader, device)
+    print(f"Node {n} Validation Accuracy {acc:.2f}%")
 
 print("Start WAFL")
 
@@ -178,42 +178,42 @@ contact_list = []
 filename=f'./contact_pattern/rwp_n10_a0500_r100_p10_s01.json'
 print(f'Loading ... {filename}')
 with open(filename) as f :
-	contact_list=json.load(f)
+    contact_list=json.load(f)
 
 for epoch in range(max_epoch):
-	contact = contact_list[epoch]
-	update_nets(nets, contact, fl_coefficient=1, reduce=reduce, K=K, Q=Q, zero_initialization = zero_initialization, prev_net=prev_net, init_net = init_net, device = device)
+    contact = contact_list[epoch]
+    update_nets(nets, contact, fl_coefficient=1, reduce=reduce, K=K, Q=Q, zero_initialization = zero_initialization, prev_net=prev_net, init_net = init_net, device = device)
 
-	for n in range(node_num):
-		nbr = contact[str(n)]
-		if len(nbr) == 0:
-			continue
+    for n in range(node_num):
+        nbr = contact[str(n)]
+        if len(nbr) == 0:
+            continue
 
-		net = nets[n]
-		optimizer = optimizers[n]
-		trainloader = trainloaders[n]
+        net = nets[n]
+        optimizer = optimizers[n]
+        trainloader = trainloaders[n]
 
-		net.train()
-		running_loss = 0.0
-		correct = 0
-		total = 0
+        net.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
 
-		for batch_index, (inputs, labels) in enumerate(trainloader):
-			if batch_index == steps_per_epoch:
-				break
-			inputs, labels = inputs.to(device), labels.to(device)
-			optimizer.zero_grad()
-			outputs = net(inputs)
-			loss = criterion(outputs, labels)
-			loss.backward()
-			optimizer.step()
-			running_loss += loss.item()
-			_, predicted = torch.max(outputs, 1)
-			total += labels.size(0)
-			correct += (predicted == labels).sum().item()
-		print(f"Epoch [{epoch+1}/{max_epoch}] Node {n} Loss {running_loss/len(trainloader):.4f} Accuracy {100 * correct/total:.2f}%")
+        for batch_index, (inputs, labels) in enumerate(trainloader):
+            if batch_index == steps_per_epoch:
+                break
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = net(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        print(f"Epoch [{epoch+1}/{max_epoch}] Node {n} Loss {running_loss/len(trainloader):.4f} Accuracy {100 * correct/total:.2f}%")
 
-	# evaluation
+    # evaluation
     sum = 0
     for n in range(node_num):
         acc = evaluate(nets[n], valloader, device)
@@ -221,11 +221,11 @@ for epoch in range(max_epoch):
         sum += acc
     print(f"Epoch [{epoch+1}/{max_epoch}] Avg Validation Accuracy {sum / node_num:.2f}%")
 
-	# save
-	if (epoch + 1) == max_epoch:
-		for n in range(node_num):
-			torch.save(nets[n].state_dict(), f"../trained_net/net_e{epoch+1}_n{n}.pth")
-		
+    # save
+    if (epoch + 1) == max_epoch:
+        for n in range(node_num):
+            torch.save(nets[n].state_dict(), f"../trained_net/net_e{epoch+1}_n{n}.pth")
+        
 for filename in os.listdir(tmp_dir):
-	os.remove(file_path)
+    os.remove(file_path)
 print(f"time : {time.time() - start_time}")
