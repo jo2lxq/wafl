@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Subset
 import torchvision
 from torchvision import datasets, transforms
 import timm
@@ -14,9 +14,10 @@ import argparse
 
 from functions.eval import evaluate
 from functions.model_exchange import update_nets
+from functions.subset import create_subsets
 
 parser = argparse.ArgumentParser(description="Hyper Parameters")
-parser.add_argument("--pre_epoch", default = 10, type=int)
+parser.add_argument("--pre_epoch", default = 1, type=int)
 parser.add_argument("--max_epoch", default = 100, type=int)
 parser.add_argument("--batch_size", default = 64, type=int)
 parser.add_argument("--steps_per_epoch", default = 5, type=int)
@@ -84,20 +85,10 @@ if noniid == 0: # iid
         traindataset = Subset(trainset, indices)
         trainloaders.append(torch.utils.data.DataLoader(traindataset, batch_size = batch_size, shuffle = True))
 elif 0 < noniid and noniid <= 1: # noniid
-    for i in range(len(trainset)): 
-        data, label = trainset[i]
-        if random.random() < 0.9:
-            node_index = label % node_num
-        else:
-            node_index = random.randint(0, node_num - 1)
-        data_each[node_index].append(data)
-        label_each[node_index].append(label)
+    class_to_node = {cls: random.randint(0, node_num - 1) for cls in range(class_num)}
+    subsets = create_subsets(trainset, num_nodes = node_num , class_to_node = class_to_node, bias_ratio = noniid)
     for n in range(node_num):
-        data_tensor = torch.stack(data_each[n])
-        label_tensor = torch.tensor(label_each[n])
-        traindatasets.append(TensorDataset(data_tensor, label_tensor))
-    for n in range(node_num):
-        trainloaders.append(torch.utils.data.DataLoader(traindatasets[n], batch_size = batch_size, shuffle = True))
+        trainloaders.append(torch.utils.data.DataLoader(subsets[n], batch_size = batch_size, shuffle = True))
 else:
     print(f"argument error : noniid = {noniid}")
     sys.exit()
