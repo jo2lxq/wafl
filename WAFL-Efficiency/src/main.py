@@ -51,12 +51,15 @@ torch.random.manual_seed(1)
 random.seed(1)
 
 # directory for storing the prev_net data
-tmp_dir = "./tmp/" 
+tmp_dir = "./tmp" 
 if os.path.isdir(tmp_dir):
     for filename in os.listdir(tmp_dir):
         os.remove(tmp_dir + filename)
 else:
     os.makedirs(tmp_dir)
+save_dir = "../trained_net" 
+if not os.path.isdir(tmp_dir):
+    os.makedirs(save_dir)
 
 # prepare dataloader
 train_transform = transforms.Compose([
@@ -71,9 +74,6 @@ val_transform = transforms.Compose([
 ])
 
 trainset = torchvision.datasets.CIFAR100(root='../data', train = True, download=True, transform=train_transform)
-data_each = [[] for i in range(node_num)]
-label_each = [[] for i in range(node_num)]
-traindatasets = []
 trainloaders = []
 
 print("Data loaded")
@@ -115,12 +115,12 @@ for net in nets:
 print("Model loaded")
 
 optimizers = [optim.AdamW([
-    {'params': [nets[i].cls_token], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params': [nets[i].pos_embed], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params':nets[i].patch_embed.parameters(), 'lr': 1e-5},  # 学習済みバックボーンの一部（小さな学習率）
-    {'params': nets[i].blocks.parameters(), 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params': nets[i].norm.parameters(), 'lr': 1e-5},  # 正規化層（小さな学習率）
-    {'params': nets[i].head.parameters(), 'lr': 1e-3},  # 新しいhead（大きな学習率）
+    {'params': [nets[i].cls_token], 'lr': 1e-5},  
+    {'params': [nets[i].pos_embed], 'lr': 1e-5},  
+    {'params':nets[i].patch_embed.parameters(), 'lr': 1e-5},  
+    {'params': nets[i].blocks.parameters(), 'lr': 1e-5},  
+    {'params': nets[i].norm.parameters(), 'lr': 1e-5},  
+    {'params': nets[i].head.parameters(), 'lr': 1e-3},  
 ]) for i in range(node_num)]
 criterion = nn.CrossEntropyLoss()
 
@@ -155,7 +155,7 @@ for epoch in range(pre_epoch):
 
 # save (after pre self traininig)
 for n in range(node_num):
-    torch.save(nets[n].state_dict(), f"../trained_net/prenet_e{pre_epoch}_n{n}.pth")
+    torch.save(nets[n].state_dict(), f"{save_dir}/prenet_e{pre_epoch}_n{n}.pth")
 
 for n in range(node_num):
     acc = evaluate(nets[n], valloader, device)
@@ -215,7 +215,7 @@ for epoch in range(max_epoch):
     # save
     if (epoch + 1) == max_epoch:
         for n in range(node_num):
-            torch.save(nets[n].state_dict(), f"../trained_net/net_e{epoch+1}_n{n}.pth")
+            torch.save(nets[n].state_dict(), f"{save_dir}/net_e{epoch+1}_n{n}.pth")
         
 for filename in os.listdir(tmp_dir):
     os.remove(file_path)

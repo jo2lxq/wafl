@@ -51,12 +51,15 @@ torch.random.manual_seed(1)
 random.seed(1)
 
 # directory for storing the prev_net data
-tmp_dir = "./tmp/" 
+tmp_dir = "./tmp" 
 if os.path.isdir(tmp_dir):
     for filename in os.listdir(tmp_dir):
         os.remove(tmp_dir + filename)
 else:
     os.makedirs(tmp_dir)
+save_dir = "../trained_net" 
+if not os.path.isdir(tmp_dir):
+    os.makedirs(save_dir)
 
 # prepare dataloader
 train_transform = transforms.Compose([
@@ -157,7 +160,7 @@ for epoch in range(pre_epoch):
 
 # save (after pre self traininig)
 for n in range(node_num):
-    torch.save(nets[n].state_dict(), f"../trained_net/prenet_e{pre_epoch}_n{n}.pth")
+    torch.save(nets[n].state_dict(), f"{save_dir}/prenet_e{pre_epoch}_n{n}.pth")
 
 for n in range(node_num):
     acc = evaluate(nets[n], valloader, device)
@@ -217,7 +220,7 @@ for epoch in range(max_epoch):
     # save
     if (epoch + 1) == max_epoch:
         for n in range(node_num):
-            torch.save(nets[n].state_dict(), f"../trained_net/net_e{epoch+1}_n{n}.pth")
+            torch.save(nets[n].state_dict(), f"{save_dir}/net_e{epoch+1}_n{n}.pth")
         
 for filename in os.listdir(tmp_dir):
     os.remove(file_path)
