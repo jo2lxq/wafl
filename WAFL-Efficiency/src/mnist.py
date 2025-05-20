@@ -17,10 +17,10 @@ from functions.model_exchange import update_nets
 from functions.subset import create_subsets
 
 parser = argparse.ArgumentParser(description="Hyper Parameters")
-parser.add_argument("--pre_epoch", default = 10, type=int)
-parser.add_argument("--max_epoch", default = 100, type=int)
+parser.add_argument("--pre_epoch", default = 100, type=int)
+parser.add_argument("--max_epoch", default = 1000, type=int)
 parser.add_argument("--batch_size", default = 64, type=int)
-parser.add_argument("--steps_per_epoch", default = 5, type=int)
+parser.add_argument("--steps_per_epoch", default = 10, type=int)
 parser.add_argument("--noniid", default = 0.9, type=float)
 parser.add_argument("--zero_initialization", default = False, type=bool)
 parser.add_argument("--reduce", default = "topk_ds", type=str, help = "set topk_ds, topk_ds_dq, or None") 
@@ -39,7 +39,7 @@ K = args.K
 Q = args.Q
 
 fl_coefficiency = 1
-class_num = 100
+class_num = 10
 node_num = 10
 
 # setup
@@ -60,20 +60,13 @@ else:
 
 # prepare dataloader
 train_transform = transforms.Compose([
-    transforms.Resize(224),  
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
 ])
 val_transform = transforms.Compose([
-    transforms.Resize(224),  
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.25, 0.25, 0.25]),
 ])
 
-trainset = torchvision.datasets.CIFAR100(root='../data', train = True, download=True, transform=train_transform)
-data_each = [[] for i in range(node_num)]
-label_each = [[] for i in range(node_num)]
-traindatasets = []
+trainset = torchvision.datasets.MNIST(root='../data', train = True, download=True, transform=train_transform)
 trainloaders = []
 
 print("Data loaded")
@@ -93,35 +86,44 @@ else:
     print(f"argument error : noniid = {noniid}")
     sys.exit()
 
-valset = torchvision.datasets.CIFAR100(root='../data', train = False, download=True, transform=val_transform)
+valset = torchvision.datasets.MNIST(root='../data', train = False, download=True, transform=val_transform)
 valloader = torch.utils.data.DataLoader(valset, batch_size = batch_size, shuffle=True)
 
 del trainset
 del valset
 
-nets = [timm.create_model('vit_base_patch16_224', pretrained=True) for _ in range(node_num)]
-for n in range(node_num):
-    nets[n].head = nn.Linear(nets[n].head.in_features, 100)  
+class SimpleCNN(nn.Module):
+    def __init__(self):
+        super(SimpleCNN, self).__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),  
+            nn.ReLU(),
+            nn.MaxPool2d(2),                            
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),       
+            nn.Flatten(),         
+            nn.Linear(32*7*7, 128),
+            nn.ReLU(),
+            nn.Linear(128, 10)                           
+        )
+    def forward(self, x):
+        return self.net(x)
+
+nets = [SimpleCNN() for n in range(node_num)]
 
 prev_net = [[None] * node_num for _ in range(node_num)]
 init_net = None
 if zero_initialization == True: # initializa the prev_nets with zero
     init_net = copy.deepcopy(nets[0].state_dict())
-    init_net["head.weight"] = torch.zeros_like(init_net["head.weight"])
-    init_net["head.bias"] = torch.zeros_like(init_net["head.bias"])
+    for key in init_net.keys():
+        init_net[key][:] = 0
 for net in nets:
     net.to(device)
 
 print("Model loaded")
 
-optimizers = [optim.AdamW([
-    {'params': [nets[i].cls_token], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params': [nets[i].pos_embed], 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params':nets[i].patch_embed.parameters(), 'lr': 1e-5},  # 学習済みバックボーンの一部（小さな学習率）
-    {'params': nets[i].blocks.parameters(), 'lr': 1e-5},  # Transformerブロック（小さな学習率）
-    {'params': nets[i].norm.parameters(), 'lr': 1e-5},  # 正規化層（小さな学習率）
-    {'params': nets[i].head.parameters(), 'lr': 1e-3},  # 新しいhead（大きな学習率）
-]) for i in range(node_num)]
+optimizers = [optim.Adam(nets[i].parameters(), lr = 1e-3) for i in range(node_num)]
 criterion = nn.CrossEntropyLoss()
 
 print("Start Pre-self Training")
