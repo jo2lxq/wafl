@@ -1,7 +1,7 @@
 import torch
 
 def evaluate(net, valloader, device = torch.device("cpu"), step = 50):
-	net.eval()  # 評価モードに設定
+	net.eval()	# 評価モードに設定
 	correct = 0
 	total = 0
 
