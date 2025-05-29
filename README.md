@@ -4,7 +4,7 @@ This space provides the code for Wireless Ad Hoc Federated Learning (WAFL) -- A 
 As of May 2025, this repository contains the following three projects.
 1. [WAFL-MLP](./WAFL-MLP/): The most basic codes with a fully-connected neural network \[1\] for starters. You can learn what the WAFL is.
 2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer \[5\] for image recognition.
-3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer \[13\]for object detection.
+3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer \[13\] for object detection.
 4. [WAFL-YOLO](./WAFL-YOLO/): WAFL with YOLOv9 for object detection.
 5. [WAFL-Whisper](./WAFL-Whisper/): WAFL with Whisper for speech recognition.
 5. [WAFL-Efficiency](./WAFL-Efficiency/): WAFL's efficient model exchange with Top-K Difference Sparsification and Difference Quantization \[15\].
