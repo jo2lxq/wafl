@@ -1,12 +1,13 @@
 # Welcome to Wireless Ad Hoc Federated Learning (WAFL)
 This space provides the code for Wireless Ad Hoc Federated Learning (WAFL) -- A Fully Autonomous Collaborative Learning with Device-to-Device Communication.
 
-As of February 2025, this repository contains the following three projects.
-1. [WAFL-MLP](./WAFL-MLP/): The most basic codes with a fully-connected neural network for starters. You can learn what the WAFL is.
-2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer for image recognition.
-3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer for object detection.
+As of May 2025, this repository contains the following three projects.
+1. [WAFL-MLP](./WAFL-MLP/): The most basic codes with a fully-connected neural network \[1\] for starters. You can learn what the WAFL is.
+2. [WAFL-ViT](./WAFL-ViT/): WAFL with Vision Transformer \[5\] for image recognition.
+3. [WAFL-DETR](./WAFL-DETR/): WAFL with Detection Transformer \[13\]for object detection.
 4. [WAFL-YOLO](./WAFL-YOLO/): WAFL with YOLOv9 for object detection.
-4. [WAFL-Whisper](./WAFL-Whisper/): WAFL with Whisper for speech recognition.
+5. [WAFL-Whisper](./WAFL-Whisper/): WAFL with Whisper for speech recognition.
+5. [WAFL-Efficiency](./WAFL-Efficiency/): WAFL's efficient model exchange with Top-K Difference Sparsification and Difference Quantization \[15\].
 
 ## What is WAFL?
 
@@ -54,3 +55,7 @@ Each device trains a model individually with the local data it has. When a devic
 \[13\] Ryuhei Yamaguchi, Hideya Ochiai, "Tuning Detection Transformer with Device-to-Device Communication for Mission-Oriented Object Detection", IEEE WiMob, 2024 (https://ieeexplore.ieee.org/document/10770328).
 
 \[14\] Ryusei Higuchi, Hiroshi Esaki, Hideya Ochiai, "Neuron Personalization of Collaborative Federated Learning via Device-to-Device Communications", IEEE WiMob, 2024 (https://ieeexplore.ieee.org/document/10770527).
+
+\[15\] Kaito Tsuchiya, Hiroshi Esaki, Hideya Ochiai, "Top-K Difference Sparsification and Quantization for Communication-Efficient Model Aggregation in Wireless Ad Hoc Federated Learning", IEEE Conference on Artificial Intelligence, 2025 (in-press).
+
+\[16\] Yudai Ueda, Hideya Ochiai, "Fully Decentralized Collaborative Learning for Visual Question Answering in Distributed Scenarios", IEEE Conference on Artificial Intelligence, 2025 (in-press).
