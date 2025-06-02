@@ -163,7 +163,9 @@ In this project, we created and utilized the dataset which consist of  images of
 The mapping between labels and buildings is shown in the image above.
 -->
 
-You can access CUBR dataset from this [link](https://drive.google.com/file/d/1tO5vu9CSFiBXMHgYuyFP-Q7_Cb4F3gyR/view?usp=sharing).
+You can access CUBR dataset from this [link](https://drive.google.com/drive/folders/1-QXBmc44z9ODfjvfVZ1m9sMd2AtCGw4b?usp=sharing).
+
+Dataset v2 released.
 
 Data installation follows [UTBR data installation](../README.md).
 
