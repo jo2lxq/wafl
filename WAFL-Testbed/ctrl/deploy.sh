@@ -43,10 +43,7 @@ user="denjo"
 for device in "${devices[@]}" 
 do
     echo "Connecting to Execution Server: $device"
-    if [ -f "$final_location$target_name" ]
-    then
-        ssh "$user@$device" "rm -r $final_location$target_name"
-    fi
+    ssh "$user@$device" "rm -rf $final_location$target_name"
     ssh "$user@$device" "mkdir -p $final_location$target_name"
     scp -r -q "$target_confirm/wafl/dataset" "$user@$device:$final_location$target_name"
     scp -r -q "$target_confirm/wafl/config" "$user@$device:$final_location$target_name"
