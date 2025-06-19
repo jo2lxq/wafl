@@ -5,6 +5,8 @@
 # (not PROJECT_DIR/ctrl, for example)
 TARGET_PATH=$(pwd)
 TARGET_NAME=$(basename $TARGET_PATH)
+#Importing the environment variables
+source "$TARGET_PATH/ctrl/wafl_base_execution_config"
 #Deserializing Base Configuration File Lists
 IFS=',' read -r -a WAFL_DEVICE_NAMES <<< "$WAFL_DEVICE_NAMES"
 IFS=',' read -r -a WAFL_DEVICE_IPS <<< "$WAFL_DEVICE_IPS"
