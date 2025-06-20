@@ -39,7 +39,9 @@ do
     mkdir -p "$TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]}"
     mkdir -p "$TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]}"
     echo "Connecting to Execution Server: ${WAFL_DEVICE_NAMES[$counter]}"
-    (ssh -o ConnectTimeout=5 "$USER@${WAFL_DEVICE_IPS[$counter]}" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME; \
+    ERROR_CHECK=0
+    {
+    ssh -o ConnectTimeout=5 "$USER@${WAFL_DEVICE_IPS[$counter]}" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config;
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src;
@@ -47,25 +49,27 @@ do
     # The Base Configuration shell script is also sent to the execution servers
     scp -r -q "$TARGET_PATH/ctrl/wafl_base_execution_config" \
     "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
-    ([ "$(ls -A $TARGET_PATH/wafl/dataset/common)" ] && 
+    { { [ "$(ls -A $TARGET_PATH/wafl/dataset/common)" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/dataset/common/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" || true) &&
-    ([ "$(ls -A $TARGET_PATH/wafl/config/common)" ] && 
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
+    { { [ "$(ls -A $TARGET_PATH/wafl/config/common)" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/config/common/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" || true) &&
-    ([ "$(ls -A $TARGET_PATH/wafl/src/common)" ] && 
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" && ((--ERROR_CHECK)); } || true; } &&
+    { { [ "$(ls -A $TARGET_PATH/wafl/src/common)" ] && { ((++ERROR_CHECK)) || true; } && 
     scp -r -q "$TARGET_PATH/wafl/src/common/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" || true) &&
-    ([ "$(ls -A $TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; } &&
+    { { [ "$(ls -A $TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]})" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]}/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" || true) &&
-    ([ "$(ls -A $TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
+    { { [ "$(ls -A $TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]})" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]}/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" || true) &&
-    ([ "$(ls -A $TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" && ((--ERROR_CHECK)); } || true; } &&
+    { { [ "$(ls -A $TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]})" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]}/"* \
-    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" || true) &&
-    echo "Successfully deployed project to the device") ||
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; 
+    } && [ $ERROR_CHECK -eq 0 ] &&
+    echo "Successfully deployed project to the device" 
+    } ||
     (echo "$USER@${WAFL_DEVICE_IPS[$counter]}" >>  "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt";
     echo "Unsuccessful in deploying project to the device")
 done
