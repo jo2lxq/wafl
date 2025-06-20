@@ -27,6 +27,8 @@ mkdir -p "$TARGET_PATH/wafl/dataset/common/validate"
 mkdir -p "$TARGET_PATH/wafl/dataset/common/test"
 mkdir -p "$TARGET_PATH/wafl/config/common"
 mkdir -p "$TARGET_PATH/wafl/src/common"
+# Clearing the Unsuccessful Deployment List
+rm "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt"
 echo "Directory exists and will be replicated on all the execution servers via SSH"
 echo "Directories will have the following path: $DEPLOYMENT_LOCATION/$TARGET_NAME"
 for ((counter=0; counter<${#WAFL_DEVICE_NAMES[@]}; counter++))
@@ -37,19 +39,34 @@ do
     mkdir -p "$TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]}"
     mkdir -p "$TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]}"
     echo "Connecting to Execution Server: ${WAFL_DEVICE_NAMES[$counter]}"
-    ssh "$USER@${WAFL_DEVICE_IPS[$counter]}" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME; \
+    (ssh -o ConnectTimeout=5 "$USER@${WAFL_DEVICE_IPS[$counter]}" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config;
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src;
-        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/results"
+        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/results" &&
     # The Base Configuration shell script is also sent to the execution servers
-    scp -r -q "$TARGET_PATH/ctrl/wafl_base_execution_config" "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME"
-    scp -r -q "$TARGET_PATH/wafl/dataset/common/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" > /dev/null 2>&1
-    scp -r -q "$TARGET_PATH/wafl/config/common/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" > /dev/null 2>&1
-    scp -r -q "$TARGET_PATH/wafl/src/common/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" > /dev/null 2>&1
-    scp -r -q "$TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]}/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" > /dev/null 2>&1
-    scp -r -q "$TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]}/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" > /dev/null 2>&1
-    scp -r -q "$TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]}/"* "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" > /dev/null 2>&1
-    echo "Successfully deployed project to the device"
+    scp -r -q "$TARGET_PATH/ctrl/wafl_base_execution_config" \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
+    ([ "$(ls -A $TARGET_PATH/wafl/dataset/common)" ] && 
+    scp -r -q "$TARGET_PATH/wafl/dataset/common/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" || true) &&
+    ([ "$(ls -A $TARGET_PATH/wafl/config/common)" ] && 
+    scp -r -q "$TARGET_PATH/wafl/config/common/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" || true) &&
+    ([ "$(ls -A $TARGET_PATH/wafl/src/common)" ] && 
+    scp -r -q "$TARGET_PATH/wafl/src/common/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" || true) &&
+    ([ "$(ls -A $TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    scp -r -q "$TARGET_PATH/wafl/dataset/${WAFL_DEVICE_NAMES[$counter]}/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" || true) &&
+    ([ "$(ls -A $TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    scp -r -q "$TARGET_PATH/wafl/config/${WAFL_DEVICE_NAMES[$counter]}/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" || true) &&
+    ([ "$(ls -A $TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]})" ] &&
+    scp -r -q "$TARGET_PATH/wafl/src/${WAFL_DEVICE_NAMES[$counter]}/"* \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" || true) &&
+    echo "Successfully deployed project to the device") ||
+    (echo "$USER@${WAFL_DEVICE_IPS[$counter]}" >>  "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt";
+    echo "Unsuccessful in deploying project to the device")
 done
 echo "Deployment Complete!"
