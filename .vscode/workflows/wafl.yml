@@ -1,0 +1,16 @@
+name: Lint with Ruff
+on:
+    pull_request:
+        branches:
+            - testbed-develop
+jobs:
+    ruff:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@main
+            - uses: astral-sh/ruff-action@main
+              with:
+                  version: 0.12.0
+                  args: check --select E,F,I
+                  src: "./WAFL-Testbed"
+
