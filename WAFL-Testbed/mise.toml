@@ -1,0 +1,16 @@
+[tools]
+python = "3.11.4"
+uv = "0.7.13"
+
+[tasks]
+setup = [
+  "mise install python",
+  "mise install uv",
+  "uv venv",
+  "uv sync",
+  "uv run pre-commit install",
+]
+
+lint = [
+  "uv run ruff check --fix",
+]
