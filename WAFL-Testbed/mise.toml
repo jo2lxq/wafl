@@ -8,7 +8,7 @@ setup = [
   "mise install uv",
   "uv venv",
   "uv sync",
-  "pre-commit install",
+  "uv run pre-commit install",
 ]
 
 lint = [
