@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+import paramiko
+
 
 class WaflAgent:
     """
@@ -13,6 +15,7 @@ class WaflAgent:
         ip (str): IP address
         ctrl_port (int): Control TCP port number
         status (str): Current status (e.g., "UNKNOWN", "READY", "RUNNING", "DONE", "ERROR")
+        pid (str): Process id
     """
 
     def __init__(self, device_name: str, ip_address: str, ctrl_port: int):
@@ -21,13 +24,36 @@ class WaflAgent:
         self.ctrl_port = ctrl_port
         self.status = "UNKNOWN"
         self.logger = logging.getLogger(f"WaflAgent-{device_name}")
+        self.pid = None
 
     def start_remote_process(self, experiment_id: str, args: Dict[str, Any]):
         """
         Start wafl/src/main.py with nohup via SSH on execution server.
         """
         self.logger.info(f"🚀 Starting execution program (experiment ID: {experiment_id})")
-        pass
+
+        ssh_port = 22
+
+        username = args["USER"]
+
+        private_key_path = "/home/denjo/.ssh/id_ed25519"  # dummy
+        key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+
+        target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["EXPERIMENT_NAME"])
+
+        command_create_results = "cd " + os.path.join(target_path, "results") + " && mkdir " + experiment_id
+        command_start = "nohup python3 -u " + os.path.join(target_path, "src/main.py") + " > log.txt 2>&1 < /dev/null & echo $!"
+
+        self.logger.info(f"Connecting to {self.ip}...")
+
+        with paramiko.SSHClient() as ssh:
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, port=ssh_port, username=username, pkey=key)
+            ssh.exec_command(command_create_results)
+            stdin, stdout, stderr = ssh.exec_command(command_start)
+            self.pid = stdout.readline().strip()
+            stdout.channel.close()
+            self.logger.info(f"Started process with PID: {self.pid}")
 
     def _send_command(self, command: str) -> Tuple[bool, str]:
         """
@@ -81,12 +107,26 @@ class WaflAgent:
         success, _ = self._send_command("KILL\r\n")
         return success
 
-    def force_kill_process(self):
+    def force_kill_process(self, args: Dict[str, Any]):
         """
         Force kill process via SSH.
         """
         self.logger.error("💀 Force killing process")
-        pass
+
+        ssh_port = 22
+
+        username = args["USER"]
+
+        private_key_path = "/home/denjo/.ssh/id_ed25519"  # dummy
+        key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+
+        command_kill = "kill " + self.pid
+
+        with paramiko.SSHClient() as ssh:
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, port=ssh_port, username=username, pkey=key)
+            if self.pid is not None:
+                ssh.exec_command(command_kill)
 
 
 class ControlServer:
@@ -112,6 +152,8 @@ class ControlServer:
             "WAFL_DEVICE_NAMES": ["0", "1", "2"],
             "WAFL_DEVICE_IPS": ["192.168.11.100", "192.168.11.101", "192.168.11.102"],
             "WAFL_DEVICE_CTRL_PORT": 10001,
+            "DEPLOYMENT_LOCATION": "/home/denjo/testbed",
+            "USER": "denjo",
             "EXPERIMENT_NAME": "exp",
         }
 
