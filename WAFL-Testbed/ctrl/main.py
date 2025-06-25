@@ -2,6 +2,8 @@ import datetime
 import logging
 import os
 import socket
+import subprocess
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import paramiko
@@ -38,7 +40,7 @@ class WaflAgent:
 
         username = args["USER"]
 
-        private_key_path = "/home/denjo/.ssh/id_ed25519"  # dummy
+        private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
         key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
 
         target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["EXPERIMENT_NAME"])
@@ -169,7 +171,7 @@ class WaflAgent:
 
         username = args["USER"]
 
-        private_key_path = "/home/denjo/.ssh/id_ed25519"  # dummy
+        private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
         key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
 
         command_kill = "kill " + self.pid
@@ -199,15 +201,38 @@ class ControlServer:
         """Load config file (.wafl_execution_config_base)."""
         print(f"📝 Loading config file {config_path}")
 
-        # dummy
+        # run source wafl_execution_base_config
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        # Load environment variables from shell script
+        self._load_shell_env_vars(config_path)
+
+        # Return config dictionary from environment variables
         return {
-            "WAFL_DEVICE_NAMES": ["0", "1", "2"],
-            "WAFL_DEVICE_IPS": ["192.168.11.100", "192.168.11.101", "192.168.11.102"],
-            "WAFL_DEVICE_CTRL_PORT": 10001,
-            "DEPLOYMENT_LOCATION": "/home/denjo/testbed",
-            "USER": "denjo",
-            "EXPERIMENT_NAME": "exp",
+            "WAFL_DEVICE_NAMES": os.environ.get("WAFL_DEVICE_NAMES", "0").split(","),
+            "WAFL_DEVICE_IPS": os.environ.get("WAFL_DEVICE_IPS", "localhost").split(","),
+            "WAFL_DEVICE_CTRL_PORT": int(os.environ.get("WAFL_DEVICE_CTRL_PORT", "10001")),
+            "DEPLOYMENT_LOCATION": os.environ.get("DEPLOYMENT_LOCATION"),
+            "USER": os.environ.get("USER"),
+            "EXPERIMENT_NAME": os.environ.get("EXPERIMENT_NAME", "exp"),
         }
+
+    def _load_shell_env_vars(self, config_path: str):
+        """Load environment variables from shell script file using subprocess."""
+        try:
+            # Use subprocess to source the file and dump environment
+            cmd = f"bash -c 'source {config_path} && env'"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+
+            # Parse the output and set environment variables
+            for line in result.stdout.strip().split("\n"):
+                if "=" in line and not line.startswith("_"):  # Skip shell internal variables
+                    key, value = line.split("=", 1)
+                    os.environ[key] = value
+        except:
+            self.logger.error(f"Failed to load config from {config_path}. Ensure it exists and is valid.")
+            raise
 
     def _generate_experiment_id(self, name: str) -> str:
         """Generate experiment ID in 'experiment-name-timestamp' format."""
@@ -249,17 +274,86 @@ class ControlServer:
         Execute entire experiment sequence (startup, training loop, shutdown).
         """
         self.logger.info(f"🚀 Starting experiment: {self.experiment_id}")
-        pass
+        try:
+            # 1. Start remote processes on all agents
+            for agent in self.agents:
+                agent.start_remote_process(self.experiment_id, self.config)
 
-    def _wait_for_all_agents_to_complete(self):
-        """Poll and wait until all agents complete processing."""
-        self.logger.info("⏳ Waiting for all agents to complete...")
-        pass
+            # Check if all agents started successfully
+            if any(agent.status == "ERROR" for agent in self.agents):
+                raise RuntimeError("One or more agents failed to start.")
+
+            self.logger.info("✅ All agents started successfully.")
+
+            # 2. Main training loop
+            for epoch in range(1, epochs + 1):
+                self.logger.info(f"--- Starting Epoch {epoch}/{epochs} ---")
+
+                # Instruct all agents to begin the epoch
+                for agent in self.agents:
+                    # Logic to determine peers can be added here
+                    peers = wafl_phase_params.get("peers")
+                    agent.begin_epoch(phase="WAFL", epoch=epoch, options=peers)
+
+                # Wait for all agents to complete the epoch
+                self._wait_for_all_agents_to_complete(current_epoch=epoch)
+                self.logger.info(f"--- ✅ Completed Epoch {epoch}/{epochs} ---")
+
+            self.logger.info("🎉 All training epochs completed successfully.")
+
+        except Exception as e:
+            self.logger.error(f"💥 An error occurred during the experiment: {e}", exc_info=True)
+        finally:
+            # 3. Shutdown all agents
+            self._shutdown_all_agents()
+            self.logger.info(f"--- Experiment {self.experiment_id} finished ---")
+
+    def _wait_for_all_agents_to_complete(self, current_epoch: int, poll_interval: int = 15, timeout: int = 3600):
+        """Polls agents until they all complete the current epoch."""
+        self.logger.info(f"⏳ Waiting for all agents to complete epoch {current_epoch}...")
+        start_time = time.time()
+
+        while True:
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f"Waiting for agents to complete epoch {current_epoch} timed out after {timeout} seconds.")
+
+            finished_agents = set()
+            for agent in self.agents:
+                status_code, logs = agent.get_status()
+
+                if logs:  # Log any output from agents
+                    for log_line in logs:
+                        self.logger.info(f"[{agent.name}] {log_line}")
+
+                # Check for errors first
+                if "ERROR" in status_code:
+                    raise RuntimeError(f"Agent {agent.name} reported an error state: {status_code}")
+
+                # Check if agent is done with the current or a later epoch
+                if status_code.startswith("DONE"):
+                    try:
+                        done_epoch = int(status_code.split("-")[-1])
+                        if done_epoch >= current_epoch:
+                            finished_agents.add(agent.name)
+                    except (ValueError, IndexError):
+                        self.logger.warning(f"Could not parse epoch from status '{status_code}' for agent {agent.name}")
+
+            self.logger.info(f"Completion status: {len(finished_agents)}/{len(self.agents)} agents done.")
+            if len(finished_agents) == len(self.agents):
+                break
+
+            time.sleep(poll_interval)
 
     def _shutdown_all_agents(self):
-        """Terminate all agent processes."""
+        """Terminates all agent processes, trying gracefully first, then forcefully."""
         self.logger.warning("🛑 Starting shutdown of all agents")
-        pass
+        for agent in self.agents:
+            if agent.pid is None:  # Skip agents that never started
+                continue
+
+            if not agent.send_kill_command():
+                self.logger.warning(f"Graceful shutdown failed for agent {agent.name}. Attempting force kill.")
+                agent.force_kill_process(self.config)
 
 
 if __name__ == "__main__":
