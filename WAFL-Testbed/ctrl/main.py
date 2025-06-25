@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import socket
 from typing import Any, Dict, List, Optional, Tuple
 
 import paramiko
@@ -15,16 +16,17 @@ class WaflAgent:
         ip (str): IP address
         ctrl_port (int): Control TCP port number
         status (str): Current status (e.g., "UNKNOWN", "READY", "RUNNING", "DONE", "ERROR")
-        pid (str): Process id
+        pid (str): Process ID of the remote wafl/main.py script.
     """
 
-    def __init__(self, device_name: str, ip_address: str, ctrl_port: int):
+    def __init__(self, device_name: str, ip_address: str, ctrl_port: int, timeout: int = 10):
         self.name = device_name
         self.ip = ip_address
         self.ctrl_port = ctrl_port
         self.status = "UNKNOWN"
         self.logger = logging.getLogger(f"WaflAgent-{device_name}")
         self.pid = None
+        self.timeout = timeout
 
     def start_remote_process(self, experiment_id: str, args: Dict[str, Any]):
         """
@@ -62,9 +64,29 @@ class WaflAgent:
         Returns:
             Tuple[bool, str]: (success flag, response string)
         """
-        self.logger.debug(f"🔌 TCP send: {command.strip()}")
-        response = "OK"
-        return True, response
+        self.logger.debug(f"🔌 TCP Send to {self.ip}:{self.ctrl_port}: {command.strip()}")
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(self.timeout)
+                s.connect((self.ip, self.ctrl_port))
+                s.sendall(command.encode("utf-8"))
+
+                response_parts = []
+                while True:
+                    data = s.recv(4096)
+                    if not data:
+                        break
+                    response_parts.append(data)
+
+                full_response = b"".join(response_parts).decode("utf-8").strip()
+                self.logger.debug(f"📡 TCP Recv from {self.ip}:{self.ctrl_port}: {full_response}")
+                return True, full_response
+        except socket.timeout:
+            self.logger.error(f"TCP connection to {self.ip}:{self.ctrl_port} timed out.")
+            return False, "ERROR:TIMEOUT"
+        except socket.error as e:
+            self.logger.error(f"TCP socket error on {self.ip}:{self.ctrl_port}: {e}")
+            return False, f"ERROR:{e}"
 
     def get_status(self) -> Tuple[str, List[str]]:
         """
@@ -73,10 +95,30 @@ class WaflAgent:
         Returns:
             Tuple[str, List[str]]: (status string, stdout list)
         """
-        # dummy
-        status_code = "DONE-SELF-00001"
-        logs = ["log line 1", "log line 2"]
-        self.logger.debug(f"📈 Status retrieved: {status_code}")
+        success, response = self._send_command("STAT\r\n")
+
+        if not success:
+            return "ERROR_COMM", [response]  # Communication error
+
+        lines = response.split("\n")
+        if not lines or not lines[0]:
+            return "ERROR_PARSE", ["Received empty response from agent."]
+
+        first_line = lines[0].strip()
+        parts = first_line.split(":", 1)
+
+        status_code = parts[0]
+        logs = lines[1:]
+
+        # Validate format
+        if len(parts) == 2 and parts[1].isdigit():
+            expected_log_count = int(parts[1])
+            if len(logs) != expected_log_count:
+                self.logger.warning(f"Log line count mismatch. Expected {expected_log_count}, got {len(logs)}.")
+        elif status_code not in ["OK", "ERROR"]:
+            self.logger.warning(f"Unrecognized status format: {first_line}")
+
+        self.logger.debug(f"📈 Status received: {status_code}")
         return status_code, logs
 
     def begin_epoch(self, phase: str, epoch: int, options: Optional[List[str]] = None):
@@ -86,26 +128,36 @@ class WaflAgent:
         """
         command = f"BEGIN-{phase}-{epoch:05d}"
         if options:
-            command += f":{options}"
+            command += f":{str(options)}"
+
         self.logger.info(f"📤 Sending command: {command}")
-        success, _ = self._send_command(f"{command}\r\n")
-        pass
+        success, response = self._send_command(f"{command}\r\n")
+        if not success or response != "OK":
+            self.logger.error(f"Failed to start epoch. Response: {response}")
 
     def begin_evaluation(self, eval_name: str = "eval"):
         """
         Start evaluation routine with BEGIN-eval command.
         """
+        command = f"BEGIN-{eval_name}"
         self.logger.info(f"📊 Starting evaluation routine '{eval_name}'")
-        success, _ = self._send_command(f"BEGIN-{eval_name}\r\n")
-        pass
+        success, response = self._send_command(f"{command}\r\n")
+        if not success or response != "OK":
+            self.logger.error(f"Failed to start evaluation. Response: {response}")
 
     def send_kill_command(self) -> bool:
         """
         Send KILL command to terminate process normally.
         """
-        self.logger.warning("🔪 Sending KILL command")
-        success, _ = self._send_command("KILL\r\n")
-        return success
+        self.logger.warning("🔪 Sending KILL command.")
+        success, response = self._send_command("KILL\r\n")
+        if success and response == "OK":
+            self.logger.info("✅ KILL command acknowledged.")
+            self.status = "TERMINATED"
+            return True
+        else:
+            self.logger.error(f"KILL command failed or was not acknowledged. Response: {response}")
+            return False
 
     def force_kill_process(self, args: Dict[str, Any]):
         """
@@ -164,9 +216,10 @@ class ControlServer:
 
     def _create_results_directory(self):
         """Create directory to save experiment results."""
-        summary_path = os.path.join("results", self.experiment_id, "summary")
-        print(f"📁 Creating results directory: {summary_path}")
-        return summary_path
+        results_path = os.path.join("results", self.experiment_id, "summary")
+        os.makedirs(results_path, exist_ok=True)
+        print(f"📁 Created results directory: {results_path}")
+        return results_path
 
     def _create_agents(self) -> List[WaflAgent]:
         """Create WaflAgent instance list based on config."""
