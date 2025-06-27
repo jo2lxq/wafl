@@ -230,8 +230,8 @@ class ControlServer:
                 if "=" in line and not line.startswith("_"):  # Skip shell internal variables
                     key, value = line.split("=", 1)
                     os.environ[key] = value
-        except:
-            self.logger.error(f"Failed to load config from {config_path}. Ensure it exists and is valid.")
+        except Exception as e:
+            self.logger.error(f"Failed to load config from {config_path}. Ensure it exists and is valid. Exception: {e}")
             raise
 
     def _generate_experiment_id(self, name: str) -> str:
