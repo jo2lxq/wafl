@@ -17,7 +17,7 @@ class WaflAgent:
         name (str): Device name (e.g., "0", "1")
         ip (str): IP address
         ctrl_port (int): Control TCP port number
-        status (str): Current status (e.g., "UNKNOWN", "READY", "RUNNING", "DONE", "ERROR")
+        status (str): Current status ("UNKNOWN", "READY", "RUNNING", "DONE", "ERROR", "TERMINATED")
         pid (str): Process ID of the remote wafl/main.py script.
     """
 
@@ -57,6 +57,7 @@ class WaflAgent:
             stdin, stdout, stderr = ssh.exec_command(command_start)
             self.pid = stdout.readline().strip()
             stdout.channel.close()
+            self.status = "READY"
             self.logger.info(f"Started process with PID: {self.pid}")
 
     def _send_command(self, command: str) -> Tuple[bool, str]:
@@ -100,16 +101,18 @@ class WaflAgent:
         success, response = self._send_command("STAT\r\n")
 
         if not success:
+            self.status = "ERROR"
             return "ERROR_COMM", [response]  # Communication error
 
         lines = response.split("\n")
         if not lines or not lines[0]:
+            self.status = "ERROR"
             return "ERROR_PARSE", ["Received empty response from agent."]
 
         first_line = lines[0].strip()
         parts = first_line.split(":", 1)
 
-        status_code = parts[0]
+        status_code = parts[0].split("-")[0]
         logs = lines[1:]
 
         # Validate format
@@ -117,9 +120,11 @@ class WaflAgent:
             expected_log_count = int(parts[1])
             if len(logs) != expected_log_count:
                 self.logger.warning(f"Log line count mismatch. Expected {expected_log_count}, got {len(logs)}.")
-        elif status_code not in ["OK", "ERROR"]:
+        elif status_code not in ["EXEC", "DONE", "ERROR"]:
+            self.status = "ERROR"
             self.logger.warning(f"Unrecognized status format: {first_line}")
 
+        self.status = status_code
         self.logger.debug(f"📈 Status received: {status_code}")
         return status_code, logs
 
@@ -136,6 +141,7 @@ class WaflAgent:
         success, response = self._send_command(f"{command}\r\n")
         if not success or response != "OK":
             self.logger.error(f"Failed to start epoch. Response: {response}")
+        self.status = "RUNNING"
 
     def begin_evaluation(self, eval_name: str = "eval"):
         """
@@ -181,6 +187,7 @@ class WaflAgent:
             ssh.connect(self.ip, port=ssh_port, username=username, pkey=key)
             if self.pid is not None:
                 ssh.exec_command(command_kill)
+                self.status = "TERMINATED"
 
 
 class ControlServer:
