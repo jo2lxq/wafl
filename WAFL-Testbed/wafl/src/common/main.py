@@ -54,7 +54,7 @@ class ModelSharingUtils:
             return serialized_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"SERIALIZATION ERROR"
+            return b"ERROR"
 
     def _deserialize_model(self, SR_model: bytes) -> Any:
         """
@@ -67,7 +67,7 @@ class ModelSharingUtils:
             return deserialized_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"DESERIALIZATION ERROR"
+            return b"ERROR"
 
     def _compress_model(self, LE_model: bytes) -> bytes:
         """
@@ -82,7 +82,7 @@ class ModelSharingUtils:
             return compressed_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"COMPRESSION ERROR"
+            return b"ERROR"
 
     def _decompress_model(self, SR_Model: bytes) -> bytes:
         """
@@ -94,7 +94,7 @@ class ModelSharingUtils:
             return decompressed_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"DECOMPRESSION ERROR"
+            return b"ERROR"
 
     def _fetch_model(self, peer_IP: str, other_options: str = "") -> Tuple[bool, Any]:
         """
@@ -124,7 +124,7 @@ class ModelSharingUtils:
             return True, data
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return False, "ERROR"
+            return False, b"ERROR"
 
     def _dispatch_model(self, conn: socket, options: str) -> bool:
         """
@@ -147,6 +147,7 @@ class ModelSharingUtils:
             else:
                 model_data = self.vMODEL_INSTANCE_CACHE
             if model_data == b"ERROR":
+                self.vMODEL_INSTANCE_CACHE = None
                 raise Exception("DISPATCH ERROR")
             conn.sendall(model_data)
             self.logger.info("✅ Successfully sent the model data to the peer.")
