@@ -740,23 +740,49 @@ class ControlServer:
 
 if __name__ == "__main__":
     try:
+        # Parameters file path
+        PARAMETERS_PATH = "ctrl/parameters.json"
+
+        # Load experiment parameters from JSON file
+        try:
+            with open(PARAMETERS_PATH, "r", encoding="utf-8") as f:
+                experiment_parameters = json.load(f)
+            print(f"📄 Loaded experiment parameters from: {PARAMETERS_PATH}")
+        except json.JSONDecodeError as e:
+            print(f"💥 Error parsing JSON file {PARAMETERS_PATH}: {e}")
+            exit(1)
+        except Exception as e:
+            print(f"💥 Error reading parameters file {PARAMETERS_PATH}: {e}")
+            exit(1)
+
+        # Validate required parameters
+        required_params = ["epochs", "wafl_phase_params"]
+        missing_params = [param for param in required_params if param not in experiment_parameters]
+
+        if missing_params:
+            print(f"💥 Missing required parameters in {PARAMETERS_PATH}: {', '.join(missing_params)}")
+            exit(1)
+
+        print(f"🚀 Starting experiment with {experiment_parameters['epochs']} epochs")
+        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
+
         # Config file path
         CONFIG_PATH = "ctrl/wafl_execution_base_config"
 
         # Create ControlServer instance
         controller = ControlServer(config_path=CONFIG_PATH)
 
-        # Experiment parameters
-        experiment_parameters = {
-            "epochs": 50,
-            "wafl_phase_params": {"aggregation_strategy": "FedAvg"},
-        }
-
         # Run experiment
         controller.run_experiment(
             epochs=experiment_parameters["epochs"], wafl_phase_params=experiment_parameters["wafl_phase_params"]
         )
 
+    except KeyboardInterrupt:
+        print("\n⚠️ Experiment interrupted by user")
+        exit(130)
+    except FileNotFoundError as e:
+        print(f"💥 File not found: {e}")
+        exit(1)
     except Exception as e:
         print(f"💥 Fatal error in main: {e}")
         exit(1)
