@@ -39,7 +39,9 @@ class WaflAgent:
         self.pid = None
         self.timeout = timeout
         self.config = config
-        self._deploy_agent_config(experiment_parameters)
+
+        # Deploy configurations during initialization
+        self._deploy_configurations(experiment_parameters)
 
     def _create_unified_config(self, experiment_parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -78,6 +80,134 @@ class WaflAgent:
         self.logger.debug(f"🔧 Created unified configuration for agent {self.name}")
         return unified_config
 
+    def _deploy_configurations(self, experiment_parameters: Dict[str, Any]) -> bool:
+        """
+        Deploy all configuration files (contact pattern and agent config) to this agent via SSH.
+
+        Args:
+            experiment_parameters: Experiment parameters containing configuration data
+
+        Returns:
+            bool: True if all deployments successful, False otherwise
+        """
+        self.logger.info(f"📋 Deploying configurations to agent {self.name}")
+
+        try:
+            ssh_port = 22
+            username = self.config["USER"]
+            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+
+            if not os.path.exists(private_key_path):
+                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+
+            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], "wafl")
+            config_dir = os.path.join(target_path, "config", "common")
+
+            self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
+
+            with paramiko.SSHClient() as ssh:
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+
+                # Ensure config directory exists
+                command_mkdir = f"mkdir -p {config_dir}"
+                stdin, stdout, stderr = ssh.exec_command(command_mkdir)
+                exit_status = stdout.channel.recv_exit_status()
+
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise RuntimeError(f"Failed to create config directory: {error_msg}")
+
+                # Prepare configuration files for deployment
+                files_to_deploy = []
+
+                # 1. Agent configuration (always required)
+                unified_config = self._create_unified_config(experiment_parameters)
+                config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
+                files_to_deploy.append(
+                    {"content": config_json, "filename": "config.json", "description": "agent configuration"}
+                )
+
+                # 2. Contact pattern (optional)
+                contact_pattern_name = experiment_parameters.get("contact_pattern")
+                if contact_pattern_name is None:
+                    raise ValueError("contact_pattern_name cannot be None")
+                contact_pattern_path = os.path.join("ctrl", "contact_pattern", contact_pattern_name)
+
+                if not os.path.exists(contact_pattern_path):
+                    raise FileNotFoundError(f"Contact pattern file not found: {contact_pattern_path}")
+
+                with open(contact_pattern_path, "r", encoding="utf-8") as f:
+                    contact_pattern_data = json.load(f)
+
+                contact_pattern_json = json.dumps(contact_pattern_data, indent=2, ensure_ascii=False)
+                files_to_deploy.append(
+                    {
+                        "content": contact_pattern_json,
+                        "filename": "contact_pattern.json",
+                        "description": f"contact pattern '{contact_pattern_name}'",
+                    }
+                )
+
+                # Deploy all files via SFTP
+                with ssh.open_sftp() as sftp:
+                    import io
+
+                    deployed_files = []
+                    for file_info in files_to_deploy:
+                        try:
+                            file_path = os.path.join(config_dir, file_info["filename"])
+                            file_obj = io.BytesIO(file_info["content"].encode("utf-8"))
+
+                            sftp.putfo(file_obj, file_path)
+                            sftp.chmod(file_path, 0o644)
+
+                            deployed_files.append(file_info["filename"])
+                            self.logger.info(f"📋 Deployed {file_info['description']} to agent {self.name}")
+
+                        except Exception as e:
+                            self.logger.error(f"💥 Failed to deploy {file_info['description']}: {e}")
+                            return False
+
+                # Verify all deployed files
+                verification_success = True
+                for filename in deployed_files:
+                    file_path = os.path.join(config_dir, filename)
+                    stdin, stdout, stderr = ssh.exec_command(f"test -f {file_path} && echo '{filename}: OK'")
+                    verification = stdout.read().decode().strip()
+                    exit_status = stdout.channel.recv_exit_status()
+
+                    if exit_status != 0 or "OK" not in verification:
+                        self.logger.error(f"❌ File verification failed for {filename}")
+                        verification_success = False
+                    else:
+                        self.logger.debug(f"📊 {verification}")
+
+                if not verification_success:
+                    raise RuntimeError("Configuration file verification failed")
+
+                self.logger.info(
+                    f"✅ All configurations deployed successfully to agent {self.name} ({len(deployed_files)} files)"
+                )
+                return True
+
+        except FileNotFoundError as e:
+            self.logger.error(f"📁 Configuration file error for agent {self.name}: {e}")
+            return False
+        except json.JSONDecodeError as e:
+            self.logger.error(f"📄 JSON parse error for agent {self.name}: {e}")
+            return False
+        except paramiko.AuthenticationException as e:
+            self.logger.error(f"🔒 SSH authentication failed for agent {self.name}: {e}")
+            return False
+        except paramiko.SSHException as e:
+            self.logger.error(f"🌐 SSH connection error to agent {self.name}: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"💥 Configuration deployment failed for agent {self.name}: {e}", exc_info=True)
+            return False
+
     def _deploy_agent_config(self, experiment_parameters: Dict[str, Any]) -> bool:
         """
         Deploy unified configuration JSON file to this agent via SSH.
@@ -102,7 +232,7 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], "ctrl")
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], "wafl")
             config_dir = os.path.join(target_path, "config", "common")
             config_file_path = os.path.join(config_dir, "config.json")
 
@@ -121,17 +251,18 @@ class WaflAgent:
                     error_msg = stderr.read().decode().strip()
                     raise RuntimeError(f"Failed to create config directory: {error_msg}")
 
-                # Write config file using cat with heredoc
-                command_write = f"""cat > {config_file_path} << 'EOF'
-{config_json}
-EOF"""
+                # Use SFTP to transfer the file instead of heredoc
+                with ssh.open_sftp() as sftp:
+                    # Create a temporary file-like object
+                    import io
 
-                stdin, stdout, stderr = ssh.exec_command(command_write)
-                exit_status = stdout.channel.recv_exit_status()
+                    file_obj = io.BytesIO(config_json.encode("utf-8"))
 
-                if exit_status != 0:
-                    error_msg = stderr.read().decode().strip()
-                    raise RuntimeError(f"Failed to write config file: {error_msg}")
+                    # Upload file via SFTP
+                    sftp.putfo(file_obj, config_file_path)
+
+                    # Set proper permissions
+                    sftp.chmod(config_file_path, 0o644)
 
                 # Verify file was created
                 stdin, stdout, stderr = ssh.exec_command(f"test -f {config_file_path} && echo 'OK'")
@@ -174,7 +305,7 @@ EOF"""
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], "ctrl")
+            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], "wafl")
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
             command_start = (
@@ -577,7 +708,7 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any]):
+    def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
         """
@@ -587,7 +718,11 @@ class ControlServer:
         try:
             # 0. Create agents with unified configuration deployment
             self.logger.info("📋 Phase 0: Creating agents and deploying configurations")
-            experiment_parameters = {"epochs": epochs, "wafl_phase_params": wafl_phase_params}
+            experiment_parameters = {
+                "epochs": epochs,
+                "wafl_phase_params": wafl_phase_params,
+                "contact_pattern": contact_pattern,
+            }
 
             self.agents = self._create_agents(experiment_parameters)
             self.logger.info("✅ All agents created and configured successfully")
@@ -756,7 +891,7 @@ if __name__ == "__main__":
             exit(1)
 
         # Validate required parameters
-        required_params = ["epochs", "wafl_phase_params"]
+        required_params = ["epochs", "contact_pattern", "wafl_phase_params"]
         missing_params = [param for param in required_params if param not in experiment_parameters]
 
         if missing_params:
@@ -764,6 +899,7 @@ if __name__ == "__main__":
             exit(1)
 
         print(f"🚀 Starting experiment with {experiment_parameters['epochs']} epochs")
+        print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
         print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
 
         # Config file path
@@ -774,7 +910,9 @@ if __name__ == "__main__":
 
         # Run experiment
         controller.run_experiment(
-            epochs=experiment_parameters["epochs"], wafl_phase_params=experiment_parameters["wafl_phase_params"]
+            epochs=experiment_parameters["epochs"],
+            wafl_phase_params=experiment_parameters["wafl_phase_params"],
+            contact_pattern=experiment_parameters["contact_pattern"],
         )
 
     except KeyboardInterrupt:

@@ -1,5 +1,6 @@
 {
   "epochs": 50,
+  "contact_pattern": "cse_n10_c10_b02_tt10_tp2_s01.json",
   "wafl_phase_params": {
     "aggregation_strategy": "FedAvg"
   }
