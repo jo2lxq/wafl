@@ -130,10 +130,10 @@ class WaflAgent:
                 )
 
                 # 2. Contact pattern (optional)
-                contact_pattern_name = experiment_parameters.get("contact_pattern")
-                if contact_pattern_name is None:
-                    raise ValueError("contact_pattern_name cannot be None")
-                contact_pattern_path = os.path.join("ctrl", "contact_pattern", contact_pattern_name)
+                contact_pattern = experiment_parameters.get("contact_pattern")
+                if contact_pattern is None:
+                    raise ValueError("contact_pattern cannot be None")
+                contact_pattern_path = os.path.join("ctrl", "contact_pattern", contact_pattern)
 
                 if not os.path.exists(contact_pattern_path):
                     raise FileNotFoundError(f"Contact pattern file not found: {contact_pattern_path}")
@@ -146,7 +146,7 @@ class WaflAgent:
                     {
                         "content": contact_pattern_json,
                         "filename": "contact_pattern.json",
-                        "description": f"contact pattern '{contact_pattern_name}'",
+                        "description": f"contact pattern '{contact_pattern}'",
                     }
                 )
 
@@ -437,7 +437,7 @@ class WaflAgent:
 
             # Validate status code
             valid_statuses = ["EXEC", "DONE", "ERROR", "READY"]
-            if status_code not in valid_statuses and not any(status_code.startswith(s) for s in valid_statuses):
+            if status_code not in valid_statuses and not status_code.startswith(tuple(valid_statuses)):
                 self.logger.warning(f"📊 Unrecognized status format from agent {self.name}: {first_line}")
                 self.status = "ERROR"
                 return "ERROR_FORMAT", [f"Unrecognized status: {first_line}"]
@@ -711,6 +711,9 @@ class ControlServer:
     def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
+
+        Note:
+            Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
         """
         self.logger.info(f"🚀 Starting experiment: {self.experiment_id} ({epochs} epochs)")
         experiment_success = False
