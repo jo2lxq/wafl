@@ -3,6 +3,7 @@
 This project is a Federated Learning framework for speech recognition using the Whisper model.
 
 ## Environment Setup
+Please choose either "Singularity image" or "conda"
 
 ### Singularity Image
 1. Build the Singularity image:
@@ -17,9 +18,12 @@ singularity build --fakeroot wafl_whisper.sif wafl_whisper.def
 singularity shell --nv --bind /dir/to/WAFL-Whisper:/dir/to/WAFL-Whisper --contain /path/to/wafl_whisper.sif
 ```
 
-3. Prepare contact_info files:
+3. Place node movement simulation files here:
 
-Place the necessary files in the contact_info/ directory
+Place the necessary files in the contact_file/ directory. Sample RWP-based simulations for 4 and 6 devices are already included.
+
+The sample files should be in JSON format, where each object represents one epoch. Each key is a node ID, and the corresponding value is a list of node IDs it communicates with in that epoch.
+
 
 ### conda
 
@@ -29,13 +33,14 @@ conda activate WAFL-Whisper
 pip install -r requirements.txt
 ```
 
-## Configuration File
+## Basic Configuration
 
-Before running the project, you need to create a `config.json` file. It should include the following parameters:
+Before running the project, you need to create a config.json file.
+A sample configuration is already provided in the file, and it should include the following parameters:
 
 ```json
 {
-    "memo": "Experiment memo",
+    "memo": "Experiment memo (This memo will be recorded in the output directory where the results are saved)",
     "n_node": "Number of nodes",
     "pre_epoch": "Number of pre-training epochs",
     "num_epoch": "Number of collaborative learning epochs",
@@ -82,9 +87,15 @@ data_dir/
 - Audio files and text files are matched by having the same name (with different extensions)
   - Example: `audio/sample1.wav` ↔ `script/sample1.txt`
 
+3. Sample Dataset
+- You can download a sample dataset from [here](https://drive.google.com/file/d/1ZvJO4Argwu6ZK0Rwacd_mTj2iw6yrMb6/view).
+- Place the dataset directly under WAFL-Whisper so you can run the code without creating your own dataset.  
+- The dataset is derived from [Common Voice](https://huggingface.co/datasets/mozilla-foundation/common_voice_17_0). Because some files have poor audio quality and each node contains audio from multiple speakers, training may not work properly and the CER may not improve significantly.
+
+
 ## Execution
 
-Run the following command inside the Singularity container:
+Run the following command:
 
 ```bash
 python main.py
@@ -99,7 +110,7 @@ output_dir/
     ├── graph/              # Graph images
     │   └── average_cer.png # Graph of average CER progression
     ├── text/               # Text output
-    │   └── node{0..n}/     # Output for each node
+    │   └── node{0..n}/     # Output directories containing transcription results for test data
     ├── model/              # Trained models
     ├── all_result.txt      # Summary of experiment settings and results
     └── cer_results.json    # CER results (JSON format)

@@ -63,7 +63,7 @@ class ConfigManager:
             raise ValueError("contact_file_name is not found")
 
         self.output_dir = (
-            f"{self.output_dir}/{datetime.now().strftime('%Y%m%d-%H%M%S')}_{self.memo}_{self.config_path}"
+            f"{self.output_dir}/{datetime.now().strftime('%Y%m%d-%H%M%S')}_{self.memo}"
         )
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(f"{self.output_dir}/graph", exist_ok=True)
