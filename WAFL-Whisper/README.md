@@ -87,9 +87,15 @@ data_dir/
 - Audio files and text files are matched by having the same name (with different extensions)
   - Example: `audio/sample1.wav` ↔ `script/sample1.txt`
 
+3. Sample Dataset
+- You can download a sample dataset from [here](https://drive.google.com/file/d/1ZvJO4Argwu6ZK0Rwacd_mTj2iw6yrMb6/view).
+- Place the dataset directly under WAFL-Whisper so you can run the code without creating your own dataset.  
+- The dataset is derived from [Common Voice](https://huggingface.co/datasets/mozilla-foundation/common_voice_17_0). Because some files have poor audio quality and each node contains audio from multiple speakers, training may not work properly and the CER may not improve significantly.
+
+
 ## Execution
 
-Run the following command inside the Singularity container:
+Run the following command:
 
 ```bash
 python main.py
