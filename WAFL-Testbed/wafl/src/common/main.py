@@ -11,6 +11,9 @@ from typing import Any, Dict
 mock of wafl/main.py
 """
 
+DEPLOYMENT_LOCATION = "/home/denjo/testbed"  # dummy
+EXPERIMENT_NAME = "exp"  # dummy
+
 
 def count_lines_in_string(text_string: str) -> int:
     """
@@ -73,7 +76,7 @@ class ExecutionServer:
         self.logger = logging.getLogger("ExecutionServer")
         self.config = self._load_config(config_path)
         self.experiment_id = "exp-20250630T011525"  # dummy
-        self.results_dir = os.path.join("/home/denjo/testbed/DEMO_zenko/results", self.experiment_id)
+        self.results_dir = os.path.join(DEPLOYMENT_LOCATION, EXPERIMENT_NAME, "results", self.experiment_id)
         self.log_stream = io.StringIO()
         self.phase = "READY"
         self.epoch = "00000"
@@ -224,7 +227,7 @@ class ExecutionServer:
 if __name__ == "__main__":
     # Config file path
     # CONFIG_PATH = "wafl_execution_base_config"
-    CONFIG_PATH = "/home/denjo/testbed/DEMO_zenko/wafl_execution_base_config"
+    CONFIG_PATH = os.path.join(DEPLOYMENT_LOCATION, EXPERIMENT_NAME, "wafl_execution_base_config")
 
     # Create ControlServer instance
     executor = ExecutionServer(config_path=CONFIG_PATH)
