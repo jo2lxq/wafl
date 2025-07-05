@@ -188,9 +188,17 @@ class ModelSharingUtils:
                     if not DISPATCHED:
                         raise Exception("NOT DISPATCHED")
                     conn.close()
+                except socket.timeout:
+                    # This is expected to happen when no connection is made within the timeout.
+                    # It allows the while loop to check the fLISTENER_ACTIVE flag.
+                    continue
                 except Exception as exc:
-                    self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+                    # Avoid logging minor errors that could spam the log.
+                    if self.fLISTENER_ACTIVE:
+                        self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
                     time.sleep(1.0)
+            self.logger.info("P2P listener thread has been terminated.")
+
 
     def update_model_instance(self, LE_model: Any, metadata: str = "") -> None:
         """
@@ -226,7 +234,6 @@ class CTRL_TCP:
     A class for handling the TCP connection between ctrl server.
     """
 
-    # Work in Progress.
     def __init__(self, config_path: str):
         """
         Initialize the TCP connection parameters.
@@ -240,6 +247,16 @@ class CTRL_TCP:
         self.ctrl_port: Optional[int] = None
         self.p2p_port: Optional[int] = None
         self.timeout: Optional[float] = None
+        
+        # Flag to control the main listener loop.
+        self.fLISTENER_ACTIVE = True
+
+        # Variables for tracking the current status.
+        self.is_epoch_running: bool = False
+        self.current_epoch_type: Optional[str] = None # "SELF" or "WAFL"
+        self.current_epoch_number: Optional[str] = None # 5-digit string
+        self.status_logs: List[str] = []
+
         self._load_config(config_path)
         threading.Thread(target=self.wait_ctrl, daemon=False, args=[]).start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
@@ -313,8 +330,8 @@ class CTRL_TCP:
             Optional[str]: The corresponding IP address string, or None if not found.
         """
         try:
-            index = self.wafl_device_names.index(device_name)
-            return self.wafl_device_ips[index]
+            index = self.device_names.index(device_name)
+            return self.device_ips[index]
         except ValueError:
             self.logger.warning(f"Device name {device_name} not found.")
             return None
@@ -330,7 +347,7 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        local_node = ModelSharingUtils(addr=self.get_device_ip(device_name), port=self.wafl_p2p_port, timeout=10)
+        local_node = ModelSharingUtils(addr=self.get_device_ip(device_name), port=self.p2p_port, timeout=10)
         return local_node
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
@@ -371,9 +388,9 @@ class CTRL_TCP:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((self.addr, self.ctrl_port))
             s.listen()
-            self.logger.info(f"🔗 Socket bound at {self.addr}:{self.ctrl_port} and listening.")  # ctrl_portに修正
+            self.logger.info(f"🔗 Socket bound at {self.addr}:{self.ctrl_port} and listening.")
 
-            while True:
+            while self.fLISTENER_ACTIVE:
                 try:
                     conn, addr_info = s.accept()
                     conn.settimeout(self.timeout)
@@ -391,9 +408,14 @@ class CTRL_TCP:
                     self.logger.info(f"Connection with {addr_info[0]}:{addr_info[1]} closed.")
 
                 except socket.timeout:
-                    self.logger.warning("No incoming connection within the timeout period. Retrying...")
+                    # This is expected behavior to allow the loop to check fLISTENER_ACTIVE.
+                    continue
                 except Exception as exc:
-                    self.logger.error(f"An error occurred in the socket listener: {str(exc)[:100]}...")
+                    if self.fLISTENER_ACTIVE:
+                        self.logger.error(f"An error occurred in the socket listener: {str(exc)[:100]}...")
+            
+            self.logger.info("Control listener thread has been terminated.")
+
 
     def _process_command(self, command_str: str, conn: socket.socket) -> bool:
         """
@@ -410,7 +432,11 @@ class CTRL_TCP:
             if len(parts) != 1:
                 self.logger.warning(f"Incorrect form of KILL command: {command_str}")
                 return False
-            return self._kill_process()
+            # Handle the KILL command by setting flags to terminate loops.
+            self.logger.info("KILL command received. Shutting down listeners.")
+            self.fLISTENER_ACTIVE = False
+            self.model_sharing.fLISTENER_ACTIVE = False
+            return True
         elif main_command == "STAT":
             if len(parts) != 1:
                 self.logger.warning(f"Incorrect form of STAT command: {command_str}")
@@ -419,21 +445,15 @@ class CTRL_TCP:
             conn.sendall(status_response.encode("utf-8"))
             return True
         elif main_command == "BEGIN":
-            if len(parts) != 3:
-                self.logger.warning(f"Incorrect form of BEGIN command: {command_str}")
-                return False
-
+            # This is a sample command structure; you might need to adjust it.
+            # Example: BEGIN-SELF-00001 or BEGIN-WAFL-00002-[1,2,3]
             sub_command = parts[1]
             five_digit_number_str = parts[2]
-
-            if not (len(five_digit_number_str) == 5 and five_digit_number_str.isdigit()):
-                self.logger.warning(f"BEGIN command's number must be a 5-digit number string: {command_str}")
-                return False
-
+            
             if sub_command == "SELF":
-                return self._handle_begin_self(five_digit_number_str)
+                return self._self_learn(five_digit_number_str)
             elif sub_command == "WAFL":
-                return self._handle_begin_wafl(five_digit_number_str)
+                return self._wafl_learn(five_digit_number_str)
             else:
                 self.logger.warning(f"Unknown BEGIN subcommand: {sub_command} in command: {command_str}")
                 return False
@@ -441,36 +461,94 @@ class CTRL_TCP:
             self.logger.warning(f"Unknown command received: {command_str}")
             return False
 
-    def _kill_process(self) -> bool:
-        pass
+    def _get_status(self) -> str:
+        """
+        Constructs the status response string based on the current state.
+        Format: EXEC-XXXX-YYYYY-Z or DONE-XXXX-YYYYY-Z
+        """
+        if self.current_epoch_type is None or self.current_epoch_number is None:
+            # Handle case where no epoch has run yet.
+            return "DONE-NONE--1-0"
 
-    def _get_status(self) -> Dict[str, Any]:
-        pass
+        log_line_count = len(self.status_logs)
+        
+        if self.is_epoch_running:
+            # Format: EXEC-XXXX-YYYYY-Z
+            header = f"EXEC-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
+        else:
+            # Format: DONE-XXXX-YYYYY-Z
+            header = f"DONE-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
+        
+        # Combine header and logs
+        logs = "\n".join(self.status_logs)
+        response = f"{header}\n{logs}"
+        return response
+
 
     def _self_learn(self, five_digit_number_str: str) -> bool:
         """
         Handles the BEGIN-SELF command.
         """
         self.logger.info(f"Start self learning epoch: {five_digit_number_str}")
+        
+        # --- Update status at the beginning of the epoch ---
+        self.is_epoch_running = True
+        self.current_epoch_type = "SELF"
+        self.current_epoch_number = five_digit_number_str
+        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
+        # ---
+        
         # Implement the logic for self-learning here
-        pass
+        self.status_logs.append("Performing self-learning step 1...")
+        time.sleep(1) # Simulate work
+        self.status_logs.append("Performing self-learning step 2...")
+        time.sleep(1) # Simulate work
+        
+        # --- Update status at the end of the epoch ---
+        self.status_logs.append("Epoch completed successfully.")
+        self.is_epoch_running = False
+        # ---
+        return True
+
 
     def _wafl_learn(self, five_digit_number_str: str) -> bool:
         """
         Handles the BEGIN-WAFL command.
         """
         self.logger.info(f"Start WAFL learning epoch: {five_digit_number_str}")
+        
+        # --- Update status at the beginning of the epoch ---
+        self.is_epoch_running = True
+        self.current_epoch_type = "WAFL"
+        self.current_epoch_number = five_digit_number_str
+        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
+        # ---
+        
         # Implement the logic for WAFL learning here
-        # Dummy Test Operations BEGIN
+        self.status_logs.append("Updating model instance for sharing.")
         self.model_sharing.update_model_instance(DUMMY.MODEL_DATA, "Testing")
+        
+        self.status_logs.append(f"Requesting model from peer {DUMMY.IP_ADDR}")
         MODEL = self.model_sharing.request_model_from_peer(DUMMY.IP_ADDR, "&purpose=testing")
-        print(f"Model Received: {type(MODEL)} | Length: {len(pickle.dumps(MODEL)) / 1e6:.2f}MB")
-        # Dummy Test Operations END
+        
+        model_size_mb = len(pickle.dumps(MODEL)) / 1e6
+        self.status_logs.append(f"Model received: type={type(MODEL)}, size={model_size_mb:.2f}MB")
+        print(f"Model Received: {type(MODEL)} | Length: {model_size_mb:.2f}MB")
+
+        # --- Update status at the end of the epoch ---
+        self.status_logs.append("Epoch completed successfully.")
+        self.is_epoch_running = False
+        # ---
+        return True
 
 
 if __name__ == "__main__":
     # Testing the Module
     logging.basicConfig(level=logging.DEBUG)
-    comm_interface = CTRL_TCP("config.json")
+    comm_interface = CTRL_TCP("../config/common/config_local.json")
     comm_interface._wafl_learn("00000")
+    # To test the KILL command, you would need to send a "KILL" message
+    # from a separate client script to the listening port.
+    # The following line is just for stopping the test script.
+    comm_interface.fLISTENER_ACTIVE = False
     comm_interface.model_sharing.fLISTENER_ACTIVE = False
