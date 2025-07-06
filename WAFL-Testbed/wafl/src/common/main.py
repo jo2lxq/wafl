@@ -17,21 +17,14 @@ import torch.optim as optim
 from net import Net
 
 
-# Class for supplying Dummy Data for Local Testing.
-# Should be removed once the work on the file is completed.
-# Most of the module is ready. Work is in progress in the 5-6 places
-# where the DUMMY class' attributes are used.
-class DUMMY:
-    IP_ADDR = "127.0.0.1"
-    DATASET_PATH = "DUMMY/DATASET.pickled"
-    CONFIG_PATH = "../../config/common/config_local.json"
-    MODEL_PATH = "DUMMY"
-    NEIGHBOURS = [0]
-
-
 class ModelLearningUtils:
     """
-    A class for the actual WAFL model learning process.
+    A class for the WAFL model learning process.
+    ACCESS: in the '../' format (Please run the main.py file from PROJECT/src directory).
+    DATASET: PROJECT/dataset/dataset.pickled (Pickle of the subset: torch.utils.data.Dataset);
+    MODEL (to be saved as): PROJECT/results/model_instance.pth;
+    CONTACT PATTERN: PROJECT/config/contact_pattern.json (Dict of "XXXXX" : [] (epoch: neighbour list));
+    CONFIG FILE: PROJECT/config/config_local.json
     """
 
     # Hyperparameter configuration
@@ -41,7 +34,9 @@ class ModelLearningUtils:
     cSELF_TRAIN_EPOCHS = 50  # default 50
     cMAX_EPOCH = 5000  # default 5000
 
-    def __init__(self, dataset_path: str, model_instance_path: str, model_sharing: ModelSharingUtils) -> None:
+    def __init__(
+        self, dataset_path: str, model_instance_path: str, contact_pattern_path: str, model_sharing: ModelSharingUtils
+    ) -> None:
         """
         Initialize the learning process instance.
         """
@@ -52,12 +47,18 @@ class ModelLearningUtils:
             dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
         )
         self.model_instance_path = model_instance_path
+        with open(contact_pattern_path, "r") as f:
+            self.neighbour_map = json.load(f)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
         self.logger = logging.getLogger("ModelLearningUtils")
         self.logger.info("Initialized the Model Learning Utils instance.")
+
+    def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
+        neighbour_list = self.neighbour_map.get(five_digit_number_str, [])
+        return neighbour_list
 
     def self_learn(self, five_digit_number_str: str = "99999", WAFL_LEARN=False) -> bool:
         """
@@ -81,14 +82,14 @@ class ModelLearningUtils:
                 loss.backward()
                 self.optimizer.step()
                 running_loss += loss.item()
-                if i % 10 == 9:  # print every 100 mini-batches
+                if i % 10 == 9:  # print every 10 mini-batches
                     self.logger.debug(f"Running Loss: {running_loss / 10:.5f}")
                     running_loss = 0.0
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
             torch.save(
                 self.net.state_dict(),
-                f"{self.model_instance_path}/MODEL_INSTANCE.pth",
+                self.model_instance_path,
             )
             self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
             SUCCESS = True
@@ -97,17 +98,20 @@ class ModelLearningUtils:
             SUCCESS = False
         return SUCCESS
 
-    def wafl_learn(self, five_digit_number_str: str, neighbours: List[str]) -> bool:
+    def wafl_learn(self, five_digit_number_str: str) -> bool:
         """
         Implementation of the Epoch-by-Epoch Learning Process for WAFL-MLP.
         """
         self.logger.info(f"🎯 Beginning the WAFL-Learning Epoch: {five_digit_number_str}")
         SUCCESS = False
         try:
+            neighbours = self.get_neighbour_list(five_digit_number_str)
             n_nbr = len(neighbours) + 1
             local_model = copy.deepcopy(self.net.state_dict())
             for neighbour in neighbours:
-                received_model = self.model_sharing.request_model_from_peer(DUMMY.IP_ADDR, "&purpose=testing")
+                received_model = self.model_sharing.request_model_from_peer(
+                    CTRL_TCP.get_device_ip(neighbour), "&purpose=testing"
+                )
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
@@ -452,8 +456,10 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        self.model_sharing = ModelSharingUtils(addr=DUMMY.IP_ADDR, port=self.p2p_port, timeout=10)
-        self.model_learning = ModelLearningUtils(DUMMY.DATASET_PATH, DUMMY.MODEL_PATH, self.model_sharing)
+        self.model_sharing = ModelSharingUtils(addr=CTRL_TCP.get_device_ip(device_name), port=self.p2p_port, timeout=10)
+        self.model_learning = ModelLearningUtils(
+            "../dataset/dataset.pickled", "../results/model_instance.pth", "../config/contact_pattern.json", self.model_sharing
+        )
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
         """
@@ -622,7 +628,7 @@ class CTRL_TCP:
         # ---
 
         # Implement the logic for WAFL learning here
-        FLAG = self.model_learning.wafl_learn(five_digit_number_str, DUMMY.NEIGHBOURS)
+        FLAG = self.model_learning.wafl_learn(five_digit_number_str)
 
         # --- Update status at the end of the epoch ---
         self.status_logs.append(f"Epoch completion successful: {FLAG}")
@@ -634,13 +640,9 @@ class CTRL_TCP:
 if __name__ == "__main__":
     # Testing the Module
     logging.basicConfig(level=logging.DEBUG)
-    comm_interface = CTRL_TCP(DUMMY.CONFIG_PATH)
+    comm_interface = CTRL_TCP("../config/config_local.json")
     comm_interface._self_learn("00000")
     comm_interface._wafl_learn("00001")
-    comm_interface._wafl_learn("00002")
-    comm_interface._wafl_learn("00003")
-    comm_interface._wafl_learn("00004")
-    comm_interface._wafl_learn("00005")
     # To test the KILL command, you would need to send a "KILL" message
     # from a separate client script to the listening port.
     # The following line is just for stopping the test script.
