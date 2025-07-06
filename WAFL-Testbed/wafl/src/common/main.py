@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import logging
@@ -7,14 +9,118 @@ import socket
 import threading
 import time
 import zlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from net import Net
 
 
 # Class for supplying Dummy Data for Local Testing.
 # Should be removed once the work on the file is completed.
+# Most of the module is ready. Work is in progress in the 5-6 places
+# where the DUMMY class' attributes are used.
 class DUMMY:
     IP_ADDR = "127.0.0.1"
-    MODEL_DATA = pickle.load(open("DEMODATA.47MB", "rb"))
+    DATASET_PATH = "DUMMY/DATASET.pickled"
+    CONFIG_PATH = "../../config/common/config_local.json"
+    MODEL_PATH = "DUMMY"
+    NEIGHBOURS = [0]
+
+
+class ModelLearningUtils:
+    """
+    A class for the actual WAFL model learning process.
+    """
+
+    # Hyperparameter configuration
+    cBATCH_SIZE = 32  # default 32
+    cLEARNING_RATE = 0.001  # default 0.001
+    cFL_COEFFICIENCY = 1.0  # default 1.0  (WAFL's aggregation co efficiency)
+    cSELF_TRAIN_EPOCHS = 50  # default 50
+    cMAX_EPOCH = 5000  # default 5000
+
+    def __init__(self, dataset_path: str, model_instance_path: str, model_sharing: ModelSharingUtils) -> None:
+        """
+        Initialize the learning process instance.
+        """
+        torch.random.manual_seed(1)
+        dataset = pickle.load(open(dataset_path, "rb"))
+        self.model_sharing = model_sharing
+        self.data_loader = torch.utils.data.DataLoader(
+            dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
+        )
+        self.model_instance_path = model_instance_path
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.net = Net().to(self.device)
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
+        self.logger = logging.getLogger("ModelLearningUtils")
+        self.logger.info("Initialized the Model Learning Utils instance.")
+
+    def self_learn(self, five_digit_number_str: str = "99999", WAFL_LEARN=False) -> bool:
+        """
+        Implementation of the Self-Learning Epoch Logic for WAFL-MLP.
+        """
+        if not WAFL_LEARN:
+            self.logger.info(f"🧠 Beginning the Self-Learning Epoch: {five_digit_number_str}")
+        SUCCESS = False
+        try:
+            running_loss = 0.0
+            for i, data in enumerate(self.data_loader, 0):
+                # get the inputs
+                x_train, y_train = data
+                x_train = x_train.to(self.device)
+                y_train = y_train.to(self.device)
+                # zero the parameter gradients
+                self.optimizer.zero_grad()
+                # forward + backward + optimize
+                y_output = self.net(x_train)
+                loss = self.criterion(y_output, y_train)
+                loss.backward()
+                self.optimizer.step()
+                running_loss += loss.item()
+                if i % 10 == 9:  # print every 100 mini-batches
+                    self.logger.debug(f"Running Loss: {running_loss / 10:.5f}")
+                    running_loss = 0.0
+            if not WAFL_LEARN:
+                self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
+            torch.save(
+                self.net.state_dict(),
+                f"{self.model_instance_path}/MODEL_INSTANCE.pth",
+            )
+            self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
+            SUCCESS = True
+        except Exception as exc:
+            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            SUCCESS = False
+        return SUCCESS
+
+    def wafl_learn(self, five_digit_number_str: str, neighbours: List[str]) -> bool:
+        """
+        Implementation of the Epoch-by-Epoch Learning Process for WAFL-MLP.
+        """
+        self.logger.info(f"🎯 Beginning the WAFL-Learning Epoch: {five_digit_number_str}")
+        SUCCESS = False
+        try:
+            n_nbr = len(neighbours) + 1
+            local_model = copy.deepcopy(self.net.state_dict())
+            for neighbour in neighbours:
+                received_model = self.model_sharing.request_model_from_peer(DUMMY.IP_ADDR, "&purpose=testing")
+                for key in self.net.state_dict():
+                    model_difference = received_model[key] - self.net.state_dict()[key]
+                    local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
+            self.net.load_state_dict(local_model)
+            SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
+            if not SELF_LEARN_FLAG:
+                raise Exception("sSELF-LEARNING ERROR")
+            self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
+            SUCCESS = True
+        except Exception as exc:
+            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            SUCCESS = False
+        return SUCCESS
 
 
 class ModelSharingUtils:
@@ -45,7 +151,7 @@ class ModelSharingUtils:
         Serialize the WAFL model for sharing
         (from the last completed epoch).
         """
-        self.logger.info("🔢 Serializing the model for transfer.")
+        self.logger.debug("🔢 Serializing the model for transfer.")
         try:
             serialized_output = pickle.dumps(LE_model)
             return serialized_output
@@ -58,7 +164,7 @@ class ModelSharingUtils:
         De-serialize the received WAFL model
         (from the last completed epoch).
         """
-        self.logger.info("🔢 De-serializing the received model.")
+        self.logger.debug("🔢 De-serializing the received model.")
         try:
             deserialized_output = pickle.loads(SR_model)
             return deserialized_output
@@ -75,7 +181,7 @@ class ModelSharingUtils:
             compressed_output = zlib.compress(LE_model)
             original_size_megabytes = len(LE_model) / 1e6
             compressed_size_megabytes = len(compressed_output) / 1e6
-            self.logger.info(f"🗜️ Compressed from {original_size_megabytes:.2f}MB to {compressed_size_megabytes:.2f}MB.")
+            self.logger.debug(f"🗜️ Compressed from {original_size_megabytes:.2f}MB to {compressed_size_megabytes:.2f}MB.")
             return compressed_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
@@ -85,7 +191,7 @@ class ModelSharingUtils:
         """
         De-compression of the received WAFL model using ZLib.
         """
-        self.logger.info("📦 De-compressing the received model.")
+        self.logger.debug("📦 De-compressing the received model.")
         try:
             decompressed_output = zlib.decompress(SR_Model)
             return decompressed_output
@@ -102,7 +208,7 @@ class ModelSharingUtils:
         """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                self.logger.info(f"📥 Requesting WAFL model from peer: {str(peer_IP)}")
+                self.logger.debug(f"📥 Requesting WAFL model from peer: {str(peer_IP)}")
                 command = f"{ModelSharingUtils.cMDLREQ}:src={self.addr}{other_options}\r\n"
                 s.settimeout(self.timeout)
                 s.connect((peer_IP, self.port))
@@ -131,8 +237,8 @@ class ModelSharingUtils:
         function.
         """
         try:
-            self.logger.info("⏳ Preparing the WAFL model data to be dispatched.")
-            self.logger.info(f"🖨️ The received OPTIONS for dispatch: {options}")
+            self.logger.debug("⏳ Preparing the WAFL model data to be dispatched.")
+            self.logger.debug(f"🖨️ The received OPTIONS for dispatch: {options}")
             # OPTIONS-specific processing
             # code should be added here.
             # For now the entire model is dispatched.
@@ -147,7 +253,7 @@ class ModelSharingUtils:
                 self.vMODEL_INSTANCE_CACHE = None
                 raise Exception("DISPATCH ERROR")
             conn.sendall(model_data)
-            self.logger.info("✅ Successfully sent the model data to the peer.")
+            self.logger.debug("✅ Successfully sent the model data to the peer.")
             return True
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
@@ -199,7 +305,6 @@ class ModelSharingUtils:
                     time.sleep(1.0)
             self.logger.info("P2P listener thread has been terminated.")
 
-
     def update_model_instance(self, LE_model: Any, metadata: str = "") -> None:
         """
         Updates the WAFL model instance that is
@@ -247,20 +352,20 @@ class CTRL_TCP:
         self.ctrl_port: Optional[int] = None
         self.p2p_port: Optional[int] = None
         self.timeout: Optional[float] = None
-        
+
         # Flag to control the main listener loop.
         self.fLISTENER_ACTIVE = True
 
         # Variables for tracking the current status.
         self.is_epoch_running: bool = False
-        self.current_epoch_type: Optional[str] = None # "SELF" or "WAFL"
-        self.current_epoch_number: Optional[str] = None # 5-digit string
+        self.current_epoch_type: Optional[str] = None  # "SELF" or "WAFL"
+        self.current_epoch_number: Optional[str] = None  # 5-digit string
         self.status_logs: List[str] = []
 
         self._load_config(config_path)
         threading.Thread(target=self.wait_ctrl, daemon=False, args=[]).start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
-        self.model_sharing = ModelSharingUtils(DUMMY.IP_ADDR, self.p2p_port, self.timeout)
+        self.setup_local_wafl_node(self.name)
 
     def _load_config(self, config_path: str) -> bool:
         """
@@ -347,8 +452,8 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        local_node = ModelSharingUtils(addr=self.get_device_ip(device_name), port=self.p2p_port, timeout=10)
-        return local_node
+        self.model_sharing = ModelSharingUtils(addr=DUMMY.IP_ADDR, port=self.p2p_port, timeout=10)
+        self.model_learning = ModelLearningUtils(DUMMY.DATASET_PATH, DUMMY.MODEL_PATH, self.model_sharing)
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
         """
@@ -413,9 +518,8 @@ class CTRL_TCP:
                 except Exception as exc:
                     if self.fLISTENER_ACTIVE:
                         self.logger.error(f"An error occurred in the socket listener: {str(exc)[:100]}...")
-            
-            self.logger.info("Control listener thread has been terminated.")
 
+            self.logger.info("Control listener thread has been terminated.")
 
     def _process_command(self, command_str: str, conn: socket.socket) -> bool:
         """
@@ -449,7 +553,7 @@ class CTRL_TCP:
             # Example: BEGIN-SELF-00001 or BEGIN-WAFL-00002-[1,2,3]
             sub_command = parts[1]
             five_digit_number_str = parts[2]
-            
+
             if sub_command == "SELF":
                 return self._self_learn(five_digit_number_str)
             elif sub_command == "WAFL":
@@ -471,82 +575,72 @@ class CTRL_TCP:
             return "DONE-NONE--1-0"
 
         log_line_count = len(self.status_logs)
-        
+
         if self.is_epoch_running:
             # Format: EXEC-XXXX-YYYYY-Z
             header = f"EXEC-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
         else:
             # Format: DONE-XXXX-YYYYY-Z
             header = f"DONE-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
-        
+
         # Combine header and logs
         logs = "\n".join(self.status_logs)
         response = f"{header}\n{logs}"
         return response
-
 
     def _self_learn(self, five_digit_number_str: str) -> bool:
         """
         Handles the BEGIN-SELF command.
         """
         self.logger.info(f"Start self learning epoch: {five_digit_number_str}")
-        
+
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True
         self.current_epoch_type = "SELF"
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
         # ---
-        
-        # Implement the logic for self-learning here
-        self.status_logs.append("Performing self-learning step 1...")
-        time.sleep(1) # Simulate work
-        self.status_logs.append("Performing self-learning step 2...")
-        time.sleep(1) # Simulate work
-        
+
+        FLAG = self.model_learning.self_learn(five_digit_number_str)
         # --- Update status at the end of the epoch ---
-        self.status_logs.append("Epoch completed successfully.")
+        self.status_logs.append(f"Epoch completion successful: {FLAG}")
         self.is_epoch_running = False
         # ---
-        return True
-
+        return FLAG
 
     def _wafl_learn(self, five_digit_number_str: str) -> bool:
         """
         Handles the BEGIN-WAFL command.
         """
         self.logger.info(f"Start WAFL learning epoch: {five_digit_number_str}")
-        
+
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True
         self.current_epoch_type = "WAFL"
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
         # ---
-        
+
         # Implement the logic for WAFL learning here
-        self.status_logs.append("Updating model instance for sharing.")
-        self.model_sharing.update_model_instance(DUMMY.MODEL_DATA, "Testing")
-        
-        self.status_logs.append(f"Requesting model from peer {DUMMY.IP_ADDR}")
-        MODEL = self.model_sharing.request_model_from_peer(DUMMY.IP_ADDR, "&purpose=testing")
-        
-        model_size_mb = len(pickle.dumps(MODEL)) / 1e6
-        self.status_logs.append(f"Model received: type={type(MODEL)}, size={model_size_mb:.2f}MB")
-        print(f"Model Received: {type(MODEL)} | Length: {model_size_mb:.2f}MB")
+        FLAG = self.model_learning.wafl_learn(five_digit_number_str, DUMMY.NEIGHBOURS)
 
         # --- Update status at the end of the epoch ---
-        self.status_logs.append("Epoch completed successfully.")
+        self.status_logs.append(f"Epoch completion successful: {FLAG}")
         self.is_epoch_running = False
         # ---
-        return True
+        return FLAG
 
 
 if __name__ == "__main__":
     # Testing the Module
     logging.basicConfig(level=logging.DEBUG)
-    comm_interface = CTRL_TCP("../config/common/config_local.json")
-    comm_interface._wafl_learn("00000")
+    comm_interface = CTRL_TCP(DUMMY.CONFIG_PATH)
+    comm_interface._self_learn("00000")
+    comm_interface._wafl_learn("00001")
+    comm_interface._wafl_learn("00002")
+    comm_interface._wafl_learn("00003")
+    comm_interface._wafl_learn("00004")
+    comm_interface._wafl_learn("00005")
     # To test the KILL command, you would need to send a "KILL" message
     # from a separate client script to the listening port.
     # The following line is just for stopping the test script.
