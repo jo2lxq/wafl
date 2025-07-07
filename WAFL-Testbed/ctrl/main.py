@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 import os
 import socket
@@ -21,7 +22,15 @@ class WaflAgent:
         pid (str): Process ID of the remote wafl/main.py script.
     """
 
-    def __init__(self, device_name: str, ip_address: str, ctrl_port: int, timeout: int = 10):
+    def __init__(
+        self,
+        device_name: str,
+        ip_address: str,
+        ctrl_port: int,
+        config: Dict[str, Any],
+        experiment_parameters: Dict[str, Any],
+        timeout: int = 10,
+    ):
         self.name = device_name
         self.ip = ip_address
         self.ctrl_port = ctrl_port
@@ -29,6 +38,254 @@ class WaflAgent:
         self.logger = logging.getLogger(f"WaflAgent-{device_name}")
         self.pid = None
         self.timeout = timeout
+        self.config = config
+
+        # Deploy configurations during initialization
+        self._deploy_configurations(experiment_parameters)
+
+    def _create_unified_config(self, experiment_parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create unified configuration for this agent.
+
+        Args:
+            experiment_parameters: Experiment parameters from ControlServer
+
+        Returns:
+            Dict containing unified configuration for this agent
+        """
+        unified_config = {
+            "agent_info": {
+                "device_name": self.name,
+                "ip_address": self.ip,
+            },
+            "experiment_info": {
+                "experiment_id": experiment_parameters.get("experiment_id"),
+                "experiment_name": self.config.get("EXPERIMENT_NAME", "exp"),
+            },
+            "infrastructure": {
+                "device_names": self.config["WAFL_DEVICE_NAMES"],
+                "device_ips": self.config["WAFL_DEVICE_IPS"],
+                "ctrl_port": self.config["WAFL_DEVICE_CTRL_PORT"],
+                "p2p_port": self.config["WAFL_DEVICE_P2P_PORT"],
+            },
+            "experiment_parameters": {
+                "epochs": experiment_parameters.get("epochs"),
+                "wafl_phase_params": experiment_parameters.get("wafl_phase_params", {}),
+            },
+            "runtime": {
+                "log_level": os.environ.get("LOG_LEVEL", "INFO"),
+            },
+        }
+
+        self.logger.debug(f"🔧 Created unified configuration for agent {self.name}")
+        return unified_config
+
+    def _deploy_configurations(self, experiment_parameters: Dict[str, Any]) -> bool:
+        """
+        Deploy all configuration files (contact pattern and agent config) to this agent via SSH.
+
+        Args:
+            experiment_parameters: Experiment parameters containing configuration data
+
+        Returns:
+            bool: True if all deployments successful, False otherwise
+        """
+        self.logger.info(f"📋 Deploying configurations to agent {self.name}")
+
+        try:
+            ssh_port = 22
+            username = self.config["USER"]
+            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+
+            if not os.path.exists(private_key_path):
+                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+
+            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            config_dir = os.path.join(target_path, "config")
+
+            self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
+
+            with paramiko.SSHClient() as ssh:
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+
+                # Ensure config directory exists
+                command_mkdir = f"mkdir -p {config_dir}"
+                stdin, stdout, stderr = ssh.exec_command(command_mkdir)
+                exit_status = stdout.channel.recv_exit_status()
+
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise RuntimeError(f"Failed to create config directory: {error_msg}")
+
+                # Prepare configuration files for deployment
+                files_to_deploy = []
+
+                # 1. Agent configuration (always required)
+                unified_config = self._create_unified_config(experiment_parameters)
+                config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
+                files_to_deploy.append(
+                    {"content": config_json, "filename": "config.json", "description": "agent configuration"}
+                )
+
+                # 2. Contact pattern (optional)
+                contact_pattern = experiment_parameters.get("contact_pattern")
+                if contact_pattern is None:
+                    raise ValueError("contact_pattern cannot be None")
+                contact_pattern_path = os.path.join("ctrl", "contact_pattern", contact_pattern)
+
+                if not os.path.exists(contact_pattern_path):
+                    raise FileNotFoundError(f"Contact pattern file not found: {contact_pattern_path}")
+
+                with open(contact_pattern_path, "r", encoding="utf-8") as f:
+                    contact_pattern_data = json.load(f)
+
+                contact_pattern_json = json.dumps(contact_pattern_data, indent=2, ensure_ascii=False)
+                files_to_deploy.append(
+                    {
+                        "content": contact_pattern_json,
+                        "filename": "contact_pattern.json",
+                        "description": f"contact pattern '{contact_pattern}'",
+                    }
+                )
+
+                # Deploy all files via SFTP
+                with ssh.open_sftp() as sftp:
+                    import io
+
+                    deployed_files = []
+                    for file_info in files_to_deploy:
+                        try:
+                            file_path = os.path.join(config_dir, file_info["filename"])
+                            file_obj = io.BytesIO(file_info["content"].encode("utf-8"))
+
+                            sftp.putfo(file_obj, file_path)
+                            sftp.chmod(file_path, 0o644)
+
+                            deployed_files.append(file_info["filename"])
+                            self.logger.info(f"📋 Deployed {file_info['description']} to agent {self.name}")
+
+                        except Exception as e:
+                            self.logger.error(f"💥 Failed to deploy {file_info['description']}: {e}")
+                            return False
+
+                # Verify all deployed files
+                verification_success = True
+                for filename in deployed_files:
+                    file_path = os.path.join(config_dir, filename)
+                    stdin, stdout, stderr = ssh.exec_command(f"test -f {file_path} && echo '{filename}: OK'")
+                    verification = stdout.read().decode().strip()
+                    exit_status = stdout.channel.recv_exit_status()
+
+                    if exit_status != 0 or "OK" not in verification:
+                        self.logger.error(f"❌ File verification failed for {filename}")
+                        verification_success = False
+                    else:
+                        self.logger.debug(f"📊 {verification}")
+
+                if not verification_success:
+                    raise RuntimeError("Configuration file verification failed")
+
+                self.logger.info(
+                    f"✅ All configurations deployed successfully to agent {self.name} ({len(deployed_files)} files)"
+                )
+                return True
+
+        except FileNotFoundError as e:
+            self.logger.error(f"📁 Configuration file error for agent {self.name}: {e}")
+            return False
+        except json.JSONDecodeError as e:
+            self.logger.error(f"📄 JSON parse error for agent {self.name}: {e}")
+            return False
+        except paramiko.AuthenticationException as e:
+            self.logger.error(f"🔒 SSH authentication failed for agent {self.name}: {e}")
+            return False
+        except paramiko.SSHException as e:
+            self.logger.error(f"🌐 SSH connection error to agent {self.name}: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"💥 Configuration deployment failed for agent {self.name}: {e}", exc_info=True)
+            return False
+
+    def _deploy_agent_config(self, experiment_parameters: Dict[str, Any]) -> bool:
+        """
+        Deploy unified configuration JSON file to this agent via SSH.
+
+        Args:
+            experiment_parameters: Experiment parameters from ControlServer
+
+        Returns:
+            bool: True if deployment successful, False otherwise
+        """
+        self.logger.info(f"📋 Deploying configuration to agent {self.name}")
+
+        try:
+            unified_config = self._create_unified_config(experiment_parameters)
+            config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
+
+            ssh_port = 22
+            username = self.config["USER"]
+            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+
+            if not os.path.exists(private_key_path):
+                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+
+            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            config_dir = os.path.join(target_path, "config")
+            config_file_path = os.path.join(config_dir, "config.json")
+
+            self.logger.debug(f"🔗 Deploying config to {username}@{self.ip}:{config_file_path}")
+
+            with paramiko.SSHClient() as ssh:
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+
+                # Create config directory
+                command_mkdir = f"mkdir -p {config_dir}"
+                stdin, stdout, stderr = ssh.exec_command(command_mkdir)
+                exit_status = stdout.channel.recv_exit_status()
+
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise RuntimeError(f"Failed to create config directory: {error_msg}")
+
+                # Use SFTP to transfer the file instead of heredoc
+                with ssh.open_sftp() as sftp:
+                    # Create a temporary file-like object
+                    import io
+
+                    file_obj = io.BytesIO(config_json.encode("utf-8"))
+
+                    # Upload file via SFTP
+                    sftp.putfo(file_obj, config_file_path)
+
+                    # Set proper permissions
+                    sftp.chmod(config_file_path, 0o644)
+
+                # Verify file was created
+                stdin, stdout, stderr = ssh.exec_command(f"test -f {config_file_path} && echo 'OK'")
+                verification = stdout.read().decode().strip()
+
+                if verification != "OK":
+                    raise RuntimeError("Config file verification failed")
+
+                self.logger.info(f"✅ Config deployed successfully to agent {self.name} at {config_file_path}")
+                return True
+
+        except FileNotFoundError as e:
+            self.logger.error(f"🔑 SSH key error for agent {self.name}: {e}")
+            return False
+        except paramiko.AuthenticationException as e:
+            self.logger.error(f"🔒 SSH authentication failed for agent {self.name}: {e}")
+            return False
+        except paramiko.SSHException as e:
+            self.logger.error(f"🌐 SSH connection error to agent {self.name}: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"💥 Config deployment failed for agent {self.name}: {e}", exc_info=True)
+            return False
 
     def start_remote_process(self, experiment_id: str, args: Dict[str, Any]) -> bool:
         """
@@ -48,7 +305,7 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], "ctrl")
+            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["EXPERIMENT_NAME"])
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
             command_start = (
@@ -180,7 +437,7 @@ class WaflAgent:
 
             # Validate status code
             valid_statuses = ["EXEC", "DONE", "ERROR", "READY"]
-            if status_code not in valid_statuses and not any(status_code.startswith(s) for s in valid_statuses):
+            if status_code not in valid_statuses and not status_code.startswith(tuple(valid_statuses)):
                 self.logger.warning(f"📊 Unrecognized status format from agent {self.name}: {first_line}")
                 self.status = "ERROR"
                 return "ERROR_FORMAT", [f"Unrecognized status: {first_line}"]
@@ -308,7 +565,7 @@ class ControlServer:
         self.config = self._load_config(config_path)
         self.experiment_id = self._generate_experiment_id(self.config.get("EXPERIMENT_NAME", "exp"))
         self.results_dir = self._create_results_directory()
-        self.agents: List[WaflAgent] = self._create_agents()
+        self.agents: List[WaflAgent] = []
         self._setup_logging()
 
     def _load_config(self, config_path: str) -> Dict[str, Any]:
@@ -323,7 +580,12 @@ class ControlServer:
             self._load_shell_env_vars(config_path)
 
             # Validate required environment variables
-            required_vars = ["WAFL_DEVICE_NAMES", "WAFL_DEVICE_IPS", "WAFL_DEVICE_CTRL_PORT", "DEPLOYMENT_LOCATION", "USER"]
+            required_vars = [
+                "WAFL_DEVICE_NAMES",
+                "WAFL_DEVICE_IPS",
+                "DEPLOYMENT_LOCATION",
+                "USER",
+            ]
             missing_vars = [var for var in required_vars if not os.environ.get(var)]
 
             if missing_vars:
@@ -333,6 +595,7 @@ class ControlServer:
                 "WAFL_DEVICE_NAMES": os.environ.get("WAFL_DEVICE_NAMES", "0").split(","),
                 "WAFL_DEVICE_IPS": os.environ.get("WAFL_DEVICE_IPS", "localhost").split(","),
                 "WAFL_DEVICE_CTRL_PORT": int(os.environ.get("WAFL_DEVICE_CTRL_PORT", "10001")),
+                "WAFL_DEVICE_P2P_PORT": int(os.environ.get("WAFL_DEVICE_P2P_PORT", "10002")),
                 "DEPLOYMENT_LOCATION": os.environ.get("DEPLOYMENT_LOCATION"),
                 "USER": os.environ.get("USER"),
                 "EXPERIMENT_NAME": os.environ.get("EXPERIMENT_NAME", "exp"),
@@ -392,19 +655,30 @@ class ControlServer:
             self.logger.error(f"💥 Failed to create results directory {results_path}: {e}")
             raise
 
-    def _create_agents(self) -> List[WaflAgent]:
-        """Create WaflAgent instance list based on config."""
+    def _create_agents(self, experiment_parameters: Dict[str, Any]) -> List[WaflAgent]:
+        """Create WaflAgent instance list based on config and experiment parameters."""
         agents = []
         names = self.config["WAFL_DEVICE_NAMES"]
         ips = self.config["WAFL_DEVICE_IPS"]
         port = self.config["WAFL_DEVICE_CTRL_PORT"]
 
-        for name, ip in zip(names, ips):
-            agent = WaflAgent(name, ip, port)
-            agents.append(agent)
-            self.logger.info(f"🤖 Created agent '{name}' for {ip}:{port}")
+        experiment_parameters["experiment_id"] = self.experiment_id
+        experiment_parameters["results_dir"] = self.results_dir
 
-        self.logger.info(f"✅ Created {len(agents)} agents successfully")
+        failed_agents = []
+        for name, ip in zip(names, ips):
+            try:
+                agent = WaflAgent(name, ip, port, self.config, experiment_parameters)
+                agents.append(agent)
+                self.logger.info(f"🤖 Created and configured agent '{name}' for {ip}:{port}")
+            except Exception as e:
+                self.logger.error(f"💥 Failed to create agent '{name}': {e}")
+                failed_agents.append(name)
+
+        if failed_agents:
+            raise RuntimeError(f"❌ Failed to create agents: {', '.join(failed_agents)}")
+
+        self.logger.info(f"✅ Created {len(agents)} agents successfully with configurations deployed")
         return agents
 
     def _setup_logging(self):
@@ -434,14 +708,28 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any]):
+    def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
+
+        Note:
+            Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
         """
         self.logger.info(f"🚀 Starting experiment: {self.experiment_id} ({epochs} epochs)")
         experiment_success = False
 
         try:
+            # 0. Create agents with unified configuration deployment
+            self.logger.info("📋 Phase 0: Creating agents and deploying configurations")
+            experiment_parameters = {
+                "epochs": epochs,
+                "wafl_phase_params": wafl_phase_params,
+                "contact_pattern": contact_pattern,
+            }
+
+            self.agents = self._create_agents(experiment_parameters)
+            self.logger.info("✅ All agents created and configured successfully")
+
             # 1. Start remote processes on all agents
             self.logger.info(f"🎬 Phase 1: Starting {len(self.agents)} remote processes")
             failed_agents = []
@@ -590,23 +878,52 @@ class ControlServer:
 
 if __name__ == "__main__":
     try:
+        # Parameters file path
+        PARAMETERS_PATH = "ctrl/parameters.json"
+
+        # Load experiment parameters from JSON file
+        try:
+            with open(PARAMETERS_PATH, "r", encoding="utf-8") as f:
+                experiment_parameters = json.load(f)
+            print(f"📄 Loaded experiment parameters from: {PARAMETERS_PATH}")
+        except json.JSONDecodeError as e:
+            print(f"💥 Error parsing JSON file {PARAMETERS_PATH}: {e}")
+            exit(1)
+        except Exception as e:
+            print(f"💥 Error reading parameters file {PARAMETERS_PATH}: {e}")
+            exit(1)
+
+        # Validate required parameters
+        required_params = ["epochs", "contact_pattern", "wafl_phase_params"]
+        missing_params = [param for param in required_params if param not in experiment_parameters]
+
+        if missing_params:
+            print(f"💥 Missing required parameters in {PARAMETERS_PATH}: {', '.join(missing_params)}")
+            exit(1)
+
+        print(f"🚀 Starting experiment with {experiment_parameters['epochs']} epochs")
+        print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
+        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
+
         # Config file path
         CONFIG_PATH = "ctrl/wafl_execution_base_config"
 
         # Create ControlServer instance
         controller = ControlServer(config_path=CONFIG_PATH)
 
-        # Experiment parameters
-        experiment_parameters = {
-            "epochs": 50,
-            "wafl_phase_params": {"aggregation_strategy": "FedAvg"},
-        }
-
         # Run experiment
         controller.run_experiment(
-            epochs=experiment_parameters["epochs"], wafl_phase_params=experiment_parameters["wafl_phase_params"]
+            epochs=experiment_parameters["epochs"],
+            wafl_phase_params=experiment_parameters["wafl_phase_params"],
+            contact_pattern=experiment_parameters["contact_pattern"],
         )
 
+    except KeyboardInterrupt:
+        print("\n⚠️ Experiment interrupted by user")
+        exit(130)
+    except FileNotFoundError as e:
+        print(f"💥 File not found: {e}")
+        exit(1)
     except Exception as e:
         print(f"💥 Fatal error in main: {e}")
         exit(1)
