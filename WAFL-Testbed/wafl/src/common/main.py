@@ -1,8 +1,8 @@
 import io
+import json
 import logging
 import os
 import socket
-import subprocess
 import threading
 import time
 from typing import Any, Dict
@@ -11,8 +11,7 @@ from typing import Any, Dict
 mock of wafl/main.py
 """
 
-DEPLOYMENT_LOCATION = "/home/denjo/testbed"  # dummy
-EXPERIMENT_NAME = "exp"  # dummy
+DEPLOYMENT_LOCATION = "/home/denjo/workspace/ktakahashi"  # dummy
 
 
 def count_lines_in_string(text_string: str) -> int:
@@ -72,11 +71,11 @@ class ExecutionServer:
     """
 
     def __init__(self, config_path: str):
-        self.device_name = "0"  # dummy
         self.logger = logging.getLogger("ExecutionServer")
         self.config = self._load_config(config_path)
-        self.experiment_id = "exp-20250630T011525"  # dummy
-        self.results_dir = os.path.join(DEPLOYMENT_LOCATION, EXPERIMENT_NAME, "results", self.experiment_id)
+        self.device_name = self.config["DEVICE_NAME"]
+        self.experiment_id = self.config["EXPERIMENT_ID"]
+        self.results_dir = os.path.join(DEPLOYMENT_LOCATION, self.config["PROJECT_NAME"], "results", self.experiment_id)
         self.log_stream = io.StringIO()
         self.phase = "READY"
         self.epoch = "00000"
@@ -90,39 +89,33 @@ class ExecutionServer:
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        # Load environment variables from shell script
-        self._load_shell_env_vars(config_path)
-
-        # Return config dictionary from environment variables
-        return {
-            "WAFL_DEVICE_NAMES": os.environ.get("WAFL_DEVICE_NAMES", "0").split(","),
-            "WAFL_DEVICE_IPS": os.environ.get("WAFL_DEVICE_IPS", "localhost").split(","),
-            "WAFL_DEVICE_CTRL_PORT": int(os.environ.get("WAFL_DEVICE_CTRL_PORT", "10001")),
-            "WAFL_DEVICE_P2P_PORT": int(os.environ.get("WAFL_DEVICE_P2P_PORT", "10002")),
-            "DEPLOYMENT_LOCATION": os.environ.get("DEPLOYMENT_LOCATION"),
-            "USER": os.environ.get("USER"),
-            "EXPERIMENT_NAME": os.environ.get("EXPERIMENT_NAME", "exp"),
-        }
-
-    def _load_shell_env_vars(self, config_path: str):
-        """Load environment variables from shell script file using subprocess."""
         try:
-            # Use subprocess to source the file and dump environment
-            cmd = f"bash -c 'source {config_path} && env'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
 
-            # Parse the output and set environment variables
-            for line in result.stdout.strip().split("\n"):
-                if "=" in line and not line.startswith("_"):  # Skip shell internal variables
-                    key, value = line.split("=", 1)
-                    os.environ[key] = value
-        except Exception as e:
-            self.logger.error(f"Failed to load config from {config_path}. Ensure it exists and is valid. Exception: {e}")
-            raise
+            # Extract relevant configuration values from JSON structure
+            return {
+                "WAFL_DEVICE_NAMES": config_data["infrastructure"]["device_names"],
+                "WAFL_DEVICE_IPS": config_data["infrastructure"]["device_ips"],
+                "WAFL_DEVICE_CTRL_PORT": config_data["infrastructure"]["ctrl_port"],
+                "WAFL_DEVICE_P2P_PORT": config_data["infrastructure"]["p2p_port"],
+                "PROJECT_NAME": config_data["experiment_info"]["project_name"],
+                "DEVICE_NAME": config_data["agent_info"]["device_name"],
+                "EXPERIMENT_ID": config_data["experiment_info"]["experiment_id"],
+                "EXPERIMENT_NAME": config_data["experiment_info"]["experiment_name"],
+                "EPOCHS": config_data["experiment_parameters"]["epochs"],
+                "WAFL_PHASE_PARAMS": config_data["experiment_parameters"]["wafl_phase_params"],
+                "LOG_LEVEL": config_data["runtime"]["log_level"],
+            }
+
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON format in config file: {e}")
+        except KeyError as e:
+            raise ValueError(f"Missing required key in config file: {e}")
 
     def _setup_logging(self):
         """Setup experiment logging to file and console."""
-        log_file = os.path.join("/home/denjo/testbed/DEMO_zenko/results", "execution_server.log")
+        log_file = os.path.join(self.results_dir, "execution_server.log")
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
@@ -190,12 +183,13 @@ class ExecutionServer:
                         else:
                             stat = "DONE"
                         response = "-".join([stat, self.phase, self.epoch])
-                        captured_logs = self.log_stream.getvalue()
-                        self.log_stream.seek(0)
-                        self.log_stream.truncate(0)
-                        z = count_lines_in_string(captured_logs)
+                        # captured_logs = self.log_stream.getvalue()
+                        # self.log_stream.seek(0)
+                        # self.log_stream.truncate(0)
+                        z = count_lines_in_string("")
                         response += ":" + str(z) + "\r\n"
-                        response += captured_logs
+                        response += ""
+                        self.logger.info(f"STAT response: {response}")
                         conn.sendall(response.encode("utf-8"))
 
                     elif command.startswith("KILL"):
@@ -225,12 +219,9 @@ class ExecutionServer:
 
 
 if __name__ == "__main__":
-    # Config file path
-    # CONFIG_PATH = "wafl_execution_base_config"
-    CONFIG_PATH = os.path.join(DEPLOYMENT_LOCATION, EXPERIMENT_NAME, "wafl_execution_base_config")
-
     # Create ControlServer instance
-    executor = ExecutionServer(config_path=CONFIG_PATH)
+    print(os.getcwd())
+    executor = ExecutionServer(config_path=os.path.join(DEPLOYMENT_LOCATION, "WAFL-Testbed", "config", "config.json"))
 
     # Run experiment
     executor.run()

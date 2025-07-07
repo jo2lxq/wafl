@@ -2,8 +2,8 @@
 export CTRL_SERVER_IP='192.168.11.10'
 export WAFL_DEVICE_NAMES='0'
 export WAFL_DEVICE_IPS='wafl.hongo.wide.ad.jp'
-export WAFL_DEVICE_CTRL_PORT=10001
-export WAFL_DEVICE_P2P_PORT=10002
+export WAFL_DEVICE_CTRL_PORT=50001
+export WAFL_DEVICE_P2P_PORT=50002
 
 # Account-related details
 export USER='denjo'
