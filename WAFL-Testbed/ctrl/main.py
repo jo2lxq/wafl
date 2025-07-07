@@ -101,8 +101,8 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], "wafl")
-            config_dir = os.path.join(target_path, "config", "common")
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            config_dir = os.path.join(target_path, "config")
 
             self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
 
@@ -232,8 +232,8 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], "wafl")
-            config_dir = os.path.join(target_path, "config", "common")
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            config_dir = os.path.join(target_path, "config")
             config_file_path = os.path.join(config_dir, "config.json")
 
             self.logger.debug(f"🔗 Deploying config to {username}@{self.ip}:{config_file_path}")
@@ -305,7 +305,7 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], "wafl")
+            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["EXPERIMENT_NAME"])
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
             command_start = (
