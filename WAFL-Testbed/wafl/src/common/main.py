@@ -106,7 +106,7 @@ class ModelLearningUtils:
         SUCCESS = False
         try:
             neighbours = self.get_neighbour_list(five_digit_number_str)
-            n_nbr = len(neighbours) + 1
+            n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
             for neighbour in neighbours:
                 received_model = self.model_sharing.request_model_from_peer(
