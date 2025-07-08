@@ -363,10 +363,6 @@ class WaflAgent:
 
                 self.logger.info(f"✅ Attempted to kill all processes using p2p port {p2p_port}")
 
-                # Wait longer for processes to be cleaned up and sockets to be released
-                self.logger.info("⏳ Waiting for socket cleanup...")
-                time.sleep(5)
-
                 # Verify ports are actually free before proceeding
                 check_ctrl_port = f"lsof -i:{ctrl_port} | wc -l"
                 check_p2p_port = f"lsof -i:{p2p_port} | wc -l"
