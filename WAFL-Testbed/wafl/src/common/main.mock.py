@@ -39,12 +39,12 @@ class WaflExecution(threading.Thread):
         self.p2p_port = p2p_port
 
     def run(self):
-        time.sleep(5)  # dumny
+        time.sleep(5)  # dummy
 
 
 class SendParameter(threading.Thread):
     """
-    Recieve request from other device and send parameters.
+    Receive request from other device and send parameters.
 
     Attributes:
         name (str): Device name (e.g., "0", "1")
@@ -59,7 +59,7 @@ class SendParameter(threading.Thread):
 
     def run(self):
         while self.running:
-            time.sleep(1)  # dumny
+            time.sleep(1)  # dummy
 
     def stop(self):
         self.running = False
@@ -157,7 +157,7 @@ class ExecutionServer:
                         continue
                     command = data.decode("utf-8")
                     if command.startswith("BEGIN"):
-                        self.logger.info("Recieve BEGIN.")
+                        self.logger.info("Receive BEGIN.")
                         parts = command.split("-")
                         self.phase = parts[1].strip()
                         self.epoch = parts[2].strip()
@@ -176,7 +176,7 @@ class ExecutionServer:
                         conn.sendall(response.encode("utf-8"))
 
                     elif command.startswith("STAT"):
-                        self.logger.info("Recieve STAT.")
+                        self.logger.info("Receive STAT.")
                         stat = "????"
                         if execute_epoch is not None and execute_epoch.is_alive():
                             stat = "EXEC"
@@ -193,7 +193,7 @@ class ExecutionServer:
                         conn.sendall(response.encode("utf-8"))
 
                     elif command.startswith("KILL"):
-                        self.logger.info("Recieve KILL.")
+                        self.logger.info("Receive KILL.")
                         response = "UNDEFINED\r\n"
                         try:
                             send_parameter.stop()

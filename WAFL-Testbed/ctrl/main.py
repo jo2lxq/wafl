@@ -289,7 +289,7 @@ class WaflAgent:
             self.logger.error(f"💥 Config deployment failed for agent {self.name}: {e}", exc_info=True)
             return False
 
-    def start_remote_process(self, experiment_id: str, args: Dict[str, Any]) -> bool:
+    def start_remote_process(self, experiment_id: str) -> bool:
         """
         Start wafl/src/main.py with nohup via SSH on execution server.
 
@@ -300,14 +300,14 @@ class WaflAgent:
 
         try:
             ssh_port = 22
-            username = args["USER"]
+            username = self.config["USER"]
             private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
             if not os.path.exists(private_key_path):
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["PROJECT_NAME"])
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
             command_start = (
@@ -323,8 +323,8 @@ class WaflAgent:
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
 
                 # More thorough port cleanup
-                ctrl_port = args["WAFL_DEVICE_CTRL_PORT"]
-                p2p_port = args["WAFL_DEVICE_P2P_PORT"]
+                ctrl_port = self.config["WAFL_DEVICE_CTRL_PORT"]
+                p2p_port = self.config["WAFL_DEVICE_P2P_PORT"]
 
                 # Kill processes using ctrl port with multiple methods
                 self.logger.info(f"🔪 Killing processes using port {ctrl_port}")
@@ -339,11 +339,6 @@ class WaflAgent:
                     f"netstat -tlnp | grep ':{ctrl_port} ' | awk '{{print $7}}' | cut -d'/' -f1 | xargs -r kill -9"
                 )
                 stdin, stdout, stderr = ssh.exec_command(command_kill_ctrl_netstat)
-                stdout.channel.recv_exit_status()
-
-                # Method 3: Kill any python processes that might be holding the port
-                command_kill_python = "pkill -f 'python.*main.py'"
-                stdin, stdout, stderr = ssh.exec_command(command_kill_python)
                 stdout.channel.recv_exit_status()
 
                 self.logger.info(f"✅ Attempted to kill all processes using ctrl port {ctrl_port}")
@@ -652,8 +647,7 @@ class ControlServer:
             if missing_vars:
                 raise ValueError(f"🚫 Missing required environment variables: {', '.join(missing_vars)}")
 
-            current_dir = os.getcwd()
-            project_path = current_dir.replace("/ctrl", "").rstrip("/")
+            project_path = os.getcwd()
             project_name = os.path.basename(project_path)
 
             config = {
@@ -801,7 +795,7 @@ class ControlServer:
             failed_agents = []
 
             for agent in self.agents:
-                if not agent.start_remote_process(self.experiment_id, self.config):
+                if not agent.start_remote_process(self.experiment_id):
                     failed_agents.append(agent.name)
 
             if failed_agents:
