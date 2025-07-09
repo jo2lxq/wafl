@@ -5,7 +5,7 @@ import os
 import socket
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import paramiko
 
@@ -53,14 +53,16 @@ class WaflAgent:
         Returns:
             Dict containing unified configuration for this agent
         """
+
         unified_config = {
             "agent_info": {
                 "device_name": self.name,
                 "ip_address": self.ip,
             },
             "experiment_info": {
+                "project_name": self.config["PROJECT_NAME"],
+                "experiment_name": self.config["EXPERIMENT_NAME"],
                 "experiment_id": experiment_parameters.get("experiment_id"),
-                "experiment_name": self.config.get("EXPERIMENT_NAME", "exp"),
             },
             "infrastructure": {
                 "device_names": self.config["WAFL_DEVICE_NAMES"],
@@ -101,7 +103,7 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
             config_dir = os.path.join(target_path, "config")
 
             self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
@@ -232,7 +234,7 @@ class WaflAgent:
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["EXPERIMENT_NAME"])
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
             config_dir = os.path.join(target_path, "config")
             config_file_path = os.path.join(config_dir, "config.json")
 
@@ -287,7 +289,7 @@ class WaflAgent:
             self.logger.error(f"💥 Config deployment failed for agent {self.name}: {e}", exc_info=True)
             return False
 
-    def start_remote_process(self, experiment_id: str, args: Dict[str, Any]) -> bool:
+    def start_remote_process(self, experiment_id: str) -> bool:
         """
         Start wafl/src/main.py with nohup via SSH on execution server.
 
@@ -298,19 +300,19 @@ class WaflAgent:
 
         try:
             ssh_port = 22
-            username = args["USER"]
+            username = self.config["USER"]
             private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
             if not os.path.exists(private_key_path):
                 raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(args["DEPLOYMENT_LOCATION"], args["EXPERIMENT_NAME"])
+            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
             command_start = (
                 f"nohup python3 -u {os.path.join(target_path, 'src/main.py')} "
-                f"> {os.path.join(target_path, 'results', experiment_id, 'log.txt')} "
+                f"> {os.path.join(target_path, 'results', experiment_id, 'output.txt')} "
                 "2>&1 < /dev/null & echo $!"
             )
 
@@ -319,6 +321,62 @@ class WaflAgent:
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+
+                # More thorough port cleanup
+                ctrl_port = self.config["WAFL_DEVICE_CTRL_PORT"]
+                p2p_port = self.config["WAFL_DEVICE_P2P_PORT"]
+
+                # Kill processes using ctrl port with multiple methods
+                self.logger.info(f"🔪 Killing processes using port {ctrl_port}")
+
+                # Method 1: Standard lsof + kill
+                command_kill_ctrl = f"lsof -ti:{ctrl_port} | xargs -r kill -9"
+                stdin, stdout, stderr = ssh.exec_command(command_kill_ctrl)
+                exit_status = stdout.channel.recv_exit_status()
+
+                # Method 2: Also try netstat + awk approach as backup
+                command_kill_ctrl_netstat = (
+                    f"netstat -tlnp | grep ':{ctrl_port} ' | awk '{{print $7}}' | cut -d'/' -f1 | xargs -r kill -9"
+                )
+                stdin, stdout, stderr = ssh.exec_command(command_kill_ctrl_netstat)
+                stdout.channel.recv_exit_status()
+
+                self.logger.info(f"✅ Attempted to kill all processes using ctrl port {ctrl_port}")
+
+                # Kill processes using p2p port with multiple methods
+                self.logger.info(f"🔪 Killing processes using port {p2p_port}")
+
+                command_kill_p2p = f"lsof -ti:{p2p_port} | xargs -r kill -9"
+                stdin, stdout, stderr = ssh.exec_command(command_kill_p2p)
+                stdout.channel.recv_exit_status()
+
+                command_kill_p2p_netstat = (
+                    f"netstat -tlnp | grep ':{p2p_port} ' | awk '{{print $7}}' | cut -d'/' -f1 | xargs -r kill -9"
+                )
+                stdin, stdout, stderr = ssh.exec_command(command_kill_p2p_netstat)
+                stdout.channel.recv_exit_status()
+
+                self.logger.info(f"✅ Attempted to kill all processes using p2p port {p2p_port}")
+
+                # Verify ports are actually free before proceeding
+                check_ctrl_port = f"lsof -i:{ctrl_port} | wc -l"
+                check_p2p_port = f"lsof -i:{p2p_port} | wc -l"
+
+                stdin, stdout, stderr = ssh.exec_command(check_ctrl_port)
+                ctrl_count = int(stdout.read().decode().strip())
+
+                stdin, stdout, stderr = ssh.exec_command(check_p2p_port)
+                p2p_count = int(stdout.read().decode().strip())
+
+                if ctrl_count > 0:
+                    self.logger.warning(f"⚠️ Port {ctrl_port} still has {ctrl_count} processes using it")
+                if p2p_count > 0:
+                    self.logger.warning(f"⚠️ Port {p2p_port} still has {p2p_count} processes using it")
+
+                # Additional wait if ports are still in use
+                if ctrl_count > 0 or p2p_count > 0:
+                    self.logger.info("⏳ Additional wait for stubborn processes...")
+                    time.sleep(10)
 
                 # Create results directory
                 stdin, stdout, stderr = ssh.exec_command(command_create_results)
@@ -424,7 +482,7 @@ class WaflAgent:
 
             first_line = lines[0].strip()
             parts = first_line.split(":", 1)
-            status_code = parts[0].split("-")[0]
+            status_code = parts[0]
             logs = lines[1:]
 
             # Validate log count if specified
@@ -451,7 +509,7 @@ class WaflAgent:
             self.status = "ERROR"
             return "ERROR_PARSE", [f"Parse error: {e}"]
 
-    def begin_epoch(self, phase: str, epoch: int, options: Optional[List[str]] = None) -> bool:
+    def begin_epoch(self, phase: str, epoch: int) -> bool:
         """
         Send BEGIN command to start training epoch.
 
@@ -459,8 +517,6 @@ class WaflAgent:
             bool: True if successful, False otherwise
         """
         command = f"BEGIN-{phase}-{epoch:05d}"
-        if options:
-            command += f":{str(options)}"
 
         self.logger.info(f"🎯 Starting epoch {epoch} for agent {self.name} (phase: {phase})")
 
@@ -591,6 +647,9 @@ class ControlServer:
             if missing_vars:
                 raise ValueError(f"🚫 Missing required environment variables: {', '.join(missing_vars)}")
 
+            project_path = os.getcwd()
+            project_name = os.path.basename(project_path)
+
             config = {
                 "WAFL_DEVICE_NAMES": os.environ.get("WAFL_DEVICE_NAMES", "0").split(","),
                 "WAFL_DEVICE_IPS": os.environ.get("WAFL_DEVICE_IPS", "localhost").split(","),
@@ -598,6 +657,7 @@ class ControlServer:
                 "WAFL_DEVICE_P2P_PORT": int(os.environ.get("WAFL_DEVICE_P2P_PORT", "10002")),
                 "DEPLOYMENT_LOCATION": os.environ.get("DEPLOYMENT_LOCATION"),
                 "USER": os.environ.get("USER"),
+                "PROJECT_NAME": project_name,
                 "EXPERIMENT_NAME": os.environ.get("EXPERIMENT_NAME", "exp"),
             }
 
@@ -735,12 +795,12 @@ class ControlServer:
             failed_agents = []
 
             for agent in self.agents:
-                if not agent.start_remote_process(self.experiment_id, self.config):
+                if not agent.start_remote_process(self.experiment_id):
                     failed_agents.append(agent.name)
 
             if failed_agents:
                 raise RuntimeError(f"❌ Failed to start agents: {', '.join(failed_agents)}")
-
+            time.sleep(2)  # Allow some time for processes to stabilize
             self.logger.info("✅ All agents started successfully")
 
             # 2. Main training loop
@@ -752,8 +812,7 @@ class ControlServer:
                 # Send begin commands to all agents
                 failed_commands = []
                 for agent in self.agents:
-                    peers = wafl_phase_params.get("peers")
-                    if not agent.begin_epoch(phase="WAFL", epoch=epoch, options=peers):
+                    if not agent.begin_epoch(phase="WAFL", epoch=epoch):
                         failed_commands.append(agent.name)
 
                 if failed_commands:
@@ -778,7 +837,7 @@ class ControlServer:
             status = "SUCCESS" if experiment_success else "FAILED"
             self.logger.info(f"🏁 Experiment {self.experiment_id} finished with status: {status}")
 
-    def _wait_for_all_agents_to_complete(self, current_epoch: int, poll_interval: int = 15, timeout: int = 3600):
+    def _wait_for_all_agents_to_complete(self, current_epoch: int, poll_interval: int = 5, timeout: int = 3600):
         """Polls agents until they all complete the current epoch."""
         self.logger.info(f"⏳ Waiting for all agents to complete epoch {current_epoch}")
         start_time = time.time()
@@ -813,6 +872,9 @@ class ControlServer:
                     # Check completion status
                     if status_code.startswith("DONE"):
                         try:
+                            self.logger.info(
+                                f"✅ Agent {agent.name} completed epoch {current_epoch} with status: {status_code}"
+                            )
                             done_epoch = int(status_code.split("-")[-1])
                             if done_epoch >= current_epoch:
                                 finished_agents.add(agent.name)

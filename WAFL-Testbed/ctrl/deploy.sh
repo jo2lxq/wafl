@@ -5,8 +5,10 @@
 # (not PROJECT_DIR/ctrl, for example)
 TARGET_PATH=$(pwd)
 TARGET_NAME=$(basename $TARGET_PATH)
+
 #Importing the environment variables
-source "$TARGET_PATH/ctrl/wafl_base_execution_config"
+source "$TARGET_PATH/ctrl/wafl_execution_base_config"
+
 #Deserializing Base Configuration File Lists
 IFS=',' read -r -a WAFL_DEVICE_NAMES <<< "$WAFL_DEVICE_NAMES"
 IFS=',' read -r -a WAFL_DEVICE_IPS <<< "$WAFL_DEVICE_IPS"
@@ -19,6 +21,7 @@ then
     echo "Aborting the process"
     exit 1
 fi
+
 # Ensuring the existence of the base directories on the 
 # management server's project copy for replication
 # on the execution servers (from the wafl sub-directory)
@@ -27,6 +30,7 @@ mkdir -p "$TARGET_PATH/wafl/dataset/common/validate"
 mkdir -p "$TARGET_PATH/wafl/dataset/common/test"
 mkdir -p "$TARGET_PATH/wafl/config/common"
 mkdir -p "$TARGET_PATH/wafl/src/common"
+
 # Clearing the Unsuccessful Deployment List
 rm "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt"
 echo "Directory exists and will be replicated on all the execution servers via SSH"
@@ -46,8 +50,9 @@ do
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config;
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src;
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/results" &&
+
     # The Base Configuration shell script is also sent to the execution servers
-    scp -r -q "$TARGET_PATH/ctrl/wafl_base_execution_config" \
+    scp -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
     "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/common)" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/dataset/common/"* \
