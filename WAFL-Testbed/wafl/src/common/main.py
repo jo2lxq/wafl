@@ -28,6 +28,11 @@ class ModelLearningUtils:
     """
 
     # Hyperparameter configuration
+    # The hyperparameter values supplied by the config file will take precedence.
+    # Also, some of these variables, such as cMAX_EPOCH are not relevant here, since
+    # the epochs are initiated by the control server.
+    # Such variables have been defined here to ensure consistency with the original
+    # WAFL-MLP project.
     cBATCH_SIZE = 32  # default 32
     cLEARNING_RATE = 0.001  # default 0.001
     cFL_COEFFICIENCY = 1.0  # default 1.0  (WAFL's aggregation co efficiency)
@@ -57,7 +62,10 @@ class ModelLearningUtils:
         self.logger.info("Initialized the Model Learning Utils instance.")
 
     def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
-        neighbour_list = self.neighbour_map.get(five_digit_number_str, [])
+        """
+        Return the neighbour list for the current epoch from the contact pattern file.
+        """
+        neighbour_list = self.neighbour_map[int(five_digit_number_str)][str(self.model_sharing.name)]
         return neighbour_list
 
     def self_learn(self, five_digit_number_str: str = "99999", WAFL_LEARN=False) -> bool:
@@ -70,20 +78,19 @@ class ModelLearningUtils:
         try:
             running_loss = 0.0
             for i, data in enumerate(self.data_loader, 0):
-                # get the inputs
                 x_train, y_train = data
                 x_train = x_train.to(self.device)
                 y_train = y_train.to(self.device)
-                # zero the parameter gradients
+
                 self.optimizer.zero_grad()
-                # forward + backward + optimize
+
                 y_output = self.net(x_train)
                 loss = self.criterion(y_output, y_train)
                 loss.backward()
                 self.optimizer.step()
                 running_loss += loss.item()
-                if i % 10 == 9:  # print every 10 mini-batches
-                    self.logger.debug(f"Running Loss: {running_loss / 10:.5f}")
+                if (i + 1) % 50 == 0:
+                    self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
@@ -134,7 +141,7 @@ class ModelSharingUtils:
 
     cMDLREQ = "MDLREQ"
 
-    def __init__(self, addr: str, port: int, timeout: float = 10.0) -> None:
+    def __init__(self, name: int, addr: str, port: int, timeout: float = 10.0) -> None:
         """
         Initialize the instance attributes.
         """
@@ -142,6 +149,7 @@ class ModelSharingUtils:
         self.vMODEL_INSTANCE_CACHE = None
         self.vMODEL_METADATA = ""
         self.fLISTENER_ACTIVE = True
+        self.name = name
         self.addr = addr
         self.port = port
         self.timeout = timeout
@@ -329,13 +337,15 @@ class ModelSharingUtils:
         FETCHED = False
         WAIT_TIME = 2.0
         GROWTH_FACTOR = 1.5
-        while not FETCHED:
+        while not FETCHED and self.fLISTENER_ACTIVE:
             FETCHED, model_data = self._fetch_model(peer_IP, other_options)
             if FETCHED:
                 self.logger.info(f"✅ Retrieved model parameters from peer: {str(peer_IP)}")
                 return model_data
             time.sleep(WAIT_TIME)
             WAIT_TIME **= GROWTH_FACTOR
+        # Handling KILL command from Control Server.
+        return "Fetch Operation Terminated Abruptly."
 
 
 class CTRL_TCP:
@@ -456,7 +466,9 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        self.model_sharing = ModelSharingUtils(addr=CTRL_TCP.get_device_ip(device_name), port=self.p2p_port, timeout=10)
+        self.model_sharing = ModelSharingUtils(
+            name=device_name, addr=CTRL_TCP.get_device_ip(device_name), port=self.p2p_port, timeout=10
+        )
         self.model_learning = ModelLearningUtils(
             "../dataset/dataset.pickled", "../results/model_instance.pth", "../config/contact_pattern.json", self.model_sharing
         )
@@ -638,13 +650,5 @@ class CTRL_TCP:
 
 
 if __name__ == "__main__":
-    # Testing the Module
     logging.basicConfig(level=logging.DEBUG)
     comm_interface = CTRL_TCP("../config/config_local.json")
-    comm_interface._self_learn("00000")
-    comm_interface._wafl_learn("00001")
-    # To test the KILL command, you would need to send a "KILL" message
-    # from a separate client script to the listening port.
-    # The following line is just for stopping the test script.
-    comm_interface.fLISTENER_ACTIVE = False
-    comm_interface.model_sharing.fLISTENER_ACTIVE = False
