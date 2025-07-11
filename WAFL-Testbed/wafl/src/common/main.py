@@ -17,6 +17,21 @@ import torch.optim as optim
 from net import Net
 
 
+class PickledDataset(torch.utils.data.Dataset):
+    """
+    Wrapper for the Subset.
+    """
+
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+
 class ModelLearningUtils:
     """
     A class for the WAFL model learning process.
