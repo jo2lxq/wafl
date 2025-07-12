@@ -1,5 +1,10 @@
 name: WAFL-Testbed
 on:
+    push:
+        branches:
+            - testbed-develop
+            - testbed-develop-ctrl
+            - testbed-develop-wafl
     pull_request:
         branches:
             - testbed-develop
