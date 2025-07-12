@@ -87,6 +87,7 @@ class ModelLearningUtils:
         """
         Return the neighbour list for the current epoch from the contact pattern file.
         """
+        neighbour_list = []
         try:
             neighbour_list = self.neighbour_map[int(five_digit_number_str)].get(str(self.model_sharing.name), [])
         except Exception as exc:

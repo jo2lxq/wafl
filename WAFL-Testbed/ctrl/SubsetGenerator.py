@@ -54,7 +54,7 @@ indices = torch.load(FILTER_PATH)
 
 for i in range(N):
     # Materializing the Dataset.
-    subset = materialize_dataset(torch.utils.data.dataset.Subset(trainset, indices[i]))
+    subset = materialize_dataset(torch.utils.data.Subset(trainset, indices[i]))
     # Wrapping it in our Dataset Class.
     subset = PickledDataset(subset)
     device_dataset_dict = DATASET_PATH + f"{str(i)}/"
