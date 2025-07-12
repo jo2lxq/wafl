@@ -55,7 +55,12 @@ class ModelLearningUtils:
     cMAX_EPOCH = 5000  # default 5000
 
     def __init__(
-        self, dataset_path: str, model_instance_path: str, contact_pattern_path: str, model_sharing: ModelSharingUtils
+        self,
+        dataset_path: str,
+        model_instance_path: str,
+        contact_pattern_path: str,
+        model_sharing: ModelSharingUtils,
+        ctrl_tcp: CTRL_TCP,
     ) -> None:
         """
         Initialize the learning process instance.
@@ -63,6 +68,7 @@ class ModelLearningUtils:
         torch.random.manual_seed(1)
         dataset = pickle.load(open(dataset_path, "rb"))
         self.model_sharing = model_sharing
+        self.ctrl_tcp = ctrl_tcp
         self.data_loader = torch.utils.data.DataLoader(
             dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
         )
@@ -132,7 +138,7 @@ class ModelLearningUtils:
             local_model = copy.deepcopy(self.net.state_dict())
             for neighbour in neighbours:
                 received_model = self.model_sharing.request_model_from_peer(
-                    CTRL_TCP.get_device_ip(neighbour), "&purpose=testing"
+                    self.ctrl_tcp.get_device_ip(neighbour), "&purpose=testing"
                 )
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
@@ -140,7 +146,7 @@ class ModelLearningUtils:
             self.net.load_state_dict(local_model)
             SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
             if not SELF_LEARN_FLAG:
-                raise Exception("sSELF-LEARNING ERROR")
+                raise Exception("SELF-LEARNING ERROR")
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
             SUCCESS = True
         except Exception as exc:
@@ -481,11 +487,13 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        self.model_sharing = ModelSharingUtils(
-            name=device_name, addr=CTRL_TCP.get_device_ip(device_name), port=self.p2p_port, timeout=10
-        )
+        self.model_sharing = ModelSharingUtils(device_name, self.get_device_ip(device_name), self.p2p_port, 10.0)
         self.model_learning = ModelLearningUtils(
-            "../dataset/dataset.pickled", "../results/model_instance.pth", "../config/contact_pattern.json", self.model_sharing
+            "../dataset/dataset.pickled",
+            "../results/model_instance.pth",
+            "../config/contact_pattern.json",
+            self.model_sharing,
+            self,
         )
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
