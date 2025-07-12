@@ -66,7 +66,8 @@ class ModelLearningUtils:
         Initialize the learning process instance.
         """
         torch.random.manual_seed(1)
-        dataset = pickle.load(open(dataset_path, "rb"))
+        with open(dataset_path, "rb") as f:
+            dataset = pickle.load(f)
         self.model_sharing = model_sharing
         self.ctrl_tcp = ctrl_tcp
         self.data_loader = torch.utils.data.DataLoader(
@@ -86,7 +87,10 @@ class ModelLearningUtils:
         """
         Return the neighbour list for the current epoch from the contact pattern file.
         """
-        neighbour_list = self.neighbour_map[int(five_digit_number_str)][str(self.model_sharing.name)]
+        try:
+            neighbour_list = self.neighbour_map[int(five_digit_number_str)].get(str(self.model_sharing.name), [])
+        except Exception as exc:
+            self.logger.error(f"Error retrieving neighbour list: {str(exc)[:100]}...")
         return neighbour_list
 
     def self_learn(self, five_digit_number_str: str = "99999", WAFL_LEARN=False) -> bool:
@@ -674,4 +678,4 @@ class CTRL_TCP:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    comm_interface = CTRL_TCP("../config/config_local.json")
+    comm_interface = CTRL_TCP("../config/config.json")

@@ -38,11 +38,11 @@ class PickledDataset(torch.utils.data.Dataset):
 # Number of WAFL Agents.
 N = 10
 # Path to the Filter File.
-FILTER_PATH = "../data/noniid_filter/filter_r90_s01.pt"
+FILTER_PATH = "###.pt"
 # Path to the Original Dataset (MNIST).
-DATA_PATH = "../data/MNIST/"
+DATA_PATH = "###/MNIST/"
 # Path to the 'wafl/dataset/' directory.
-DATASET_PATH = "dataset/"
+DATASET_PATH = "../wafl/dataset/"
 
 trainset = torchvision.datasets.MNIST(
     root=DATA_PATH,
