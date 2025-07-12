@@ -10,6 +10,7 @@ dependencies = [
     "ruff>=0.12.0",
     "torch>=2.7.1",
     "paramiko>=2.12.0",
+    "torchvision>=0.22.1",
 ]
 
 [tool.ruff]
