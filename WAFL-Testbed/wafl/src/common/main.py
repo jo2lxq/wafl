@@ -671,7 +671,10 @@ class CTRL_TCP:
                 try:
                     conn.sendall(response_to_send.encode("utf-8"))
                 except Exception as send_e:
-                    self.logger.error(f"Failed to send response '{response_to_send.strip()}' for command '{command_str}': {send_e}")
+                    self.logger.error(
+                        f"Failed to send response '{response_to_send.strip()}' "
+                        f"for command '{command_str}': {send_e}"
+                    )
 
     def _get_status(self) -> str:
         """
