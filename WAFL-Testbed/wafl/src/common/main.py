@@ -76,6 +76,10 @@ class ModelLearningUtils:
         self.model_instance_path = model_instance_path
         with open(contact_pattern_path, "r") as f:
             self.neighbour_map = json.load(f)
+        if not isinstance(self.neighbour_map, dict) or len(self.neighbour_map) == 0:
+            self.logger.error("Contact pattern must be a non-empty dictionary")
+        else:
+            self.logger.info(f"Contact pattern loaded: {len(self.neighbour_map)} epochs")
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
@@ -127,7 +131,7 @@ class ModelLearningUtils:
             self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
             SUCCESS = True
         except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            self.logger.error(f"The following error occurred in self_learn: {str(exc)[:100]}...")
             SUCCESS = False
         return SUCCESS
 
@@ -155,7 +159,7 @@ class ModelLearningUtils:
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
             SUCCESS = True
         except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            self.logger.error(f"The following error occurred in wafl_learn: {str(exc)[:100]}...")
             SUCCESS = False
         return SUCCESS
 
@@ -181,7 +185,8 @@ class ModelSharingUtils:
         self.timeout = timeout
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.info("Initialized the Model Sharing Utils instance.")
-        threading.Thread(target=self._socket_listener_thread, daemon=False, args=[]).start()
+        self.listener_thread = threading.Thread(target=self._socket_listener_thread, daemon=False, args=[])
+        self.listener_thread.start()
         self.logger.info("🚀 Launched the P2P Transfer Thread.")
 
     def _serialize_model(self, LE_model: Any) -> bytes:
@@ -264,7 +269,7 @@ class ModelSharingUtils:
                 raise Exception("FETCH ERROR")
             return True, data
         except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            self.logger.error(f"The following error occurred in _fetch_model: {str(exc)[:100]}...")
             return False, b"ERROR"
 
     def _dispatch_model(self, conn: socket, options: str) -> bool:
@@ -294,7 +299,7 @@ class ModelSharingUtils:
             self.logger.debug("✅ Successfully sent the model data to the peer.")
             return True
         except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+            self.logger.error(f"The following error occurred in _dispatch_model: {str(exc)[:100]}...")
             return False
 
     def _socket_listener_thread(self) -> None:
@@ -339,7 +344,7 @@ class ModelSharingUtils:
                 except Exception as exc:
                     # Avoid logging minor errors that could spam the log.
                     if self.fLISTENER_ACTIVE:
-                        self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
+                        self.logger.error(f"The following error occurred in _socket_listener_thread: {str(exc)[:100]}...")
                     time.sleep(1.0)
             self.logger.info("P2P listener thread has been terminated.")
 
@@ -402,8 +407,12 @@ class CTRL_TCP:
         self.current_epoch_number: Optional[str] = None  # 5-digit string
         self.status_logs: List[str] = []
 
+        # Variable to hold the learning thread object.
+        self.learning_thread: Optional[threading.Thread] = None
+
         self._load_config(config_path)
-        threading.Thread(target=self.wait_ctrl, daemon=False, args=[]).start()
+        self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, args=[])
+        self.ctrl_listener_thread.start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
         self.setup_local_wafl_node(self.name)
 
@@ -516,6 +525,8 @@ class CTRL_TCP:
                     self.logger.info("Client closed connection.")
                     break
                 data_buffer.append(packet)
+                if packet.endswith(b"\r\n"):
+                    break
 
             received_command = b"".join(data_buffer).decode("utf-8").strip()
             self.logger.info(f"Received raw command: '{received_command}'")
@@ -577,52 +588,107 @@ class CTRL_TCP:
         parts = command_str.split("-")
 
         main_command = parts[0] if len(parts) > 0 else ""
+        response_to_send = "ERROR\r\n"
 
-        if main_command == "KILL":
-            if len(parts) != 1:
-                self.logger.warning(f"Incorrect form of KILL command: {command_str}")
-                return False
-            # Handle the KILL command by setting flags to terminate loops.
-            self.logger.info("KILL command received. Shutting down listeners.")
-            self.fLISTENER_ACTIVE = False
-            self.model_sharing.fLISTENER_ACTIVE = False
-            return True
-        elif main_command == "STAT":
-            if len(parts) != 1:
-                self.logger.warning(f"Incorrect form of STAT command: {command_str}")
-                return False
-            status_response = self._get_status()
-            conn.sendall(status_response.encode("utf-8"))
-            return True
-        elif main_command == "BEGIN":
-            # This is a sample command structure; you might need to adjust it.
-            # Example: BEGIN-SELF-00001 or BEGIN-WAFL-00002-[1,2,3]
-            sub_command = parts[1]
-            five_digit_number_str = parts[2]
+        try:
+            if main_command == "KILL":
+                if len(parts) != 1:
+                    self.logger.warning(f"Incorrect form of KILL command: {command_str}")
+                    return False
+                # Handle the KILL command by setting flags to terminate loops.
+                self.logger.info("KILL command received. Shutting down listeners and ongoing tasks.")
+                self.fLISTENER_ACTIVE = False
+                self.model_sharing.fLISTENER_ACTIVE = False
+                threads_to_join = []
+                if hasattr(self.model_sharing, 'listener_thread'):
+                    threads_to_join.append(self.model_sharing.listener_thread)
+                if self.learning_thread and self.learning_thread.is_alive():
+                    # We don't join the learning_thread here as it might be a long process.
+                    # The fLISTENER_ACTIVE flag in ModelSharingUtils should signal it to stop if it's in a waiting loop.
+                    self.logger.info("A learning process is running and will be terminated if possible.")
 
-            if sub_command == "SELF":
-                return self._self_learn(five_digit_number_str)
-            elif sub_command == "WAFL":
-                return self._wafl_learn(five_digit_number_str)
+                # Wait for threads to finish, with a timeout.
+                for thread in threads_to_join:
+                    self.logger.info(f"Waiting for thread {thread.name} to terminate...")
+                    thread.join(timeout=self.timeout)
+                    if thread.is_alive():
+                        self.logger.warning(f"Thread {thread.name} did not terminate in time.")
+                
+                self.logger.info("All stoppable threads have been processed.")
+                response_to_send = "OK\r\n"
+                conn.sendall(response_to_send.encode("utf-8"))
+                # --- MODIFICATION END ---
+                return True
+            elif main_command == "STAT":
+                if len(parts) != 1:
+                    self.logger.warning(f"Incorrect form of STAT command: {command_str}")
+                    return False
+                status_response = self._get_status()
+                conn.sendall(status_response.encode("utf-8"))
+                return True
+            elif main_command == "BEGIN":
+                if len(parts) != 3:
+                    self.logger.warning(f"Incorrect form of BEGIN command: {command_str}. Expected BEGIN-TYPE-NUMBER.")
+                    return False
+                if self.learning_thread and self.learning_thread.is_alive():
+                    self.logger.warning("Cannot start new learning task. A task is already running.")
+                    response_to_send = "ERROR:A task is already running\r\n"
+                    conn.sendall(response_to_send.encode("utf-8"))
+                    return False
+                
+                sub_command = parts[1]
+                five_digit_number_str = parts[2]
+
+                if not (five_digit_number_str.isdigit() and len(five_digit_number_str) == 5):
+                    self.logger.warning(f"Invalid five-digit number format in BEGIN command: {command_str}")
+                    return False
+
+                learning_success = False
+                if sub_command == "SELF":
+                    learning_success = self._self_learn(five_digit_number_str)
+                elif sub_command == "WAFL":
+                    learning_success = self._wafl_learn(five_digit_number_str)
+                else:
+                    self.logger.warning(f"Unknown BEGIN subcommand: {sub_command} in command: {command_str}")
+                    return False
+
+                if learning_success:
+                    response_to_send = "OK\r\n"
+                else:
+                    response_to_send = "ERROR\r\n"
+                
+                return learning_success
+
             else:
-                self.logger.warning(f"Unknown BEGIN subcommand: {sub_command} in command: {command_str}")
+                self.logger.warning(f"Unknown command received: {command_str}")
                 return False
-        else:
-            self.logger.warning(f"Unknown command received: {command_str}")
+        except Exception as e:
+            self.logger.error(f"Error during command processing for '{command_str}': {e}", exc_info=True)
+            response_to_send = f"ERROR:{e}\r\n"
             return False
+        finally:
+            if main_command != "STAT":
+                try:
+                    conn.sendall(response_to_send.encode("utf-8"))
+                except Exception as send_e:
+                    self.logger.error(f"Failed to send response '{response_to_send.strip()}' for command '{command_str}': {send_e}")
 
     def _get_status(self) -> str:
         """
         Constructs the status response string based on the current state.
         Format: EXEC-XXXX-YYYYY-Z or DONE-XXXX-YYYYY-Z
         """
+        current_logs = self.status_logs.copy()
+        if self.learning_thread:
+            thread_status = "Active" if self.learning_thread.is_alive() else "Finished"
+            current_logs.append(f"Learning Thread Status: {thread_status}")
         if self.current_epoch_type is None or self.current_epoch_number is None:
             # Handle case where no epoch has run yet.
-            return "DONE-NONE--1-0"
+            return "DONE-NONE--1-0\r\n"
 
         log_line_count = len(self.status_logs)
 
-        if self.is_epoch_running:
+        if self.is_epoch_running or (self.learning_thread and self.learning_thread.is_alive()):
             # Format: EXEC-XXXX-YYYYY-Z
             header = f"EXEC-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
         else:
@@ -630,9 +696,9 @@ class CTRL_TCP:
             header = f"DONE-{self.current_epoch_type}-{self.current_epoch_number}-{log_line_count}"
 
         # Combine header and logs
-        logs = "\n".join(self.status_logs)
-        response = f"{header}\n{logs}"
-        return response
+        logs = "\n".join(current_logs)
+        response = f"{header}\n{logs}\r\n"
+        return f"{response}"
 
     def _self_learn(self, five_digit_number_str: str) -> bool:
         """
@@ -644,12 +710,12 @@ class CTRL_TCP:
         self.is_epoch_running = True
         self.current_epoch_type = "SELF"
         self.current_epoch_number = five_digit_number_str
-        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
+        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
         # ---
 
         FLAG = self.model_learning.self_learn(five_digit_number_str)
         # --- Update status at the end of the epoch ---
-        self.status_logs.append(f"Epoch completion successful: {FLAG}")
+        self.status_logs.append(f"Epoch completion successful: {FLAG} at {time.ctime()}")
         self.is_epoch_running = False
         # ---
         return FLAG
@@ -664,14 +730,14 @@ class CTRL_TCP:
         self.is_epoch_running = True
         self.current_epoch_type = "WAFL"
         self.current_epoch_number = five_digit_number_str
-        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number}"]
+        self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
         # ---
 
         # Implement the logic for WAFL learning here
         FLAG = self.model_learning.wafl_learn(five_digit_number_str)
 
         # --- Update status at the end of the epoch ---
-        self.status_logs.append(f"Epoch completion successful: {FLAG}")
+        self.status_logs.append(f"Epoch completion successful: {FLAG} at {time.ctime()}")
         self.is_epoch_running = False
         # ---
         return FLAG
