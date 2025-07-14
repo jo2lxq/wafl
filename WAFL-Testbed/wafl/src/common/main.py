@@ -185,7 +185,7 @@ class ModelSharingUtils:
         self.timeout = timeout
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.info("Initialized the Model Sharing Utils instance.")
-        self.listener_thread = threading.Thread(target=self._socket_listener_thread, daemon=False, args=[])
+        self.listener_thread = threading.Thread(target=self._socket_listener_thread, daemon=False, name="P2P_Listener")
         self.listener_thread.start()
         self.logger.info("🚀 Launched the P2P Transfer Thread.")
 
@@ -411,7 +411,7 @@ class CTRL_TCP:
         self.learning_thread: Optional[threading.Thread] = None
 
         self._load_config(config_path)
-        self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, args=[])
+        self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
         self.setup_local_wafl_node(self.name)
@@ -588,12 +588,12 @@ class CTRL_TCP:
         parts = command_str.split("-")
 
         main_command = parts[0] if len(parts) > 0 else ""
-        response_to_send = "ERROR\r\n"
 
         try:
             if main_command == "KILL":
                 if len(parts) != 1:
                     self.logger.warning(f"Incorrect form of KILL command: {command_str}")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
                 # Handle the KILL command by setting flags to terminate loops.
                 self.logger.info("KILL command received. Shutting down listeners and ongoing tasks.")
@@ -603,37 +603,45 @@ class CTRL_TCP:
                 if hasattr(self.model_sharing, 'listener_thread'):
                     threads_to_join.append(self.model_sharing.listener_thread)
                 if self.learning_thread and self.learning_thread.is_alive():
-                    # We don't join the learning_thread here as it might be a long process.
-                    # The fLISTENER_ACTIVE flag in ModelSharingUtils should signal it to stop if it's in a waiting loop.
-                    self.logger.info("A learning process is running and will be terminated if possible.")
+                    threads_to_join.append(self.learning_thread)
 
                 # Wait for threads to finish, with a timeout.
+                thread_joined = 0
                 for thread in threads_to_join:
                     self.logger.info(f"Waiting for thread {thread.name} to terminate...")
                     thread.join(timeout=self.timeout)
                     if thread.is_alive():
                         self.logger.warning(f"Thread {thread.name} did not terminate in time.")
+                    else:
+                        thread_joined += 1
+                        self.logger.info(f"Thread {thread.name} has terminated successfully.")
                 
-                self.logger.info("All stoppable threads have been processed.")
-                response_to_send = "OK\r\n"
-                conn.sendall(response_to_send.encode("utf-8"))
-                # --- MODIFICATION END ---
-                return True
+                if thread_joined == len(threads_to_join):
+                    self.logger.info("All stoppable threads have been processed.")
+                    conn.sendall("OK\r\n".encode("utf-8"))
+                    return True
+                else:
+                    self.logger.warning("Not all threads could be stopped. Some might still be running.")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
+                    return False
+                
             elif main_command == "STAT":
                 if len(parts) != 1:
                     self.logger.warning(f"Incorrect form of STAT command: {command_str}")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
                 status_response = self._get_status()
                 conn.sendall(status_response.encode("utf-8"))
                 return True
+            
             elif main_command == "BEGIN":
                 if len(parts) != 3:
                     self.logger.warning(f"Incorrect form of BEGIN command: {command_str}. Expected BEGIN-TYPE-NUMBER.")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
                 if self.learning_thread and self.learning_thread.is_alive():
                     self.logger.warning("Cannot start new learning task. A task is already running.")
-                    response_to_send = "ERROR:A task is already running\r\n"
-                    conn.sendall(response_to_send.encode("utf-8"))
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
                 
                 sub_command = parts[1]
@@ -641,41 +649,53 @@ class CTRL_TCP:
 
                 if not (five_digit_number_str.isdigit() and len(five_digit_number_str) == 5):
                     self.logger.warning(f"Invalid five-digit number format in BEGIN command: {command_str}")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
 
-                learning_success = False
                 if sub_command == "SELF":
-                    learning_success = self._self_learn(five_digit_number_str)
+                    try:
+                        self.learning_thread = threading.Thread(
+                            target=self._self_learn,
+                            daemon=False,
+                            args=(five_digit_number_str,),
+                            name=f"SelfLearn-{five_digit_number_str}"
+                            
+                        )
+                        self.learning_thread.start()
+                        conn.sendall("OK\r\n".encode("utf-8"))
+                        return True
+                    except Exception as e:
+                        self.logger.error(f"Failed to start self learning thread: {e}")
+                        conn.sendall("ERROR\r\n".encode("utf-8"))
+                        return False
                 elif sub_command == "WAFL":
-                    learning_success = self._wafl_learn(five_digit_number_str)
+                    try:
+                        self.learning_thread = threading.Thread(
+                            target=self._wafl_learn,
+                            daemon=False,
+                            args=(five_digit_number_str,),
+                            name=f"WAFL_Learn_{five_digit_number_str}"
+                        )
+                        self.learning_thread.start()
+                        conn.sendall("OK\r\n".encode("utf-8"))
+                    except Exception as e:
+                        self.logger.error(f"Failed to start WAFL learning thread: {e}")
+                        conn.sendall("ERROR\r\n".encode("utf-8"))
+                        return False
                 else:
                     self.logger.warning(f"Unknown BEGIN subcommand: {sub_command} in command: {command_str}")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
-
-                if learning_success:
-                    response_to_send = "OK\r\n"
-                else:
-                    response_to_send = "ERROR\r\n"
-                
-                return learning_success
 
             else:
                 self.logger.warning(f"Unknown command received: {command_str}")
+                conn.sendall("ERROR\r\n".encode("utf-8"))
                 return False
         except Exception as e:
             self.logger.error(f"Error during command processing for '{command_str}': {e}", exc_info=True)
-            response_to_send = f"ERROR:{e}\r\n"
+            conn.sendall("ERROR\r\n".encode("utf-8"))
             return False
-        finally:
-            if main_command != "STAT":
-                try:
-                    conn.sendall(response_to_send.encode("utf-8"))
-                except Exception as send_e:
-                    self.logger.error(
-                        f"Failed to send response '{response_to_send.strip()}' "
-                        f"for command '{command_str}': {send_e}"
-                    )
-
+        
     def _get_status(self) -> str:
         """
         Constructs the status response string based on the current state.
