@@ -54,6 +54,17 @@ do
     # The Base Configuration shell script is also sent to the execution servers
     scp -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
     "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
+
+    # Send requirements.txt if it exists
+    scp -r -q "$TARGET_PATH/ctrl/requirements.txt" \
+    "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
+    
+    # Setup Python virtual environment and install packages
+    ssh -o ConnectTimeout=5 "$USER@${WAFL_DEVICE_IPS[$counter]}" "cd $DEPLOYMENT_LOCATION/$TARGET_NAME && \
+        python3 -m venv venv && \
+        source venv/bin/activate && \
+        { pip install -r requirements.txt || true; }" &&
+    
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/common)" ] && { ((++ERROR_CHECK)) || true; } &&
     scp -r -q "$TARGET_PATH/wafl/dataset/common/"* \
     "$USER@${WAFL_DEVICE_IPS[$counter]}:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
