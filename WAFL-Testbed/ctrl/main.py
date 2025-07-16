@@ -310,10 +310,15 @@ class WaflAgent:
             target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
+
+            venv_path = os.path.join(target_path, "venv", "bin", "activate")
+            python_script = os.path.join(target_path, "src/main.py")
+            output_file = os.path.join(target_path, "results", experiment_id, "output.txt")
             command_start = (
-                f"nohup python3 -u {os.path.join(target_path, 'src/main.py')} "
-                f"> {os.path.join(target_path, 'results', experiment_id, 'output.txt')} "
-                "2>&1 < /dev/null & echo $!"
+                f"cd {target_path} && "
+                f"source {venv_path} && "
+                f"nohup python3 -u {python_script} "
+                f"> {output_file} 2>&1 < /dev/null & echo $!"
             )
 
             self.logger.debug(f"🔗 Connecting to {username}@{self.ip}:{ssh_port}")
