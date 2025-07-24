@@ -9,9 +9,13 @@ TARGET_NAME=$(basename $TARGET_PATH)
 # Improved SSH connection settings
 SSH_OPTS="-o ConnectTimeout=10 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no"
 
-# Log file setup
-LOGFILE="$TARGET_PATH/ctrl/deployment.log"
-mkdir -p "$TARGET_PATH/ctrl"
+# Log file setup - Clear existing log files before starting
+LOGFILE="$TARGET_PATH/results/.deploy/ctrl.log"
+mkdir -p "$TARGET_PATH/results/.deploy"
+
+# Clear main log file and any existing device-specific log files
+rm -f "$LOGFILE" 2>/dev/null || true
+rm -f "$TARGET_PATH/results/.deploy/wafl"*.log 2>/dev/null || true
 
 # Importing the environment variables
 if [ ! -f "$TARGET_PATH/ctrl/wafl_execution_base_config" ]; then
@@ -70,13 +74,14 @@ deploy_to_device() {
     local counter=$1
     local device_name="${WAFL_DEVICE_NAMES[$counter]}"
     local device_ip="${WAFL_DEVICE_IPS[$counter]}"
+    local device_logfile="$TARGET_PATH/results/.deploy/wafl${device_name}.log"
 
     # Ensuring the existence of the device-specific directories on the management server
     mkdir -p "$TARGET_PATH/wafl/dataset/$device_name"
     mkdir -p "$TARGET_PATH/wafl/config/$device_name"
     mkdir -p "$TARGET_PATH/wafl/src/$device_name"
     
-    echo "🔗 $(date): Connecting to Execution Server: $device_name ($device_ip)" | tee -a "$LOGFILE"
+    echo "[wafl$device_name] 🔗 $(date): Connecting to Execution Server: $device_name ($device_ip)" | tee -a "$device_logfile"
     ERROR_CHECK=0
     
     {
@@ -93,18 +98,18 @@ deploy_to_device() {
 
     # Check and send pyproject.toml and uv.lock if they exist
     if [ -f "$TARGET_PATH/ctrl/pyproject.toml" ] && [ -f "$TARGET_PATH/ctrl/uv.lock" ]; then
-        echo "📦 Sending Python project files..." | tee -a "$LOGFILE"
+        echo "[wafl$device_name] 📦 Sending Python project files..." | tee -a "$device_logfile"
         scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/pyproject.toml" \
         "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
         scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/uv.lock" \
         "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME" ||
-        { echo "⚠️ Warning: Failed to send Python project files" | tee -a "$LOGFILE"; }
+        { echo "[wafl$device_name] ⚠️ Warning: Failed to send Python project files" | tee -a "$device_logfile"; }
     else
-        echo "⚠️ Warning: pyproject.toml or uv.lock not found in ctrl directory" | tee -a "$LOGFILE"
+        echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found in ctrl directory" | tee -a "$device_logfile"
     fi &&
     
     # Setup Python virtual environment and install packages with uv
-    echo "🐍 Setting up Python environment with uv..." | tee -a "$LOGFILE"
+    echo "[wafl$device_name] 🐍 Setting up Python environment with uv..." | tee -a "$device_logfile"
     ssh $SSH_OPTS "$USER@$device_ip" "cd $DEPLOYMENT_LOCATION/$TARGET_NAME && \
         { command -v ~/.local/bin/uv >/dev/null 2>&1 || \
         { echo '📥 uv not found, installing uv...' && \
@@ -116,58 +121,81 @@ deploy_to_device() {
     
     # File transfer operations with improved error handling
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
-    echo "📂 Transferring common dataset files..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] 📂 Transferring common dataset files..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/dataset/common/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/config/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
-    echo "⚙️ Transferring common config files..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] ⚙️ Transferring common config files..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/config/common/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/src/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } && 
-    echo "💻 Transferring common source files..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] 💻 Transferring common source files..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/src/common/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
-    echo "📂 Transferring device-specific dataset files for $device_name..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] 📂 Transferring device-specific dataset files for $device_name..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/dataset/$device_name/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/config/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
-    echo "⚙️ Transferring device-specific config files for $device_name..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] ⚙️ Transferring device-specific config files for $device_name..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/config/$device_name/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/src/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
-    echo "💻 Transferring device-specific source files for $device_name..." | tee -a "$LOGFILE" &&
+    echo "[wafl$device_name] 💻 Transferring device-specific source files for $device_name..." | tee -a "$device_logfile" &&
     scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/src/$device_name/"* \
     "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; 
     } && [ $ERROR_CHECK -eq 0 ] &&
-    echo "✅ $(date): Successfully deployed project to $device_name ($device_ip)" | tee -a "$LOGFILE"
+    echo "[wafl$device_name] ✅ $(date): Successfully deployed project to $device_name ($device_ip)" | tee -a "$device_logfile"
     } ||
     {
         echo "$USER@$device_ip" >> "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt"
-        echo "❌ $(date): Failed to deploy project to $device_name ($device_ip)" | tee -a "$LOGFILE"
+        echo "[wafl$device_name] ❌ $(date): Failed to deploy project to $device_name ($device_ip)" | tee -a "$device_logfile"
         return 1
     }
 }
 
-# Deploy to all devices sequentially
-successful_deployments=0
+# Deploy to all devices in parallel
+echo "[ctrl] 🚀 Starting parallel deployment to all devices..." | tee -a "$LOGFILE"
+pids=()
 total_devices=${#WAFL_DEVICE_NAMES[@]}
 
 for ((counter=0; counter<$total_devices; counter++))
 do
-    if deploy_to_device $counter; then
+    echo "[ctrl] 🔄 Starting deployment to ${WAFL_DEVICE_NAMES[$counter]} in background..." | tee -a "$LOGFILE"
+    deploy_to_device $counter &
+    pids+=($!)
+done
+
+# Wait for all background processes to complete
+echo "[ctrl] ⏳ Waiting for all deployments to complete..." | tee -a "$LOGFILE"
+successful_deployments=0
+for pid in "${pids[@]}"; do
+    if wait $pid; then
         ((successful_deployments++))
     fi
 done
 
+# Merge individual device logs into main log
+echo "[ctrl] 📝 Merging deployment logs..." | tee -a "$LOGFILE"
+for ((counter=0; counter<$total_devices; counter++))
+do
+    device_name="${WAFL_DEVICE_NAMES[$counter]}"
+    device_logfile="$TARGET_PATH/results/.deploy/wafl${device_name}.log"
+    if [ -f "$device_logfile" ]; then
+        echo "--- Log from $device_name ---" >> "$LOGFILE"
+        cat "$device_logfile" >> "$LOGFILE"
+        echo "--- End of $device_name log ---" >> "$LOGFILE"
+    fi
+done
+
 # Deployment summary
-echo "🎉 Deployment Complete!" | tee -a "$LOGFILE"
-echo "📈 Summary: $successful_deployments/$total_devices devices deployed successfully" | tee -a "$LOGFILE"
+echo "[ctrl] 🎉 Parallel Deployment Complete!" | tee -a "$LOGFILE"
+echo "[ctrl] 📈 Summary: $successful_deployments/$total_devices devices deployed successfully" | tee -a "$LOGFILE"
 
 if [ -f "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt" ] && [ -s "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt" ]; then
-    echo "❌ Failed deployments listed in: $TARGET_PATH/ctrl/unsuccessful_deployment_list.txt" | tee -a "$LOGFILE"
+    echo "[ctrl] ❌ Failed deployments listed in: $TARGET_PATH/ctrl/unsuccessful_deployment_list.txt" | tee -a "$LOGFILE"
     exit 1
 else
-    echo "✅ All deployments completed successfully!" | tee -a "$LOGFILE"
+    echo "[ctrl] ✅ All parallel deployments completed successfully!" | tee -a "$LOGFILE"
     exit 0
 fi
