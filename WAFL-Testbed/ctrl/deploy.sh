@@ -86,11 +86,12 @@ deploy_to_device() {
     
     {
     # Setup remote directories
-    ssh $SSH_OPTS "$USER@$device_ip" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME; \
+    ssh $SSH_OPTS "$USER@$device_ip" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
+        rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/config; \
+        rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/src; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config;
-        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src;
-        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/results" &&
+        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src" &&
 
     # The Base Configuration shell script is also sent to the execution servers
     scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
