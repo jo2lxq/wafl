@@ -311,7 +311,7 @@ class WaflAgent:
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
 
-            venv_path = os.path.join(target_path, "venv", "bin", "activate")
+            venv_path = os.path.join(target_path, ".venv", "bin", "activate")
             python_script = os.path.join(target_path, "src/main.py")
             output_file = os.path.join(target_path, "results", experiment_id, "output.txt")
             command_start = (
