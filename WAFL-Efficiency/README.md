@@ -33,6 +33,8 @@ python3 main.py \
     --Q 1
 ```
 
+In main.py, we classify CIFAR100 dataset using a Vision Transformer model. We also implemented mnist.py for MNIST classification using a CNN.
+
 ### pre_epoch & max_epoch
 epochs for pre-self training and wafl.
 ### batch_size & steps_per_epoch
