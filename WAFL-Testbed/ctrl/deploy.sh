@@ -9,6 +9,11 @@ TARGET_NAME=$(basename $TARGET_PATH)
 # Improved SSH connection settings
 SSH_OPTS="-o ConnectTimeout=10 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no"
 
+# SSH multiplexing (connection reuse)
+CTL_DIR="$HOME/.ssh/ctl"
+mkdir -p "$CTL_DIR"
+MUX_OPTS="-o ControlMaster=auto -o ControlPath=$CTL_DIR/%C -o ControlPersist=600"
+
 # Log file setup - Clear existing log files before starting
 LOGFILE="$TARGET_PATH/results/.deploy/ctrl.log"
 mkdir -p "$TARGET_PATH/results/.deploy"
@@ -75,6 +80,10 @@ deploy_to_device() {
     local device_name="${WAFL_DEVICE_NAMES[$counter]}"
     local device_ip="${WAFL_DEVICE_IPS[$counter]}"
     local device_logfile="$TARGET_PATH/results/.deploy/wafl${device_name}.log"
+    local host="$USER@$device_ip"
+
+    # 関数終了時にマスター接続を閉じる
+    trap 'ssh $SSH_OPTS $MUX_OPTS -O exit "$host" >/dev/null 2>&1 || true' RETURN
 
     # Ensuring the existence of the device-specific directories on the management server
     mkdir -p "$TARGET_PATH/wafl/dataset/$device_name"
@@ -82,28 +91,32 @@ deploy_to_device() {
     mkdir -p "$TARGET_PATH/wafl/src/$device_name"
     
     echo "[wafl$device_name] 🔗 $(date): Connecting to Execution Server: $device_name ($device_ip)" | tee -a "$device_logfile"
+    
+    # マスター接続を確立
+    ssh $SSH_OPTS $MUX_OPTS -fN "$host" || true
+    
     ERROR_CHECK=0
     
     {
     # Setup remote directories
-    ssh $SSH_OPTS "$USER@$device_ip" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
+    ssh $SSH_OPTS $MUX_OPTS "$host" "rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
         rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/config; \
         rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/src; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
-        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config;
+        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src" &&
 
     # The Base Configuration shell script is also sent to the execution servers
-    scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
 
     # Check and send pyproject.toml and uv.lock if they exist
     if [ -f "$TARGET_PATH/ctrl/pyproject.toml" ] && [ -f "$TARGET_PATH/ctrl/uv.lock" ]; then
         echo "[wafl$device_name] 📦 Sending Python project files..." | tee -a "$device_logfile"
-        scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/pyproject.toml" \
-        "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
-        scp $SSH_OPTS -r -q "$TARGET_PATH/ctrl/uv.lock" \
-        "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME" ||
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/pyproject.toml" \
+        "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/uv.lock" \
+        "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" ||
         { echo "[wafl$device_name] ⚠️ Warning: Failed to send Python project files" | tee -a "$device_logfile"; }
     else
         echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found in ctrl directory" | tee -a "$device_logfile"
@@ -111,45 +124,45 @@ deploy_to_device() {
     
     # Setup Python virtual environment and install packages with uv
     echo "[wafl$device_name] 🐍 Setting up Python environment with uv..." | tee -a "$device_logfile"
-    ssh $SSH_OPTS "$USER@$device_ip" "cd $DEPLOYMENT_LOCATION/$TARGET_NAME && \
+    ssh $SSH_OPTS $MUX_OPTS "$host" "cd $DEPLOYMENT_LOCATION/$TARGET_NAME && \
         { command -v ~/.local/bin/uv >/dev/null 2>&1 || \
         { echo '📥 uv not found, installing uv...' && \
         curl -LsSf https://astral.sh/uv/install.sh | sh && \
         export PATH=\"\$HOME/.local/bin:\$PATH\"; }; } && \
-        { ~/.local/bin/uv venv .venv && \
+        { ~/.local/bin/uv venv .venv --clear && \
         source .venv/bin/activate && \
         ~/.local/bin/uv sync || true; }" &&
     
     # File transfer operations with improved error handling
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
     echo "[wafl$device_name] 📂 Transferring common dataset files..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/dataset/common/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/dataset/common/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/config/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
     echo "[wafl$device_name] ⚙️ Transferring common config files..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/config/common/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" && ((--ERROR_CHECK)); } || true; } &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/config/common/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/config" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/src/common 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } && 
     echo "[wafl$device_name] 💻 Transferring common source files..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/src/common/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; } &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/src/common/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/dataset/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
     echo "[wafl$device_name] 📂 Transferring device-specific dataset files for $device_name..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/dataset/$device_name/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/dataset/$device_name/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/dataset" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/config/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
     echo "[wafl$device_name] ⚙️ Transferring device-specific config files for $device_name..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/config/$device_name/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" && ((--ERROR_CHECK)); } || true; } &&
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/config/$device_name/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/config/" && ((--ERROR_CHECK)); } || true; } &&
     { { [ "$(ls -A $TARGET_PATH/wafl/src/$device_name 2>/dev/null)" ] && { ((++ERROR_CHECK)) || true; } &&
     echo "[wafl$device_name] 💻 Transferring device-specific source files for $device_name..." | tee -a "$device_logfile" &&
-    scp $SSH_OPTS -r -q "$TARGET_PATH/wafl/src/$device_name/"* \
-    "$USER@$device_ip:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; 
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/wafl/src/$device_name/"* \
+    "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME/src" && ((--ERROR_CHECK)); } || true; 
     } && [ $ERROR_CHECK -eq 0 ] &&
     echo "[wafl$device_name] ✅ $(date): Successfully deployed project to $device_name ($device_ip)" | tee -a "$device_logfile"
     } ||
     {
-        echo "$USER@$device_ip" >> "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt"
+        echo "$host" >> "$TARGET_PATH/ctrl/unsuccessful_deployment_list.txt"
         echo "[wafl$device_name] ❌ $(date): Failed to deploy project to $device_name ($device_ip)" | tee -a "$device_logfile"
         return 1
     }
