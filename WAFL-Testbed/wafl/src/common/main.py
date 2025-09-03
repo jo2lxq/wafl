@@ -78,7 +78,7 @@ class ModelLearningUtils:
         with open(contact_pattern_path, "r") as f:
             self.neighbour_map = json.load(f)
         if not isinstance(self.neighbour_map, list) or len(self.neighbour_map) == 0:
-            self.logger.error("Contact pattern must be a non-empty dictionary")
+            self.logger.error("Contact pattern must be a non-empty list")
         else:
             self.logger.info(f"Contact pattern loaded: {len(self.neighbour_map)} epochs")
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -146,9 +146,11 @@ class ModelLearningUtils:
             n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
             for neighbour in neighbours:
-                received_model = self.model_sharing.request_model_from_peer(
-                    self.ctrl_tcp.get_device_ip(str(neighbour)), "&purpose=testing"
-                )
+                peer_ip = self.ctrl_tcp.get_device_ip(str(neighbour))
+                if peer_ip is None:
+                    self.logger.error(f"Could not get IP for neighbour {neighbour}")
+                    continue
+                received_model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
@@ -272,7 +274,7 @@ class ModelSharingUtils:
             self.logger.error(f"The following error occurred in _fetch_model: {str(exc)[:100]}...")
             return False, b"ERROR"
 
-    def _dispatch_model(self, conn: socket, options: str) -> bool:
+    def _dispatch_model(self, conn: socket.socket, options: str) -> bool:
         """
         Utility function for sending the model data to the peer.
         Depending on the WAFL project, the options parameter may
@@ -409,10 +411,13 @@ class CTRL_TCP:
         # Variable to hold the learning thread object.
         self.learning_thread: Optional[threading.Thread] = None
 
-        self._load_config(config_path)
+        if not self._load_config(config_path):
+            raise ValueError("Failed to load configuration file")
         self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
+        if self.name is None:
+            raise ValueError("Device name not properly loaded from configuration")
         self.setup_local_wafl_node(self.name)
 
     def _load_config(self, config_path: str) -> bool:
@@ -436,7 +441,7 @@ class CTRL_TCP:
                 return False
             self.device_names = wafl_devices_data.get("device_names")
             if not (isinstance(self.device_names, list) and all(isinstance(n, str) for n in self.device_names)):
-                self.logger.error("Invalid format for 'wafl_devices.name' in JSON. List of integers required.")
+                self.logger.error("Invalid format for 'wafl_devices.name' in JSON. List of strings required.")
                 return False
             self.device_ips = wafl_devices_data.get("device_ips")
             if not (isinstance(self.device_ips, list) and all(isinstance(ip, str) for ip in self.device_ips)):
@@ -448,7 +453,7 @@ class CTRL_TCP:
                 return False
             self.name = agent_info.get("device_name")
             if not isinstance(self.name, str):
-                self.logger.error("Invalid format for 'wafl_devices.self_name' in JSON. Integer required.")
+                self.logger.error("Invalid format for 'wafl_devices.self_name' in JSON. String required.")
                 return False
             self.addr = agent_info.get("ip_address")
             if not isinstance(self.addr, str):
@@ -482,6 +487,9 @@ class CTRL_TCP:
         Returns:
             Optional[str]: The corresponding IP address string, or None if not found.
         """
+        if self.device_names is None or self.device_ips is None:
+            self.logger.warning("Device names or IPs list is not initialized.")
+            return None
         try:
             index = self.device_names.index(device_name)
             return self.device_ips[index]
@@ -500,7 +508,12 @@ class CTRL_TCP:
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        self.model_sharing = ModelSharingUtils(device_name, self.get_device_ip(device_name), self.p2p_port, 10.0)
+        device_ip = self.get_device_ip(device_name)
+        if device_ip is None:
+            raise ValueError(f"Could not find IP address for device: {device_name}")
+        if self.p2p_port is None:
+            raise ValueError("P2P port is not properly configured")
+        self.model_sharing = ModelSharingUtils(device_name, device_ip, self.p2p_port, 10.0)
         self.model_learning = ModelLearningUtils(
             "./dataset/dataset.pickled",
             "./results/model_instance.pth",
@@ -676,6 +689,7 @@ class CTRL_TCP:
                         )
                         self.learning_thread.start()
                         conn.sendall("OK\r\n".encode("utf-8"))
+                        return True
                     except Exception as e:
                         self.logger.error(f"Failed to start WAFL learning thread: {e}")
                         conn.sendall("ERROR\r\n".encode("utf-8"))
