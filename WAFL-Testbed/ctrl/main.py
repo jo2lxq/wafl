@@ -311,7 +311,7 @@ class WaflAgent:
 
             command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
 
-            venv_path = os.path.join(target_path, "venv", "bin", "activate")
+            venv_path = os.path.join(target_path, ".venv", "bin", "activate")
             python_script = os.path.join(target_path, "src/main.py")
             output_file = os.path.join(target_path, "results", experiment_id, "output.txt")
             command_start = (
@@ -400,6 +400,7 @@ class WaflAgent:
                     raise RuntimeError(f"❌ Failed to start remote process: {error_msg}")
 
                 stdout.channel.close()
+
                 self.status = "READY"
                 self.logger.info(f"✅ Remote process started successfully with PID: {self.pid}")
                 return True
@@ -805,11 +806,36 @@ class ControlServer:
 
             if failed_agents:
                 raise RuntimeError(f"❌ Failed to start agents: {', '.join(failed_agents)}")
-            time.sleep(2)  # Allow some time for processes to stabilize
+
+            # Allow some time for processes to stabilize
+            self.logger.info("⏳ Waiting 20 seconds for agents to stabilize...")
+            time.sleep(20)
+
             self.logger.info("✅ All agents started successfully")
 
-            # 2. Main training loop
+            # 2. Main SELF training loop
             self.logger.info(f"🎓 Phase 2: Starting training loop ({epochs} epochs)")
+
+            for epoch in range(1, epochs + 1):
+                self.logger.info(f"📚 === Epoch {epoch}/{epochs} ===")
+
+                # Send begin commands to all agents
+                failed_commands = []
+                for agent in self.agents:
+                    if not agent.begin_epoch(phase="SELF", epoch=epoch):
+                        failed_commands.append(agent.name)
+
+                if failed_commands:
+                    raise RuntimeError(f"❌ Failed to start epoch {epoch} on agents: {', '.join(failed_commands)}")
+
+                # Wait for completion
+                self._wait_for_all_agents_to_complete(current_epoch=epoch)
+                self.logger.info(f"✅ Epoch {epoch}/{epochs} completed successfully")
+
+            self.logger.info("🎉 All training epochs completed successfully")
+
+            # 3. Main WAFL training loop
+            self.logger.info(f"🎓 Phase 3: Starting training loop ({epochs} epochs)")
 
             for epoch in range(1, epochs + 1):
                 self.logger.info(f"📚 === Epoch {epoch}/{epochs} ===")
@@ -836,7 +862,7 @@ class ControlServer:
             self.logger.error(f"💥 Experiment failed: {e}", exc_info=True)
         finally:
             # 3. Shutdown all agents
-            self.logger.info("🛑 Phase 3: Shutting down all agents")
+            self.logger.info("🛑 Phase 4: Shutting down all agents")
             self._shutdown_all_agents()
 
             status = "SUCCESS" if experiment_success else "FAILED"
@@ -880,7 +906,7 @@ class ControlServer:
                             self.logger.info(
                                 f"✅ Agent {agent.name} completed epoch {current_epoch} with status: {status_code}"
                             )
-                            done_epoch = int(status_code.split("-")[-1])
+                            done_epoch = int(status_code.split("-")[-2])
                             if done_epoch >= current_epoch:
                                 finished_agents.add(agent.name)
                         except (ValueError, IndexError):

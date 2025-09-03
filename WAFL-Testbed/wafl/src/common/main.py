@@ -73,18 +73,18 @@ class ModelLearningUtils:
         self.data_loader = torch.utils.data.DataLoader(
             dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
         )
+        self.logger = logging.getLogger("ModelLearningUtils")
         self.model_instance_path = model_instance_path
         with open(contact_pattern_path, "r") as f:
             self.neighbour_map = json.load(f)
-        if not isinstance(self.neighbour_map, dict) or len(self.neighbour_map) == 0:
-            self.logger.error("Contact pattern must be a non-empty dictionary")
+        if not isinstance(self.neighbour_map, list) or len(self.neighbour_map) == 0:
+            self.logger.error("Contact pattern must be a non-empty list")
         else:
             self.logger.info(f"Contact pattern loaded: {len(self.neighbour_map)} epochs")
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
-        self.logger = logging.getLogger("ModelLearningUtils")
         self.logger.info("Initialized the Model Learning Utils instance.")
 
     def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
@@ -146,9 +146,11 @@ class ModelLearningUtils:
             n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
             for neighbour in neighbours:
-                received_model = self.model_sharing.request_model_from_peer(
-                    self.ctrl_tcp.get_device_ip(neighbour), "&purpose=testing"
-                )
+                peer_ip = self.ctrl_tcp.get_device_ip(str(neighbour))
+                if peer_ip is None:
+                    self.logger.error(f"Could not get IP for neighbour {neighbour}")
+                    continue
+                received_model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
@@ -171,7 +173,7 @@ class ModelSharingUtils:
 
     cMDLREQ = "MDLREQ"
 
-    def __init__(self, name: int, addr: str, port: int, timeout: float = 10.0) -> None:
+    def __init__(self, name: str, addr: str, port: int, timeout: float = 10.0) -> None:
         """
         Initialize the instance attributes.
         """
@@ -272,7 +274,7 @@ class ModelSharingUtils:
             self.logger.error(f"The following error occurred in _fetch_model: {str(exc)[:100]}...")
             return False, b"ERROR"
 
-    def _dispatch_model(self, conn: socket, options: str) -> bool:
+    def _dispatch_model(self, conn: socket.socket, options: str) -> bool:
         """
         Utility function for sending the model data to the peer.
         Depending on the WAFL project, the options parameter may
@@ -389,10 +391,9 @@ class CTRL_TCP:
         Initialize the TCP connection parameters.
         """
         self.logger = logging.getLogger("CTRL_TCP")
-        self.ctrl_server_ip: Optional[str] = None
-        self.device_names: Optional[List[int]] = None
+        self.device_names: Optional[List[str]] = None
         self.device_ips: Optional[List[str]] = None
-        self.name: Optional[int] = None
+        self.name: Optional[str] = None
         self.addr: Optional[str] = None
         self.ctrl_port: Optional[int] = None
         self.p2p_port: Optional[int] = None
@@ -410,11 +411,21 @@ class CTRL_TCP:
         # Variable to hold the learning thread object.
         self.learning_thread: Optional[threading.Thread] = None
 
-        self._load_config(config_path)
+        # Initialize model_sharing and model_learning attributes
+        self.model_sharing: Optional[ModelSharingUtils] = None
+        self.model_learning: Optional[ModelLearningUtils] = None
+
+        if not self._load_config(config_path):
+            raise ValueError("Failed to load configuration file")
+        if self.name is None:
+            raise ValueError("Device name not properly loaded from configuration")
+
+        # Setup the WAFL node before starting the control thread
+        self.setup_local_wafl_node(self.name)
+
         self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
-        self.setup_local_wafl_node(self.name)
 
     def _load_config(self, config_path: str) -> bool:
         """
@@ -431,27 +442,27 @@ class CTRL_TCP:
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
             self.logger.info(f"Configuration file '{config_path}' loaded.")
-            self.ctrl_server_ip = config_data.get("ctrl_server_ip")
-            if not isinstance(self.ctrl_server_ip, str):
-                self.logger.error("Invalid format for 'ctrl_server_ip' in JSON. String required.")
-                return False
-            wafl_devices_data = config_data.get("wafl_devices")
+            wafl_devices_data = config_data.get("infrastructure")
             if not isinstance(wafl_devices_data, dict):
                 self.logger.error("Invalid format for 'wafl_devices' in JSON. Dictionary required.")
                 return False
-            self.device_names = wafl_devices_data.get("name_list")
-            if not (isinstance(self.device_names, list) and all(isinstance(n, int) for n in self.device_names)):
-                self.logger.error("Invalid format for 'wafl_devices.name' in JSON. List of integers required.")
+            self.device_names = wafl_devices_data.get("device_names")
+            if not (isinstance(self.device_names, list) and all(isinstance(n, str) for n in self.device_names)):
+                self.logger.error("Invalid format for 'wafl_devices.name' in JSON. List of strings required.")
                 return False
-            self.device_ips = wafl_devices_data.get("ip_list")
+            self.device_ips = wafl_devices_data.get("device_ips")
             if not (isinstance(self.device_ips, list) and all(isinstance(ip, str) for ip in self.device_ips)):
                 self.logger.error("Invalid format for 'wafl_devices.ip' in JSON. List of strings required.")
                 return False
-            self.name = wafl_devices_data.get("self_name")
-            if not isinstance(self.name, int):
-                self.logger.error("Invalid format for 'wafl_devices.self_name' in JSON. Integer required.")
+            agent_info = config_data.get("agent_info")
+            if not isinstance(agent_info, dict):
+                self.logger.error("Invalid format for 'agent_info' in JSON. Dictionary required.")
                 return False
-            self.addr = wafl_devices_data.get("self_addr")
+            self.name = agent_info.get("device_name")
+            if not isinstance(self.name, str):
+                self.logger.error("Invalid format for 'wafl_devices.self_name' in JSON. String required.")
+                return False
+            self.addr = agent_info.get("ip_address")
             if not isinstance(self.addr, str):
                 self.logger.error("Invalid format for 'wafl_devices.addr' in JSON. String required.")
                 return False
@@ -463,7 +474,7 @@ class CTRL_TCP:
             if not isinstance(self.p2p_port, int):
                 self.logger.error("Invalid format for 'wafl_devices.p2p_port' in JSON. Integer required.")
                 return False
-            self.timeout = wafl_devices_data.get("timeout")
+            self.timeout = 10.0  # dummy
             if not isinstance(self.timeout, float):
                 self.logger.error("Invalid format for 'wafl_devices.timeout' in JSON. Float required.")
                 return False
@@ -477,12 +488,15 @@ class CTRL_TCP:
             self.logger.error(f"An unexpected error occurred while loading configuration: {e}")
             return False
 
-    def get_device_ip(self, device_name: int) -> Optional[str]:
+    def get_device_ip(self, device_name: str) -> Optional[str]:
         """
         Returns the IP address corresponding to the given device name.
         Returns:
             Optional[str]: The corresponding IP address string, or None if not found.
         """
+        if self.device_names is None or self.device_ips is None:
+            self.logger.warning("Device names or IPs list is not initialized.")
+            return None
         try:
             index = self.device_names.index(device_name)
             return self.device_ips[index]
@@ -495,17 +509,22 @@ class CTRL_TCP:
             )
             return None
 
-    def setup_local_wafl_node(self, device_name: int) -> None:
+    def setup_local_wafl_node(self, device_name: str) -> None:
         """
         Sets up the node with the given device name.
         This function should be called before starting the WAFL model training.
         """
         self.logger.info(f"Setting up the node with device name: {device_name}")
-        self.model_sharing = ModelSharingUtils(device_name, self.get_device_ip(device_name), self.p2p_port, 10.0)
+        device_ip = self.get_device_ip(device_name)
+        if device_ip is None:
+            raise ValueError(f"Could not find IP address for device: {device_name}")
+        if self.p2p_port is None:
+            raise ValueError("P2P port is not properly configured")
+        self.model_sharing = ModelSharingUtils(device_name, device_ip, self.p2p_port, 10.0)
         self.model_learning = ModelLearningUtils(
-            "../dataset/dataset.pickled",
-            "../results/model_instance.pth",
-            "../config/contact_pattern.json",
+            "./dataset/dataset.pickled",
+            "./results/model_instance.pth",
+            "./config/contact_pattern.json",
             self.model_sharing,
             self,
         )
@@ -598,9 +617,10 @@ class CTRL_TCP:
                 # Handle the KILL command by setting flags to terminate loops.
                 self.logger.info("KILL command received. Shutting down listeners and ongoing tasks.")
                 self.fLISTENER_ACTIVE = False
-                self.model_sharing.fLISTENER_ACTIVE = False
+                if self.model_sharing is not None:
+                    self.model_sharing.fLISTENER_ACTIVE = False
                 threads_to_join = []
-                if hasattr(self.model_sharing, 'listener_thread'):
+                if self.model_sharing is not None and hasattr(self.model_sharing, "listener_thread"):
                     threads_to_join.append(self.model_sharing.listener_thread)
                 if self.learning_thread and self.learning_thread.is_alive():
                     threads_to_join.append(self.learning_thread)
@@ -615,7 +635,7 @@ class CTRL_TCP:
                     else:
                         thread_joined += 1
                         self.logger.info(f"Thread {thread.name} has terminated successfully.")
-                
+
                 if thread_joined == len(threads_to_join):
                     self.logger.info("All stoppable threads have been processed.")
                     conn.sendall("OK\r\n".encode("utf-8"))
@@ -624,7 +644,7 @@ class CTRL_TCP:
                     self.logger.warning("Not all threads could be stopped. Some might still be running.")
                     conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
-                
+
             elif main_command == "STAT":
                 if len(parts) != 1:
                     self.logger.warning(f"Incorrect form of STAT command: {command_str}")
@@ -633,7 +653,7 @@ class CTRL_TCP:
                 status_response = self._get_status()
                 conn.sendall(status_response.encode("utf-8"))
                 return True
-            
+
             elif main_command == "BEGIN":
                 if len(parts) != 3:
                     self.logger.warning(f"Incorrect form of BEGIN command: {command_str}. Expected BEGIN-TYPE-NUMBER.")
@@ -643,7 +663,7 @@ class CTRL_TCP:
                     self.logger.warning("Cannot start new learning task. A task is already running.")
                     conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
-                
+
                 sub_command = parts[1]
                 five_digit_number_str = parts[2]
 
@@ -658,8 +678,7 @@ class CTRL_TCP:
                             target=self._self_learn,
                             daemon=False,
                             args=(five_digit_number_str,),
-                            name=f"SelfLearn-{five_digit_number_str}"
-                            
+                            name=f"SelfLearn-{five_digit_number_str}",
                         )
                         self.learning_thread.start()
                         conn.sendall("OK\r\n".encode("utf-8"))
@@ -674,10 +693,11 @@ class CTRL_TCP:
                             target=self._wafl_learn,
                             daemon=False,
                             args=(five_digit_number_str,),
-                            name=f"WAFL_Learn_{five_digit_number_str}"
+                            name=f"WAFL_Learn_{five_digit_number_str}",
                         )
                         self.learning_thread.start()
                         conn.sendall("OK\r\n".encode("utf-8"))
+                        return True
                     except Exception as e:
                         self.logger.error(f"Failed to start WAFL learning thread: {e}")
                         conn.sendall("ERROR\r\n".encode("utf-8"))
@@ -695,7 +715,7 @@ class CTRL_TCP:
             self.logger.error(f"Error during command processing for '{command_str}': {e}", exc_info=True)
             conn.sendall("ERROR\r\n".encode("utf-8"))
             return False
-        
+
     def _get_status(self) -> str:
         """
         Constructs the status response string based on the current state.
@@ -729,6 +749,10 @@ class CTRL_TCP:
         """
         self.logger.info(f"Start self learning epoch: {five_digit_number_str}")
 
+        if self.model_learning is None:
+            self.logger.error("Model learning is not initialized")
+            return False
+
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True
         self.current_epoch_type = "SELF"
@@ -749,6 +773,10 @@ class CTRL_TCP:
         """
         self.logger.info(f"Start WAFL learning epoch: {five_digit_number_str}")
 
+        if self.model_learning is None:
+            self.logger.error("Model learning is not initialized")
+            return False
+
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True
         self.current_epoch_type = "WAFL"
@@ -768,4 +796,4 @@ class CTRL_TCP:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    comm_interface = CTRL_TCP("../config/config.json")
+    comm_interface = CTRL_TCP("./config/config.json")
