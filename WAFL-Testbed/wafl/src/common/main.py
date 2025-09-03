@@ -411,14 +411,21 @@ class CTRL_TCP:
         # Variable to hold the learning thread object.
         self.learning_thread: Optional[threading.Thread] = None
 
+        # Initialize model_sharing and model_learning attributes
+        self.model_sharing: Optional[ModelSharingUtils] = None
+        self.model_learning: Optional[ModelLearningUtils] = None
+
         if not self._load_config(config_path):
             raise ValueError("Failed to load configuration file")
+        if self.name is None:
+            raise ValueError("Device name not properly loaded from configuration")
+
+        # Setup the WAFL node before starting the control thread
+        self.setup_local_wafl_node(self.name)
+
         self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
-        if self.name is None:
-            raise ValueError("Device name not properly loaded from configuration")
-        self.setup_local_wafl_node(self.name)
 
     def _load_config(self, config_path: str) -> bool:
         """
@@ -610,9 +617,10 @@ class CTRL_TCP:
                 # Handle the KILL command by setting flags to terminate loops.
                 self.logger.info("KILL command received. Shutting down listeners and ongoing tasks.")
                 self.fLISTENER_ACTIVE = False
-                self.model_sharing.fLISTENER_ACTIVE = False
+                if self.model_sharing is not None:
+                    self.model_sharing.fLISTENER_ACTIVE = False
                 threads_to_join = []
-                if hasattr(self.model_sharing, "listener_thread"):
+                if self.model_sharing is not None and hasattr(self.model_sharing, "listener_thread"):
                     threads_to_join.append(self.model_sharing.listener_thread)
                 if self.learning_thread and self.learning_thread.is_alive():
                     threads_to_join.append(self.learning_thread)
@@ -741,6 +749,10 @@ class CTRL_TCP:
         """
         self.logger.info(f"Start self learning epoch: {five_digit_number_str}")
 
+        if self.model_learning is None:
+            self.logger.error("Model learning is not initialized")
+            return False
+
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True
         self.current_epoch_type = "SELF"
@@ -760,6 +772,10 @@ class CTRL_TCP:
         Handles the BEGIN-WAFL command.
         """
         self.logger.info(f"Start WAFL learning epoch: {five_digit_number_str}")
+
+        if self.model_learning is None:
+            self.logger.error("Model learning is not initialized")
+            return False
 
         # --- Update status at the beginning of the epoch ---
         self.is_epoch_running = True

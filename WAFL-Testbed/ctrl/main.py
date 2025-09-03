@@ -400,6 +400,7 @@ class WaflAgent:
                     raise RuntimeError(f"❌ Failed to start remote process: {error_msg}")
 
                 stdout.channel.close()
+
                 self.status = "READY"
                 self.logger.info(f"✅ Remote process started successfully with PID: {self.pid}")
                 return True
@@ -805,10 +806,12 @@ class ControlServer:
 
             if failed_agents:
                 raise RuntimeError(f"❌ Failed to start agents: {', '.join(failed_agents)}")
-            time.sleep(2)  # Allow some time for processes to stabilize
-            self.logger.info("✅ All agents started successfully")
 
-            time.sleep(5)
+            # Allow some time for processes to stabilize
+            self.logger.info("⏳ Waiting 20 seconds for agents to stabilize...")
+            time.sleep(20)
+
+            self.logger.info("✅ All agents started successfully")
 
             # 2. Main SELF training loop
             self.logger.info(f"🎓 Phase 2: Starting training loop ({epochs} epochs)")
