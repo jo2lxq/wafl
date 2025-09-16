@@ -11,6 +11,9 @@ dependencies = [
     "torch>=2.7.1",
     "paramiko>=2.12.0",
     "torchvision>=0.22.1",
+    "pandas>=2.3.2",
+    "matplotlib>=3.10.6",
+    "seaborn>=0.13.2",
 ]
 
 [tool.ruff]
