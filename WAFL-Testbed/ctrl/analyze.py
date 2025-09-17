@@ -118,38 +118,81 @@ def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
     return pd.concat(all_data, ignore_index=True)
 
 
-def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str):
+def get_epoch_ranges(experiment_path: str) -> dict:
+    """
+    parameters.json から self/wafl の epoch 数を取得
+    """
+    params_path = os.path.join(experiment_path, "../../ctrl", "parameters.json")
+    if not os.path.exists(params_path):
+        params_path = os.path.join(experiment_path, "parameters.json")
+    if not os.path.exists(params_path):
+        return {}
+    import json
+
+    with open(params_path, "r", encoding="utf-8") as f:
+        params = json.load(f)
+    if "epochs" in params and isinstance(params["epochs"], dict):
+        return {"self": params["epochs"].get("self"), "wafl": params["epochs"].get("wafl")}
+    return {}
+
+
+def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, epoch_ranges: Optional[dict] = None):
     """
     Generates and saves various insightful learning curve plots.
     """
     print("\n📊 Generating plots...")
     sns.set_theme(style="whitegrid")
 
-    # === Plot 1 & 2: Average Learning Curves (Accuracy & Loss) ===
-    fig, axes = plt.subplots(1, 2, figsize=(20, 7))
-    fig.suptitle(f"Average Learning Curves (Experiment: {experiment_id})", fontsize=16)
-
-    sns.lineplot(ax=axes[0], data=df, x="epoch", y="accuracy", hue="phase", errorbar="sd")
-    axes[0].set_title("Average Accuracy vs. Epoch")
-    axes[0].set_ylabel("Accuracy")
-
-    sns.lineplot(ax=axes[1], data=df, x="epoch", y="loss", hue="phase", errorbar="sd")
-    axes[1].set_title("Average Loss vs. Epoch")
-    axes[1].set_ylabel("Loss")
-
+    # === Plot 1: Average Accuracy Curve ===
+    fig_acc, ax_acc = plt.subplots(figsize=(10, 7))
+    fig_acc.suptitle(f"Average Accuracy Curve (Experiment: {experiment_id})", fontsize=16)
+    sns.lineplot(ax=ax_acc, data=df, x="epoch", y="accuracy", hue="phase", errorbar="sd")
+    ax_acc.set_title("Average Accuracy vs. Epoch")
+    ax_acc.set_ylabel("Accuracy")
+    if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+        self_end = epoch_ranges["self"]
+        ax_acc.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
+        ax_acc.text(self_end, ax_acc.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
+        ax_acc.text(self_end, ax_acc.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
+        ax_acc.legend()
     plt.tight_layout(rect=(0, 0, 1, 0.96))
-    save_path = os.path.join(output_dir, "1_average_curves.png")
-    plt.savefig(save_path)
+    save_path_acc = os.path.join(output_dir, "1_average_accuracy_curve.png")
+    plt.savefig(save_path_acc)
     plt.close()
-    print(f"  📈 Saved average learning curves to: {save_path}")
+    print(f"  📈 Saved average accuracy curve to: {save_path_acc}")
+
+    # === Plot 2: Average Loss Curve ===
+    fig_loss, ax_loss = plt.subplots(figsize=(10, 7))
+    fig_loss.suptitle(f"Average Loss Curve (Experiment: {experiment_id})", fontsize=16)
+    sns.lineplot(ax=ax_loss, data=df, x="epoch", y="loss", hue="phase", errorbar="sd")
+    ax_loss.set_title("Average Loss vs. Epoch")
+    ax_loss.set_ylabel("Loss")
+    if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+        self_end = epoch_ranges["self"]
+        ax_loss.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
+        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
+        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
+        ax_loss.legend()
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
+    save_path_loss = os.path.join(output_dir, "1_average_loss_curve.png")
+    plt.savefig(save_path_loss)
+    plt.close()
+    print(f"  📉 Saved average loss curve to: {save_path_loss}")
 
     # === Plot 3: Individual Device Test Accuracy ===
     df_test = df[df["phase"] == "test"]
     plt.figure(figsize=(12, 7))
+    ax_indiv = plt.gca()
     sns.lineplot(data=df_test, x="epoch", y="accuracy", hue="device_id", palette="viridis_r", legend="full")
     plt.title(f"Individual Device Test Accuracy vs. Epoch\n(Experiment: {experiment_id})")
     plt.ylabel("Test Accuracy")
     plt.legend(title="Device ID", bbox_to_anchor=(1.05, 1), loc="upper left")
+    if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+        self_end = epoch_ranges["self"]
+        ax_indiv.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
+        ax_indiv.text(self_end, ax_indiv.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
+        ax_indiv.text(self_end, ax_indiv.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
+        ax_indiv.legend()
     plt.tight_layout()
     save_path = os.path.join(output_dir, "2_individual_test_accuracy.png")
     plt.savefig(save_path, bbox_inches="tight")
@@ -229,7 +272,11 @@ def main():
     print(f"\n✅ Data loaded successfully! Found {len(aggregated_df)} total records.")
     print(f"🖼️  Plots will be saved to: {output_summary_dir}")
 
-    plot_learning_curves(aggregated_df, output_summary_dir, experiment_id)
+    # --- ここから追加: epoch範囲取得 ---
+    epoch_ranges = get_epoch_ranges(experiment_path)
+    # --- ここまで追加 ---
+
+    plot_learning_curves(aggregated_df, output_summary_dir, experiment_id, epoch_ranges=epoch_ranges)
 
     print("\n🎉 --- Analysis complete! ---")
 
