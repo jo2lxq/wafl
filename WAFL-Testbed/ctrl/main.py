@@ -774,14 +774,16 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: int, wafl_phase_params: Dict[str, Any], contact_pattern: str):
+    def run_experiment(self, epochs: Dict[str, int], wafl_phase_params: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
 
         Note:
             Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
         """
-        self.logger.info(f"🚀 Starting experiment: {self.experiment_id} ({epochs} epochs)")
+        self.logger.info(
+            f"🚀 Starting experiment: {self.experiment_id} (SELF epochs: {epochs['self']}, WAFL epochs: {epochs['wafl']})"
+        )
         experiment_success = False
 
         try:
@@ -814,10 +816,10 @@ class ControlServer:
             self.logger.info("✅ All agents started successfully")
 
             # 2. Main SELF training loop
-            self.logger.info(f"🎓 Phase 2: Starting training loop ({epochs} epochs)")
+            self.logger.info(f"🎓 Phase 2: Starting SELF training loop ({epochs['self']} epochs)")
 
-            for epoch in range(1, epochs + 1):
-                self.logger.info(f"📚 === Epoch {epoch}/{epochs} ===")
+            for epoch in range(1, epochs["self"] + 1):
+                self.logger.info(f"📚 === SELF Epoch {epoch}/{epochs['self']} ===")
 
                 # Send begin commands to all agents
                 failed_commands = []
@@ -826,19 +828,19 @@ class ControlServer:
                         failed_commands.append(agent.name)
 
                 if failed_commands:
-                    raise RuntimeError(f"❌ Failed to start epoch {epoch} on agents: {', '.join(failed_commands)}")
+                    raise RuntimeError(f"❌ Failed to start SELF epoch {epoch} on agents: {', '.join(failed_commands)}")
 
                 # Wait for completion
                 self._wait_for_all_agents_to_complete(current_epoch=epoch)
-                self.logger.info(f"✅ Epoch {epoch}/{epochs} completed successfully")
+                self.logger.info(f"✅ SELF Epoch {epoch}/{epochs['self']} completed successfully")
 
-            self.logger.info("🎉 All training epochs completed successfully")
+            self.logger.info("🎉 All SELF training epochs completed successfully")
 
             # 3. Main WAFL training loop
-            self.logger.info(f"🎓 Phase 3: Starting training loop ({epochs} epochs)")
+            self.logger.info(f"🎓 Phase 3: Starting WAFL training loop ({epochs['wafl']} epochs)")
 
-            for epoch in range(1, epochs + 1):
-                self.logger.info(f"📚 === Epoch {epoch}/{epochs} ===")
+            for epoch in range(1, epochs["wafl"] + 1):
+                self.logger.info(f"📚 === WAFL Epoch {epoch}/{epochs['wafl']} ===")
 
                 # Send begin commands to all agents
                 failed_commands = []
@@ -847,13 +849,13 @@ class ControlServer:
                         failed_commands.append(agent.name)
 
                 if failed_commands:
-                    raise RuntimeError(f"❌ Failed to start epoch {epoch} on agents: {', '.join(failed_commands)}")
+                    raise RuntimeError(f"❌ Failed to start WAFL epoch {epoch} on agents: {', '.join(failed_commands)}")
 
                 # Wait for completion
                 self._wait_for_all_agents_to_complete(current_epoch=epoch)
-                self.logger.info(f"✅ Epoch {epoch}/{epochs} completed successfully")
+                self.logger.info(f"✅ WAFL Epoch {epoch}/{epochs['wafl']} completed successfully")
 
-            self.logger.info("🎉 All training epochs completed successfully")
+            self.logger.info("🎉 All WAFL training epochs completed successfully")
             experiment_success = True
 
         except KeyboardInterrupt:
@@ -994,7 +996,10 @@ if __name__ == "__main__":
             print(f"💥 Missing required parameters in {PARAMETERS_PATH}: {', '.join(missing_params)}")
             exit(1)
 
-        print(f"🚀 Starting experiment with {experiment_parameters['epochs']} epochs")
+        epochs_self = experiment_parameters["epochs"]["self"]
+        epochs_wafl = experiment_parameters["epochs"]["wafl"]
+
+        print(f"🚀 Starting experiment with {epochs_self} SELF epochs and {epochs_wafl} WAFL epochs")
         print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
         print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
 
@@ -1006,7 +1011,7 @@ if __name__ == "__main__":
 
         # Run experiment
         controller.run_experiment(
-            epochs=experiment_parameters["epochs"],
+            epochs={"self": epochs_self, "wafl": epochs_wafl},
             wafl_phase_params=experiment_parameters["wafl_phase_params"],
             contact_pattern=experiment_parameters["contact_pattern"],
         )
