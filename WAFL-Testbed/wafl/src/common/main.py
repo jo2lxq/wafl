@@ -94,6 +94,7 @@ class ModelLearningUtils:
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
+        self.experiment_id = experiment_id
         self.csv_file_path = f"./results/{self.experiment_id}/learning-data.csv"
         os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
         with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
