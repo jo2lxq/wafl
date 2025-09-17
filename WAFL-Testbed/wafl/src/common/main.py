@@ -62,6 +62,7 @@ class ModelLearningUtils:
         contact_pattern_path: str,
         model_sharing: ModelSharingUtils,
         ctrl_tcp: CTRL_TCP,
+        experiment_id: experiment_id,
     ) -> None:
         """
         Initialize the learning process instance.
@@ -617,6 +618,7 @@ class CTRL_TCP:
             "./config/contact_pattern.json",
             self.model_sharing,
             self,
+            self.experiment_id,
         )
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
