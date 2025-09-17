@@ -68,8 +68,8 @@ class ModelLearningUtils:
         Initialize the learning process instance.
         """
         torch.random.manual_seed(1)
-        train_path = os.path.join(dataset_path, "train.pkl")
-        test_path = os.path.join(dataset_path, "test.pkl")
+        train_path = os.path.join(dataset_path, "train/train.pkl")
+        test_path = os.path.join(dataset_path, "test/test.pkl")
         with open(train_path, "rb") as f:
             train_dataset = pickle.load(f)
         with open(test_path, "rb") as f:
