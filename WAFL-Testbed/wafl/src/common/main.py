@@ -62,7 +62,7 @@ class ModelLearningUtils:
         contact_pattern_path: str,
         model_sharing: ModelSharingUtils,
         ctrl_tcp: CTRL_TCP,
-        experiment_id: experiment_id,
+        experiment_id,
     ) -> None:
         """
         Initialize the learning process instance.
