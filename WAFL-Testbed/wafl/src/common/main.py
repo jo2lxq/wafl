@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import threading
 import time
 import zlib
 from typing import Any, List, Optional, Tuple
-import csv
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -222,7 +223,8 @@ class ModelLearningUtils:
         self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")        
         return avg_test_loss, accuracy
     
-    def _save_results_to_csv(self, epoch_str: str, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float):
+    def _save_results_to_csv(self, epoch_str: str, train_accuracy: float, train_loss: float
+    , test_accuracy: float, test_loss: float):
         """
         Save training results to CSV file.
         """
