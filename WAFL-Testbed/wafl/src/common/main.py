@@ -98,6 +98,9 @@ class ModelLearningUtils:
             writer.writerow(["epoch", "train_acc", "train_loss", "test_acc", "test_loss"])
         self.logger.info(f"📊 CSV file created: {self.csv_file_path}")
         self.logger.info("Initialized the Model Learning Utils instance.")
+        self.train_loss = 0
+        self.train_accuracy = 0
+        self.epoch_number = 0
 
     def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
         """
@@ -142,16 +145,17 @@ class ModelLearningUtils:
                 if (i + 1) % 50 == 0:
                     self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
-            epoch_loss = total_loss / num_batches if num_batches > 0 else 0.0
-            train_accuracy = correct_train / total_train if total_train > 0 else 0.0
+            self.train_loss = total_loss / num_batches if num_batches > 0 else 0.0
+            self.train_accuracy = correct_train / total_train if total_train > 0 else 0.0
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
-            self.logger.info(f"📉 Training Loss: {epoch_loss:.6f}")
-            self.logger.info(f"📈 Training Accuracy: {train_accuracy:.4f}")
+            self.logger.info(f"📉 Training Loss: {self.train_loss:.6f}")
+            self.logger.info(f"📈 Training Accuracy: {self.train_accuracy:.4f}")
             test_loss, test_accuracy = self._evaluate_model()
             self.logger.info(f"📉 Test Loss: {test_loss:.4f}")
             self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
-            self._save_results_to_csv(five_digit_number_str, train_accuracy, epoch_loss, test_accuracy, test_loss)
+            self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
+            self.epoch_number += 1
             torch.save(
                 self.net.state_dict(),
                 self.model_instance_path,
@@ -188,41 +192,18 @@ class ModelLearningUtils:
                 SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
             else:
                 self.logger.info("No model exchange with other agents in this WAFL epoch.")
-                running_loss = 0.0
-                total_loss = 0.0
-                num_batches = 0
-                correct_train = 0
-                total_train = 0
-                for i, data in enumerate(self.train_loader, 0):
-                    x_train, y_train = data
-                    x_train = x_train.to(self.device)
-                    y_train = y_train.to(self.device)
-                    self.optimizer.zero_grad()
-                    y_output = self.net(x_train)
-                    loss = self.criterion(y_output, y_train)
-                    loss.backward()
-                    self.optimizer.step()
-                    batch_loss = loss.item()
-                    running_loss += batch_loss
-                    total_loss += batch_loss
-                    num_batches += 1
-                    _, predicted = torch.max(y_output.data, 1)
-                    total_train += y_train.size(0)
-                    correct_train += (predicted == y_train).sum().item()
-                epoch_loss = total_loss / num_batches if num_batches > 0 else 0.0
-                train_accuracy = correct_train / total_train if total_train > 0 else 0.0
                 test_loss, test_accuracy = self._evaluate_model()
-                self.logger.info(f"📉 Training Loss (no exchange): {epoch_loss:.6f}")
-                self.logger.info(f"📈 Training Accuracy (no exchange): {train_accuracy:.4f}")
+                self.logger.info(f"📉 Training Loss (no exchange): {self.train_loss:.6f}")
+                self.logger.info(f"📈 Training Accuracy (no exchange): {self.train_accuracy:.4f}")
                 self.logger.info(f"📉 Test Loss (no exchange): {test_loss:.4f}")
                 self.logger.info(f"📈 Test Accuracy (no exchange): {test_accuracy:.4f}")
-                self._save_results_to_csv(five_digit_number_str, train_accuracy, epoch_loss, test_accuracy, test_loss)
+                self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
+                self.epoch_number += 1
                 torch.save(
                     self.net.state_dict(),
                     self.model_instance_path,
                 )
                 self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
-                SELF_LEARN_FLAG = True
             if not SELF_LEARN_FLAG:
                 raise Exception("SELF-LEARNING ERROR")
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
