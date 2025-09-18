@@ -45,15 +45,11 @@ class ModelLearningUtils:
 
     # Hyperparameter configuration
     # The hyperparameter values supplied by the config file will take precedence.
-    # Also, some of these variables, such as cMAX_EPOCH are not relevant here, since
-    # the epochs are initiated by the control server.
     # Such variables have been defined here to ensure consistency with the original
     # WAFL-MLP project.
     cBATCH_SIZE = 32  # default 32
     cLEARNING_RATE = 0.001  # default 0.001
     cFL_COEFFICIENCY = 1.0  # default 1.0  (WAFL's aggregation co efficiency)
-    cSELF_TRAIN_EPOCHS = 50  # default 50
-    cMAX_EPOCH = 5000  # default 5000
 
     def __init__(
         self,
@@ -97,9 +93,9 @@ class ModelLearningUtils:
         self.experiment_id = experiment_id
         self.csv_file_path = f"./results/{self.experiment_id}/learning-data.csv"
         os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
-        with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+        with open(self.csv_file_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(['epoch', 'train_acc', 'train_loss', 'test_acc', 'test_loss'])        
+            writer.writerow(["epoch", "train_acc", "train_loss", "test_acc", "test_loss"])
         self.logger.info(f"📊 CSV file created: {self.csv_file_path}")
         self.logger.info("Initialized the Model Learning Utils instance.")
 
@@ -126,7 +122,7 @@ class ModelLearningUtils:
             total_loss = 0.0
             num_batches = 0
             correct_train = 0
-            total_train = 0          
+            total_train = 0
             for i, data in enumerate(self.train_loader, 0):
                 x_train, y_train = data
                 x_train = x_train.to(self.device)
@@ -135,27 +131,27 @@ class ModelLearningUtils:
                 y_output = self.net(x_train)
                 loss = self.criterion(y_output, y_train)
                 loss.backward()
-                self.optimizer.step()                
+                self.optimizer.step()
                 batch_loss = loss.item()
                 running_loss += batch_loss
                 total_loss += batch_loss
                 num_batches += 1
                 _, predicted = torch.max(y_output.data, 1)
                 total_train += y_train.size(0)
-                correct_train += (predicted == y_train).sum().item()           
+                correct_train += (predicted == y_train).sum().item()
                 if (i + 1) % 50 == 0:
                     self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
             epoch_loss = total_loss / num_batches if num_batches > 0 else 0.0
-            train_accuracy = correct_train / total_train if total_train > 0 else 0.0         
+            train_accuracy = correct_train / total_train if total_train > 0 else 0.0
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
-            self.logger.info(f"📈 Training Loss: {epoch_loss:.6f}")
-            self.logger.info(f"📊 Training Accuracy: {train_accuracy:.4f}")
+            self.logger.info(f"📉 Training Loss: {epoch_loss:.6f}")
+            self.logger.info(f"📈 Training Accuracy: {train_accuracy:.4f}")
             test_loss, test_accuracy = self._evaluate_model()
-            self.logger.info(f"📊 Test Loss: {test_loss:.4f}")
-            self.logger.info(f"📊 Test Accuracy: {test_accuracy:.4f}")    
-            self._save_results_to_csv(five_digit_number_str, train_accuracy, epoch_loss, test_accuracy, test_loss)        
+            self.logger.info(f"📉 Test Loss: {test_loss:.4f}")
+            self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
+            self._save_results_to_csv(five_digit_number_str, train_accuracy, epoch_loss, test_accuracy, test_loss)
             torch.save(
                 self.net.state_dict(),
                 self.model_instance_path,
@@ -187,6 +183,7 @@ class ModelLearningUtils:
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
             self.net.load_state_dict(local_model)
+            SELF_LEARN_FLAG = True
             if n_nbr:
                 SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
             if not SELF_LEARN_FLAG:
@@ -197,51 +194,46 @@ class ModelLearningUtils:
             self.logger.error(f"The following error occurred in wafl_learn: {str(exc)[:100]}...")
             SUCCESS = False
         return SUCCESS
-    
-    def _evaluate_model(self) -> float:
+
+    def _evaluate_model(self) -> Tuple[float, float]:
         """
-        Evaluate model on test dataset and return accuracy.
+        Evaluate model on test dataset and return test loss and accuracy.
         """
         self.net.eval()
         correct = 0
         total = 0
         total_loss = 0.0
-        num_batches = 0        
+        num_batches = 0
         with torch.no_grad():
             for data in self.test_loader:
                 images, labels = data
                 images = images.to(self.device)
-                labels = labels.to(self.device)                
+                labels = labels.to(self.device)
                 outputs = self.net(images)
-                loss = self.criterion(outputs, labels)                
+                loss = self.criterion(outputs, labels)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
-                correct += (predicted == labels).sum().item()                
+                correct += (predicted == labels).sum().item()
                 total_loss += loss.item()
-                num_batches += 1        
+                num_batches += 1
         self.net.train()
         accuracy = correct / total
         avg_test_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")        
+        self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")
         return avg_test_loss, accuracy
-    
-    def _save_results_to_csv(self, epoch_str: str, train_accuracy: float, train_loss: float
-    , test_accuracy: float, test_loss: float):
+
+    def _save_results_to_csv(
+        self, epoch_str: str, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float
+    ):
         """
         Save training results to CSV file.
         """
-        import csv
-        
         try:
-            with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
+            with open(self.csv_file_path, "a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow([
-                    epoch_str,
-                    f"{train_accuracy:.4f}",
-                    f"{train_loss:.6f}",
-                    f"{test_accuracy:.4f}",
-                    f"{test_loss:.6f}"
-                ])
+                writer.writerow(
+                    [epoch_str, f"{train_accuracy:.4f}", f"{train_loss:.6f}", f"{test_accuracy:.4f}", f"{test_loss:.6f}"]
+                )
             self.logger.debug(f"📝 Results saved to CSV for epoch {epoch_str}")
         except Exception as e:
             self.logger.error(f"💥 Failed to save results to CSV: {e}")
