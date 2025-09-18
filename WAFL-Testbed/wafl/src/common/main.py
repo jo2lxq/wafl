@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import logging
 import os
@@ -44,15 +45,11 @@ class ModelLearningUtils:
 
     # Hyperparameter configuration
     # The hyperparameter values supplied by the config file will take precedence.
-    # Also, some of these variables, such as cMAX_EPOCH are not relevant here, since
-    # the epochs are initiated by the control server.
     # Such variables have been defined here to ensure consistency with the original
     # WAFL-MLP project.
     cBATCH_SIZE = 32  # default 32
     cLEARNING_RATE = 0.001  # default 0.001
     cFL_COEFFICIENCY = 1.0  # default 1.0  (WAFL's aggregation co efficiency)
-    cSELF_TRAIN_EPOCHS = 50  # default 50
-    cMAX_EPOCH = 5000  # default 5000
 
     def __init__(
         self,
@@ -61,17 +58,25 @@ class ModelLearningUtils:
         contact_pattern_path: str,
         model_sharing: ModelSharingUtils,
         ctrl_tcp: CTRL_TCP,
+        experiment_id,
     ) -> None:
         """
         Initialize the learning process instance.
         """
         torch.random.manual_seed(1)
-        with open(dataset_path, "rb") as f:
-            dataset = pickle.load(f)
+        train_path = os.path.join(dataset_path, "train/train.pkl")
+        test_path = os.path.join(dataset_path, "test/test.pkl")
+        with open(train_path, "rb") as f:
+            train_dataset = pickle.load(f)
+        with open(test_path, "rb") as f:
+            test_dataset = pickle.load(f)
         self.model_sharing = model_sharing
         self.ctrl_tcp = ctrl_tcp
-        self.data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
+        self.train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
+        )
+        self.test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
         )
         self.logger = logging.getLogger("ModelLearningUtils")
         self.model_instance_path = model_instance_path
@@ -85,6 +90,13 @@ class ModelLearningUtils:
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
+        self.experiment_id = experiment_id
+        self.csv_file_path = f"./results/{self.experiment_id}/learning-data.csv"
+        os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
+        with open(self.csv_file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["epoch", "train_acc", "train_loss", "test_acc", "test_loss"])
+        self.logger.info(f"📊 CSV file created: {self.csv_file_path}")
         self.logger.info("Initialized the Model Learning Utils instance.")
 
     def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
@@ -107,23 +119,39 @@ class ModelLearningUtils:
         SUCCESS = False
         try:
             running_loss = 0.0
-            for i, data in enumerate(self.data_loader, 0):
+            total_loss = 0.0
+            num_batches = 0
+            correct_train = 0
+            total_train = 0
+            for i, data in enumerate(self.train_loader, 0):
                 x_train, y_train = data
                 x_train = x_train.to(self.device)
                 y_train = y_train.to(self.device)
-
                 self.optimizer.zero_grad()
-
                 y_output = self.net(x_train)
                 loss = self.criterion(y_output, y_train)
                 loss.backward()
                 self.optimizer.step()
-                running_loss += loss.item()
+                batch_loss = loss.item()
+                running_loss += batch_loss
+                total_loss += batch_loss
+                num_batches += 1
+                _, predicted = torch.max(y_output.data, 1)
+                total_train += y_train.size(0)
+                correct_train += (predicted == y_train).sum().item()
                 if (i + 1) % 50 == 0:
                     self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
+            epoch_loss = total_loss / num_batches if num_batches > 0 else 0.0
+            train_accuracy = correct_train / total_train if total_train > 0 else 0.0
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
+            self.logger.info(f"📉 Training Loss: {epoch_loss:.6f}")
+            self.logger.info(f"📈 Training Accuracy: {train_accuracy:.4f}")
+            test_loss, test_accuracy = self._evaluate_model()
+            self.logger.info(f"📉 Test Loss: {test_loss:.4f}")
+            self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
+            self._save_results_to_csv(five_digit_number_str, train_accuracy, epoch_loss, test_accuracy, test_loss)
             torch.save(
                 self.net.state_dict(),
                 self.model_instance_path,
@@ -155,7 +183,9 @@ class ModelLearningUtils:
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
             self.net.load_state_dict(local_model)
-            SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
+            SELF_LEARN_FLAG = True
+            if n_nbr:
+                SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
             if not SELF_LEARN_FLAG:
                 raise Exception("SELF-LEARNING ERROR")
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
@@ -164,6 +194,49 @@ class ModelLearningUtils:
             self.logger.error(f"The following error occurred in wafl_learn: {str(exc)[:100]}...")
             SUCCESS = False
         return SUCCESS
+
+    def _evaluate_model(self) -> Tuple[float, float]:
+        """
+        Evaluate model on test dataset and return test loss and accuracy.
+        """
+        self.net.eval()
+        correct = 0
+        total = 0
+        total_loss = 0.0
+        num_batches = 0
+        with torch.no_grad():
+            for data in self.test_loader:
+                images, labels = data
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                outputs = self.net(images)
+                loss = self.criterion(outputs, labels)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+                total_loss += loss.item()
+                num_batches += 1
+        self.net.train()
+        accuracy = correct / total
+        avg_test_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")
+        return avg_test_loss, accuracy
+
+    def _save_results_to_csv(
+        self, epoch_str: str, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float
+    ):
+        """
+        Save training results to CSV file.
+        """
+        try:
+            with open(self.csv_file_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [epoch_str, f"{train_accuracy:.4f}", f"{train_loss:.6f}", f"{test_accuracy:.4f}", f"{test_loss:.6f}"]
+                )
+            self.logger.debug(f"📝 Results saved to CSV for epoch {epoch_str}")
+        except Exception as e:
+            self.logger.error(f"💥 Failed to save results to CSV: {e}")
 
 
 class ModelSharingUtils:
@@ -398,6 +471,7 @@ class CTRL_TCP:
         self.ctrl_port: Optional[int] = None
         self.p2p_port: Optional[int] = None
         self.timeout: Optional[float] = None
+        self.experiment_id: Optional[str] = None
 
         # Flag to control the main listener loop.
         self.fLISTENER_ACTIVE = True
@@ -442,6 +516,14 @@ class CTRL_TCP:
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
             self.logger.info(f"Configuration file '{config_path}' loaded.")
+            experiment_info = config_data.get("experiment_info")
+            if not isinstance(experiment_info, dict):
+                self.logger.error("Invalid format for 'experiment_info' in JSON. Dictionary required.")
+                return False
+            self.experiment_id = experiment_info.get("experiment_id")
+            if not isinstance(self.experiment_id, str):
+                self.logger.error("Invalid format for 'experiment_info.experiment_id' in JSON. String required.")
+                return False
             wafl_devices_data = config_data.get("infrastructure")
             if not isinstance(wafl_devices_data, dict):
                 self.logger.error("Invalid format for 'wafl_devices' in JSON. Dictionary required.")
@@ -520,13 +602,16 @@ class CTRL_TCP:
             raise ValueError(f"Could not find IP address for device: {device_name}")
         if self.p2p_port is None:
             raise ValueError("P2P port is not properly configured")
+        model_dir = f"./results/{self.experiment_id}"
+        os.makedirs(model_dir, exist_ok=True)
         self.model_sharing = ModelSharingUtils(device_name, device_ip, self.p2p_port, 10.0)
         self.model_learning = ModelLearningUtils(
-            "./dataset/dataset.pickled",
-            "./results/model_instance.pth",
+            "./dataset",
+            f"./results/{self.experiment_id}/model_instance.pth",
             "./config/contact_pattern.json",
             self.model_sharing,
             self,
+            self.experiment_id,
         )
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
