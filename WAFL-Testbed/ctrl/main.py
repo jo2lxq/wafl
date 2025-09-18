@@ -313,7 +313,7 @@ class WaflAgent:
 
             venv_path = os.path.join(target_path, ".venv", "bin", "activate")
             python_script = os.path.join(target_path, "src/main.py")
-            output_file = os.path.join(target_path, "results", experiment_id, "output.txt")
+            output_file = os.path.join(target_path, "results", experiment_id, "output.log")
             command_start = (
                 f"cd {target_path} && "
                 f"source {venv_path} && "
@@ -750,7 +750,7 @@ class ControlServer:
     def _setup_logging(self):
         """Setup experiment logging to file and console."""
         try:
-            log_file = os.path.join(self.results_dir, "control_server.log")
+            log_file = os.path.join(self.results_dir, "control-server_output.log")
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
             # Clear any existing handlers to avoid duplicate logs

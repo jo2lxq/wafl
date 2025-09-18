@@ -11,7 +11,7 @@ import seaborn as sns
 WAFL Emulation Testbed: Analysis and Visualization Program
 
 This script aggregates and visualizes the learning results from all devices
-for a specific experiment. It is designed to work with `learning_data.csv` files
+for a specific experiment. It is designed to work with `learning-data.csv` files
 containing the columns: `epoch`, `train_acc`, `train_loss`, `test_acc`, `test_loss`.
 
 # Prerequisites:
@@ -68,7 +68,7 @@ def parse_arguments() -> argparse.Namespace:
 
 def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
     """
-    Finds `learning_data.csv` files, loads them, and transforms them from
+    Finds `learning-data.csv` files, loads them, and transforms them from
     wide format to long format for easier plotting.
 
     Args:
@@ -87,11 +87,13 @@ def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
     for device_id_str in os.listdir(experiment_path):
         device_path = os.path.join(experiment_path, device_id_str)
         if os.path.isdir(device_path) and device_id_str.isdigit():
-            csv_path = os.path.join(device_path, "learning_data.csv")
+            csv_path = os.path.join(device_path, "learning-data.csv")
             if os.path.exists(csv_path):
                 try:
                     # Read the wide-format CSV
                     df_wide = pd.read_csv(csv_path)
+
+                    df_wide["epoch"] = range(1, len(df_wide) + 1)
 
                     # Transform train data into long format
                     df_train = df_wide[["epoch", "train_acc", "train_loss"]].copy()
@@ -112,7 +114,7 @@ def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
                     print(f"  - ⚠️ Warning: Could not process {csv_path}. Reason: {e}")
 
     if not all_data:
-        print("❌ Error: No valid `learning_data.csv` files were found.", file=sys.stderr)
+        print("❌ Error: No valid `learning-data.csv` files were found.", file=sys.stderr)
         return None
 
     return pd.concat(all_data, ignore_index=True)
@@ -142,19 +144,20 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     """
     print("\n📊 Generating plots...")
     sns.set_theme(style="whitegrid")
+    plt.rcParams.update({"font.size": 16})
 
     # === Plot 1: Average Accuracy Curve ===
     fig_acc, ax_acc = plt.subplots(figsize=(10, 7))
-    fig_acc.suptitle(f"Average Accuracy Curve (Experiment: {experiment_id})", fontsize=16)
     sns.lineplot(ax=ax_acc, data=df, x="epoch", y="accuracy", hue="phase", errorbar="sd")
-    ax_acc.set_title("Average Accuracy vs. Epoch")
-    ax_acc.set_ylabel("Accuracy")
+    ax_acc.set_title(f"Average Accuracy Curve\n(Experiment: {experiment_id})", fontsize=20)
+    ax_acc.set_ylabel("Accuracy", fontsize=16)
+    ax_acc.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
         self_end = epoch_ranges["self"]
         ax_acc.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
-        ax_acc.text(self_end, ax_acc.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
-        ax_acc.text(self_end, ax_acc.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
-        ax_acc.legend()
+        ax_acc.text(self_end, ax_acc.get_ylim()[0], " → WAFL", color="red", ha="left", va="bottom", fontsize=18)
+        ax_acc.text(self_end, ax_acc.get_ylim()[0], "SELF ← ", color="red", ha="right", va="bottom", fontsize=18)
+        ax_acc.legend(fontsize=14)
     plt.tight_layout(rect=(0, 0, 1, 0.96))
     save_path_acc = os.path.join(output_dir, "1_average_accuracy_curve.png")
     plt.savefig(save_path_acc)
@@ -163,16 +166,16 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
 
     # === Plot 2: Average Loss Curve ===
     fig_loss, ax_loss = plt.subplots(figsize=(10, 7))
-    fig_loss.suptitle(f"Average Loss Curve (Experiment: {experiment_id})", fontsize=16)
     sns.lineplot(ax=ax_loss, data=df, x="epoch", y="loss", hue="phase", errorbar="sd")
-    ax_loss.set_title("Average Loss vs. Epoch")
-    ax_loss.set_ylabel("Loss")
+    ax_loss.set_title(f"Average Loss Curve\n(Experiment: {experiment_id})", fontsize=20)
+    ax_loss.set_ylabel("Loss", fontsize=16)
+    ax_loss.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
         self_end = epoch_ranges["self"]
         ax_loss.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
-        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
-        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
-        ax_loss.legend()
+        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=18)
+        ax_loss.text(self_end, ax_loss.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=18)
+        ax_loss.legend(fontsize=14)
     plt.tight_layout(rect=(0, 0, 1, 0.96))
     save_path_loss = os.path.join(output_dir, "1_average_loss_curve.png")
     plt.savefig(save_path_loss)
@@ -184,15 +187,16 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     plt.figure(figsize=(12, 7))
     ax_indiv = plt.gca()
     sns.lineplot(data=df_test, x="epoch", y="accuracy", hue="device_id", palette="viridis_r", legend="full")
-    plt.title(f"Individual Device Test Accuracy vs. Epoch\n(Experiment: {experiment_id})")
-    plt.ylabel("Test Accuracy")
-    plt.legend(title="Device ID", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.title(f"Individual Device Test Accuracy vs. Epoch\n(Experiment: {experiment_id})", fontsize=20)
+    plt.ylabel("Test Accuracy", fontsize=16)
+    plt.xlabel("Epoch", fontsize=16)
+    plt.legend(title="Device ID", bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=14, title_fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
         self_end = epoch_ranges["self"]
         ax_indiv.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
-        ax_indiv.text(self_end, ax_indiv.get_ylim()[1] * 0.95, " → WAFL", color="red", ha="left", va="top", fontsize=12)
-        ax_indiv.text(self_end, ax_indiv.get_ylim()[1] * 0.95, "SELF ← ", color="red", ha="right", va="top", fontsize=12)
-        ax_indiv.legend()
+        ax_indiv.text(self_end, ax_indiv.get_ylim()[0], " → WAFL", color="red", ha="left", va="bottom", fontsize=18)
+        ax_indiv.text(self_end, ax_indiv.get_ylim()[0], "SELF ← ", color="red", ha="right", va="bottom", fontsize=18)
+        ax_indiv.legend(fontsize=14)
     plt.tight_layout()
     save_path = os.path.join(output_dir, "2_individual_test_accuracy.png")
     plt.savefig(save_path, bbox_inches="tight")
@@ -203,10 +207,10 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     df_final_epoch = df_test.loc[df_test.groupby("device_id")["epoch"].idxmax()]
     plt.figure(figsize=(12, 7))
     sns.boxplot(data=df_final_epoch, y="accuracy", color="skyblue")
-    sns.stripplot(data=df_final_epoch, y="accuracy", color="black", size=5, jitter=0.1)
-    plt.title(f"Distribution of Final Test Accuracy Across Devices\n(Experiment: {experiment_id})")
-    plt.ylabel("Final Test Accuracy")
-    plt.xlabel("All Devices")
+    sns.stripplot(data=df_final_epoch, y="accuracy", color="black", size=7, jitter=0.1)
+    plt.title(f"Distribution of Final Test Accuracy Across Devices\n(Experiment: {experiment_id})", fontsize=20)
+    plt.ylabel("Final Test Accuracy", fontsize=16)
+    plt.xlabel("All Devices", fontsize=16)
     plt.tight_layout()
     save_path = os.path.join(output_dir, "3_final_accuracy_distribution.png")
     plt.savefig(save_path)
@@ -214,7 +218,6 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     print(f"  📊 Saved final accuracy distribution plot to: {save_path}")
 
     # === Plot 5: Learning Speed vs. Final Performance (Scatter Plot) ===
-    # Epochs to reach 80% of max accuracy
     max_acc_overall = df_final_epoch["accuracy"].max()
     threshold = max_acc_overall * 0.90
     epochs_to_threshold = df_test[df_test["accuracy"] >= threshold].groupby("device_id")["epoch"].min().reset_index()
@@ -229,12 +232,12 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
         y="accuracy",
         hue="device_id",
         palette="viridis_r",
-        s=100,
+        s=120,
         legend=False,
     )
-    plt.title(f"Learning Speed vs. Final Performance\n(Experiment: {experiment_id})")
-    plt.xlabel(f"Epochs to Reach {threshold:.2f} Accuracy")
-    plt.ylabel("Final Test Accuracy")
+    plt.title(f"Learning Speed vs. Final Performance\n(Experiment: {experiment_id})", fontsize=20)
+    plt.xlabel(f"Epochs to Reach {threshold:.2f} Accuracy", fontsize=16)
+    plt.ylabel("Final Test Accuracy", fontsize=16)
     plt.tight_layout()
     save_path = os.path.join(output_dir, "4_speed_vs_performance.png")
     plt.savefig(save_path)
