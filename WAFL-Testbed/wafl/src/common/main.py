@@ -197,7 +197,7 @@ class ModelLearningUtils:
                 self.logger.info(f"📈 Training Accuracy (no exchange): {self.train_accuracy:.4f}")
                 self.logger.info(f"📉 Test Loss (no exchange): {test_loss:.4f}")
                 self.logger.info(f"📈 Test Accuracy (no exchange): {test_accuracy:.4f}")
-                self._save_results_to_csv(five_digit_number_str, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
+                self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
                 self.epoch_number += 1
                 torch.save(
                     self.net.state_dict(),
