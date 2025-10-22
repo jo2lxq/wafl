@@ -47,6 +47,7 @@ DEPLOY_CTRL_SERVER_DIST=/path/to/deployment/directory
 Create `execution_config` file for execution settings:
 
 ```bash
+cd ctrl
 cp execution_config_sample execution_config
 ```
 

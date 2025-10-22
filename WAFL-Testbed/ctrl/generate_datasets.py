@@ -8,10 +8,23 @@ import torchvision
 # --- Configuration ---
 # Load configuration from execution_config
 config_path = os.path.join(os.path.dirname(__file__), "execution_config")
-result = subprocess.run(
-    f"source {config_path} && echo $WAFL_DEVICE_NAMES", shell=True, capture_output=True, text=True, executable="/bin/bash"
-)
-device_names = result.stdout.strip().split(",")
+try:
+    result = subprocess.run(
+        f"source {config_path} && echo $WAFL_DEVICE_NAMES",
+        shell=True,
+        capture_output=True,
+        text=True,
+        executable="/bin/bash",
+        check=True,
+    )
+except subprocess.CalledProcessError as e:
+    raise RuntimeError(f"Failed to source execution_config or echo WAFL_DEVICE_NAMES: {e}") from e
+device_names_str = result.stdout.strip()
+if not device_names_str:
+    raise RuntimeError(
+        f"WAFL_DEVICE_NAMES is not set or empty after sourcing {config_path}. Please check your execution_config file."
+    )
+device_names = device_names_str.split(",")
 N_DEVICES = len(device_names)  # 🤖 Number of execution servers (WAFL Agents) from config.
 
 FILTER_PATH = "filter_r90_s01.pt"  # 📂 Path to the data distribution filter file.
