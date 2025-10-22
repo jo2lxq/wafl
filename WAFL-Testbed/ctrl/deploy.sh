@@ -111,15 +111,15 @@ deploy_to_device() {
     "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
 
     # Check and send pyproject.toml and uv.lock if they exist
-    if [ -f "$TARGET_PATH/ctrl/pyproject.toml" ] && [ -f "$TARGET_PATH/ctrl/uv.lock" ]; then
+    if [ -f "$TARGET_PATH/pyproject.toml" ] && [ -f "$TARGET_PATH/uv.lock" ]; then
         echo "[wafl$device_name] 📦 Sending Python project files..." | tee -a "$device_logfile"
-        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/pyproject.toml" \
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/pyproject.toml" \
         "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
-        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/uv.lock" \
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/uv.lock" \
         "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" ||
         { echo "[wafl$device_name] ⚠️ Warning: Failed to send Python project files" | tee -a "$device_logfile"; }
     else
-        echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found in ctrl directory" | tee -a "$device_logfile"
+        echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found" | tee -a "$device_logfile"
     fi &&
     
     # Setup Python virtual environment and install packages with uv

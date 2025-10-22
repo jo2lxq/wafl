@@ -2,15 +2,43 @@
 python = "3.11.4"
 uv = "0.7.13"
 
-[tasks]
-setup = [
-  "mise install python",
-  "mise install uv",
+[env]
+mise.file = ".env"
+
+[tasks.setup]
+run = [
   "uv venv",
+  ". .venv/bin/activate",
   "uv sync",
-  "uv run pre-commit install",
+  "uv run pre-commit install || true",
 ]
 
-lint = [
+[tasks.lint]
+run = [
   "uv run ruff check --fix",
+]
+depends = ["setup"]
+
+[tasks.deploy]
+run = [
+  "rsync -avz ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/mise setup\"",
+  "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+]
+
+[tasks.start]
+run = [
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ./ctrl/deploy.sh\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/main.py'\"",
+]
+depends = ["deploy"]
+
+[tasks.analyze]
+run = [
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/collect.py\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/analyze.py\"",
+  "rsync -avz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
 ]

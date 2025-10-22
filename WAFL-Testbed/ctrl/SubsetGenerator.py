@@ -1,13 +1,21 @@
 import os
 import pickle
+import subprocess
 
 import torch
 import torchvision
 
 # --- Configuration ---
-N_DEVICES = 10  # 🤖 Number of execution servers (WAFL Agents).
-FILTER_PATH = "data/filter_r90_s01.pt"  # 📂 Path to the data distribution filter file.
-RAW_DATA_PATH = "data/"  # 📥 Path to store the original downloaded dataset (e.g., MNIST).
+# Load configuration from wafl_execution_base_config
+config_path = os.path.join(os.path.dirname(__file__), "wafl_execution_base_config")
+result = subprocess.run(
+    f"source {config_path} && echo $WAFL_DEVICE_NAMES", shell=True, capture_output=True, text=True, executable="/bin/bash"
+)
+device_names = result.stdout.strip().split(",")
+N_DEVICES = len(device_names)  # 🤖 Number of execution servers (WAFL Agents) from config.
+
+FILTER_PATH = "filter_r90_s01.pt"  # 📂 Path to the data distribution filter file.
+DATA_PATH = "../data/"  # 📥 Path to store the original downloaded dataset (e.g., MNIST).
 OUTPUT_DATASET_PATH = "../wafl/dataset/"  # 📤 Root directory for the output WAFL datasets.
 
 
@@ -40,6 +48,7 @@ class PickledDataset(torch.utils.data.Dataset):
 # --- Main Script ---
 if __name__ == "__main__":
     print("🚀 --- Starting Dataset Creation ---")
+    print(f"📋 Loaded configuration: {N_DEVICES} devices with names {device_names}")
 
     # 1. Prepare and process the device-specific training datasets
     # -------------------------------------------------------------
@@ -47,17 +56,17 @@ if __name__ == "__main__":
 
     # Load the original training dataset
     trainset = torchvision.datasets.MNIST(
-        root=RAW_DATA_PATH,
+        root=DATA_PATH,
         train=True,
         download=True,
         transform=torchvision.transforms.ToTensor(),
     )
     # Load the filter which defines which data samples go to which device
-    indices = torch.load(FILTER_PATH)
+    indices = torch.load(os.path.join(os.path.dirname(__file__), DATA_PATH, FILTER_PATH))
     print(f"Loaded a filter for {len(indices)} devices.")
 
     for i in range(N_DEVICES):
-        print(f"\nProcessing training set for Device #{i}...")
+        print(f"\nProcessing training set for Device {device_names[i]}...")
 
         # Create a subset for the current device based on the filter
         subset = torch.utils.data.Subset(trainset, indices[i])
@@ -67,8 +76,7 @@ if __name__ == "__main__":
         pickled_subset = PickledDataset(materialized_subset)
 
         # Define the output directory and create it
-        # Structure: wafl/dataset/{device_id}/train/
-        output_dir = os.path.join(OUTPUT_DATASET_PATH, str(i), "train")
+        output_dir = os.path.join(OUTPUT_DATASET_PATH, str(device_names[i]), "train")
         os.makedirs(output_dir, exist_ok=True)
         print(f"  📂 Ensured directory exists: {output_dir}")
 
@@ -84,7 +92,7 @@ if __name__ == "__main__":
 
     # Load the original test dataset
     testset = torchvision.datasets.MNIST(
-        root=RAW_DATA_PATH,
+        root=DATA_PATH,
         train=False,
         download=True,
         transform=torchvision.transforms.ToTensor(),

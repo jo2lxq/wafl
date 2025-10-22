@@ -1,4 +1,6 @@
+.venv/
 results/
 data/
 
-*.pkl
+**/*.pkl
+.env
