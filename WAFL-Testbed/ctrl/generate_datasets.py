@@ -6,8 +6,8 @@ import torch
 import torchvision
 
 # --- Configuration ---
-# Load configuration from wafl_execution_base_config
-config_path = os.path.join(os.path.dirname(__file__), "wafl_execution_base_config")
+# Load configuration from execution_config
+config_path = os.path.join(os.path.dirname(__file__), "execution_config")
 result = subprocess.run(
     f"source {config_path} && echo $WAFL_DEVICE_NAMES", shell=True, capture_output=True, text=True, executable="/bin/bash"
 )

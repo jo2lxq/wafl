@@ -23,11 +23,11 @@ rm -f "$LOGFILE" 2>/dev/null || true
 rm -f "$TARGET_PATH/results/.deploy/wafl"*.log 2>/dev/null || true
 
 # Importing the environment variables
-if [ ! -f "$TARGET_PATH/ctrl/wafl_execution_base_config" ]; then
-    echo "❌ Error: Configuration file not found: $TARGET_PATH/ctrl/wafl_execution_base_config"
+if [ ! -f "$TARGET_PATH/ctrl/execution_config" ]; then
+    echo "❌ Error: Configuration file not found: $TARGET_PATH/ctrl/execution_config"
     exit 1
 fi
-source "$TARGET_PATH/ctrl/wafl_execution_base_config"
+source "$TARGET_PATH/ctrl/execution_config"
 
 # Validate required environment variables
 if [ -z "$DEPLOYMENT_LOCATION" ] || [ -z "$USER" ]; then
@@ -107,7 +107,7 @@ deploy_to_device() {
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src" &&
 
     # The Base Configuration shell script is also sent to the execution servers
-    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/execution_config" \
     "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
 
     # Check and send pyproject.toml and uv.lock if they exist

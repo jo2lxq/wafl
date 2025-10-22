@@ -1,6 +1,8 @@
+.ruff_cache/
 .venv/
 results/
 data/
 
 **/*.pkl
 .env
+execution_config

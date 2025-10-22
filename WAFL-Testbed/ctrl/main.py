@@ -750,7 +750,7 @@ class ControlServer:
     def _setup_logging(self):
         """Setup experiment logging to file and console."""
         try:
-            log_file = os.path.join(self.results_dir, "control-server_output.log")
+            log_file = os.path.join(self.results_dir, "ctrl_output.log")
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
             # Clear any existing handlers to avoid duplicate logs
@@ -1004,7 +1004,7 @@ if __name__ == "__main__":
         print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
 
         # Config file path
-        CONFIG_PATH = "ctrl/wafl_execution_base_config"
+        CONFIG_PATH = "ctrl/execution_config"
 
         # Create ControlServer instance
         controller = ControlServer(config_path=CONFIG_PATH)

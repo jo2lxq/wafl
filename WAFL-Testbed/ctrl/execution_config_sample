@@ -7,5 +7,5 @@ export WAFL_DEVICE_P2P_PORT=10002
 
 # Account-related details
 export USER='denjo'
-export DEPLOYMENT_LOCATION='/home/denjo/workspace/ktakahashi'
-export EXPERIMENT_NAME='scaling'
+export DEPLOYMENT_LOCATION='/home/denjo/workspace/XXXX'
+export EXPERIMENT_NAME='experiment_name'
