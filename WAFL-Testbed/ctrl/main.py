@@ -15,7 +15,8 @@ class WaflAgent:
     Represents each execution server (WAFL device) and manages communication.
 
     Attributes:
-        name (str): Device name (e.g., "0", "1")
+        agent_index (int): Device index (e.g., 0, 1)
+        name (str): Device name (e.g., "100", "101")
         ip (str): IP address
         ctrl_port (int): Control TCP port number
         status (str): Current status ("UNKNOWN", "READY", "RUNNING", "DONE", "ERROR", "TERMINATED")
@@ -24,6 +25,7 @@ class WaflAgent:
 
     def __init__(
         self,
+        agent_index: int,
         device_name: str,
         ip_address: str,
         ctrl_port: int,
@@ -31,6 +33,7 @@ class WaflAgent:
         experiment_parameters: Dict[str, Any],
         timeout: int = 10,
     ):
+        self.agent_index = agent_index
         self.name = device_name
         self.ip = ip_address
         self.ctrl_port = ctrl_port
@@ -56,6 +59,7 @@ class WaflAgent:
 
         unified_config = {
             "agent_info": {
+                "index": self.agent_index,
                 "device_name": self.name,
                 "ip_address": self.ip,
             },
@@ -732,14 +736,24 @@ class ControlServer:
         experiment_parameters["results_dir"] = self.results_dir
 
         failed_agents = []
+        agent_index = 0
         for name, ip in zip(names, ips):
             try:
-                agent = WaflAgent(name, ip, port, self.config, experiment_parameters)
+                agent = WaflAgent(
+                    agent_index=agent_index,
+                    device_name=name,
+                    ip_address=ip,
+                    ctrl_port=port,
+                    config=self.config,
+                    experiment_parameters=experiment_parameters,
+                )
                 agents.append(agent)
                 self.logger.info(f"🤖 Created and configured agent '{name}' for {ip}:{port}")
             except Exception as e:
                 self.logger.error(f"💥 Failed to create agent '{name}': {e}")
                 failed_agents.append(name)
+            finally:
+                agent_index += 1
 
         if failed_agents:
             raise RuntimeError(f"❌ Failed to create agents: {', '.join(failed_agents)}")
