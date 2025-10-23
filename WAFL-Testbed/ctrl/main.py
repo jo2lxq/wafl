@@ -76,7 +76,7 @@ class WaflAgent:
             },
             "experiment_parameters": {
                 "epochs": experiment_parameters.get("epochs"),
-                "wafl_phase_params": experiment_parameters.get("wafl_phase_params", {}),
+                "wafl_phase": experiment_parameters.get("wafl_phase", {}),
             },
             "runtime": {
                 "log_level": os.environ.get("LOG_LEVEL", "INFO"),
@@ -114,7 +114,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # Ensure config directory exists
                 command_mkdir = f"mkdir -p {config_dir}"
@@ -246,7 +246,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # Create config directory
                 command_mkdir = f"mkdir -p {config_dir}"
@@ -329,7 +329,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # More thorough port cleanup
                 ctrl_port = self.config["WAFL_DEVICE_CTRL_PORT"]
@@ -689,7 +689,7 @@ class ControlServer:
         """Load environment variables from shell script file using subprocess."""
         try:
             cmd = f"bash -c 'source {config_path} && env'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=30)
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=10)
 
             env_count = 0
             for line in result.stdout.strip().split("\n"):
@@ -788,7 +788,7 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: Dict[str, int], wafl_phase_params: Dict[str, Any], contact_pattern: str):
+    def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
 
@@ -805,7 +805,7 @@ class ControlServer:
             self.logger.info("📋 Phase 0: Creating agents and deploying configurations")
             experiment_parameters = {
                 "epochs": epochs,
-                "wafl_phase_params": wafl_phase_params,
+                "wafl_phase": wafl_phase,
                 "contact_pattern": contact_pattern,
             }
 
@@ -1003,7 +1003,7 @@ if __name__ == "__main__":
             exit(1)
 
         # Validate required parameters
-        required_params = ["epochs", "contact_pattern", "wafl_phase_params"]
+        required_params = ["epochs", "contact_pattern", "wafl_phase"]
         missing_params = [param for param in required_params if param not in experiment_parameters]
 
         if missing_params:
@@ -1015,7 +1015,7 @@ if __name__ == "__main__":
 
         print(f"🚀 Starting experiment with {epochs_self} SELF epochs and {epochs_wafl} WAFL epochs")
         print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
-        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
+        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase']}")
 
         # Config file path
         CONFIG_PATH = "ctrl/execution_config"
@@ -1026,7 +1026,7 @@ if __name__ == "__main__":
         # Run experiment
         controller.run_experiment(
             epochs={"self": epochs_self, "wafl": epochs_wafl},
-            wafl_phase_params=experiment_parameters["wafl_phase_params"],
+            wafl_phase=experiment_parameters["wafl_phase"],
             contact_pattern=experiment_parameters["contact_pattern"],
         )
 

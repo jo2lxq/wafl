@@ -43,14 +43,6 @@ class ModelLearningUtils:
     CONFIG FILE: PROJECT/config/config_local.json
     """
 
-    # Hyperparameter configuration
-    # The hyperparameter values supplied by the config file will take precedence.
-    # Such variables have been defined here to ensure consistency with the original
-    # WAFL-MLP project.
-    cBATCH_SIZE = 32  # default 32
-    cLEARNING_RATE = 0.001  # default 0.001
-    cFL_COEFFICIENCY = 1.0  # default 1.0  (WAFL's aggregation co efficiency)
-
     def __init__(
         self,
         dataset_path: str,
@@ -59,6 +51,7 @@ class ModelLearningUtils:
         model_sharing: ModelSharingUtils,
         ctrl_tcp: CTRL_TCP,
         experiment_id,
+        wafl_phase_params: dict,
     ) -> None:
         """
         Initialize the learning process instance.
@@ -72,11 +65,12 @@ class ModelLearningUtils:
             test_dataset = pickle.load(f)
         self.model_sharing = model_sharing
         self.ctrl_tcp = ctrl_tcp
+        self.wafl_phase_params = wafl_phase_params
         self.train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
+            train_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2
         )
         self.test_loader = torch.utils.data.DataLoader(
-            test_dataset, batch_size=ModelLearningUtils.cBATCH_SIZE, shuffle=False, num_workers=2
+            test_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2
         )
         self.logger = logging.getLogger("ModelLearningUtils")
         self.model_instance_path = model_instance_path
@@ -89,7 +83,7 @@ class ModelLearningUtils:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = Net().to(self.device)
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.net.parameters(), lr=ModelLearningUtils.cLEARNING_RATE)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=self.wafl_phase_params["learning_rate"])
         self.experiment_id = experiment_id
         self.csv_file_path = f"./results/{self.experiment_id}/learning-data.csv"
         os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
@@ -185,7 +179,7 @@ class ModelLearningUtils:
                 received_model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
-                    local_model[key] += model_difference * self.cFL_COEFFICIENCY / (n_nbr + 1)
+                    local_model[key] += model_difference * self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
             self.net.load_state_dict(local_model)
             SELF_LEARN_FLAG = True
             if n_nbr:
@@ -264,7 +258,7 @@ class ModelSharingUtils:
 
     cMDLREQ = "MDLREQ"
 
-    def __init__(self, index: int, name: str, addr: str, port: int, timeout: float = 10.0) -> None:
+    def __init__(self, index: int, name: str, addr: str, port: int, timeout: float) -> None:
         """
         Initialize the instance attributes.
         """
@@ -582,6 +576,14 @@ class CTRL_TCP:
             if not isinstance(self.p2p_port, int):
                 self.logger.error("Invalid format for 'wafl_devices.p2p_port' in JSON. Integer required.")
                 return False
+            experiment_parameters = config_data.get("experiment_parameters")
+            self.wafl_phase_params = experiment_parameters.get("wafl_phase")
+            if not isinstance(self.wafl_phase_params, dict):
+                self.logger.error("Invalid format for 'wafl_phase_params' in JSON. Dictionary required.")
+                return False
+            for key in ["batch_size", "learning_rate", "coefficiency"]:
+                if key not in self.wafl_phase_params:
+                    raise ValueError(f"Missing required key '{key}' in wafl_phase_params")
             self.timeout = 10.0  # dummy
             if not isinstance(self.timeout, float):
                 self.logger.error("Invalid format for 'wafl_devices.timeout' in JSON. Float required.")
@@ -624,9 +626,12 @@ class CTRL_TCP:
             raise ValueError(f"Could not find IP address for device: {device_name}")
         if self.p2p_port is None:
             raise ValueError("P2P port is not properly configured")
+        if self.timeout is None:
+            raise ValueError("Timeout is not properly configured")
+
         model_dir = f"./results/{self.experiment_id}"
         os.makedirs(model_dir, exist_ok=True)
-        self.model_sharing = ModelSharingUtils(agent_index, device_name, device_ip, self.p2p_port, 10.0)
+        self.model_sharing = ModelSharingUtils(agent_index, device_name, device_ip, self.p2p_port, self.timeout)
         self.model_learning = ModelLearningUtils(
             "./dataset",
             f"./results/{self.experiment_id}/model_instance.pth",
@@ -634,6 +639,7 @@ class CTRL_TCP:
             self.model_sharing,
             self,
             self.experiment_id,
+            self.wafl_phase_params,
         )
 
     def _receive_command(self, conn: socket.socket) -> Optional[str]:
