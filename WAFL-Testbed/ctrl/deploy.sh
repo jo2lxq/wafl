@@ -23,11 +23,11 @@ rm -f "$LOGFILE" 2>/dev/null || true
 rm -f "$TARGET_PATH/results/.deploy/wafl"*.log 2>/dev/null || true
 
 # Importing the environment variables
-if [ ! -f "$TARGET_PATH/ctrl/wafl_execution_base_config" ]; then
-    echo "❌ Error: Configuration file not found: $TARGET_PATH/ctrl/wafl_execution_base_config"
+if [ ! -f "$TARGET_PATH/ctrl/execution_config" ]; then
+    echo "❌ Error: Configuration file not found: $TARGET_PATH/ctrl/execution_config"
     exit 1
 fi
-source "$TARGET_PATH/ctrl/wafl_execution_base_config"
+source "$TARGET_PATH/ctrl/execution_config"
 
 # Validate required environment variables
 if [ -z "$DEPLOYMENT_LOCATION" ] || [ -z "$USER" ]; then
@@ -107,19 +107,19 @@ deploy_to_device() {
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src" &&
 
     # The Base Configuration shell script is also sent to the execution servers
-    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/wafl_execution_base_config" \
+    scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/execution_config" \
     "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
 
     # Check and send pyproject.toml and uv.lock if they exist
-    if [ -f "$TARGET_PATH/ctrl/pyproject.toml" ] && [ -f "$TARGET_PATH/ctrl/uv.lock" ]; then
+    if [ -f "$TARGET_PATH/pyproject.toml" ] && [ -f "$TARGET_PATH/uv.lock" ]; then
         echo "[wafl$device_name] 📦 Sending Python project files..." | tee -a "$device_logfile"
-        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/pyproject.toml" \
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/pyproject.toml" \
         "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" &&
-        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/ctrl/uv.lock" \
+        scp $SSH_OPTS $MUX_OPTS -r -q "$TARGET_PATH/uv.lock" \
         "$host:$DEPLOYMENT_LOCATION/$TARGET_NAME" ||
         { echo "[wafl$device_name] ⚠️ Warning: Failed to send Python project files" | tee -a "$device_logfile"; }
     else
-        echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found in ctrl directory" | tee -a "$device_logfile"
+        echo "[wafl$device_name] ⚠️ Warning: pyproject.toml or uv.lock not found" | tee -a "$device_logfile"
     fi &&
     
     # Setup Python virtual environment and install packages with uv

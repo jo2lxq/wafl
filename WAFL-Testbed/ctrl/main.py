@@ -15,7 +15,8 @@ class WaflAgent:
     Represents each execution server (WAFL device) and manages communication.
 
     Attributes:
-        name (str): Device name (e.g., "0", "1")
+        agent_index (int): Device index (e.g., 0, 1)
+        name (str): Device name (e.g., "100", "101")
         ip (str): IP address
         ctrl_port (int): Control TCP port number
         status (str): Current status ("UNKNOWN", "READY", "RUNNING", "DONE", "ERROR", "TERMINATED")
@@ -24,6 +25,7 @@ class WaflAgent:
 
     def __init__(
         self,
+        agent_index: int,
         device_name: str,
         ip_address: str,
         ctrl_port: int,
@@ -31,6 +33,7 @@ class WaflAgent:
         experiment_parameters: Dict[str, Any],
         timeout: int = 10,
     ):
+        self.agent_index = agent_index
         self.name = device_name
         self.ip = ip_address
         self.ctrl_port = ctrl_port
@@ -56,6 +59,7 @@ class WaflAgent:
 
         unified_config = {
             "agent_info": {
+                "index": self.agent_index,
                 "device_name": self.name,
                 "ip_address": self.ip,
             },
@@ -72,7 +76,7 @@ class WaflAgent:
             },
             "experiment_parameters": {
                 "epochs": experiment_parameters.get("epochs"),
-                "wafl_phase_params": experiment_parameters.get("wafl_phase_params", {}),
+                "wafl_phase": experiment_parameters.get("wafl_phase", {}),
             },
             "runtime": {
                 "log_level": os.environ.get("LOG_LEVEL", "INFO"),
@@ -110,7 +114,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # Ensure config directory exists
                 command_mkdir = f"mkdir -p {config_dir}"
@@ -242,7 +246,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # Create config directory
                 command_mkdir = f"mkdir -p {config_dir}"
@@ -325,7 +329,7 @@ class WaflAgent:
 
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=30)
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
 
                 # More thorough port cleanup
                 ctrl_port = self.config["WAFL_DEVICE_CTRL_PORT"]
@@ -685,7 +689,7 @@ class ControlServer:
         """Load environment variables from shell script file using subprocess."""
         try:
             cmd = f"bash -c 'source {config_path} && env'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=30)
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=10)
 
             env_count = 0
             for line in result.stdout.strip().split("\n"):
@@ -732,14 +736,24 @@ class ControlServer:
         experiment_parameters["results_dir"] = self.results_dir
 
         failed_agents = []
+        agent_index = 0
         for name, ip in zip(names, ips):
             try:
-                agent = WaflAgent(name, ip, port, self.config, experiment_parameters)
+                agent = WaflAgent(
+                    agent_index=agent_index,
+                    device_name=name,
+                    ip_address=ip,
+                    ctrl_port=port,
+                    config=self.config,
+                    experiment_parameters=experiment_parameters,
+                )
                 agents.append(agent)
                 self.logger.info(f"🤖 Created and configured agent '{name}' for {ip}:{port}")
             except Exception as e:
                 self.logger.error(f"💥 Failed to create agent '{name}': {e}")
                 failed_agents.append(name)
+            finally:
+                agent_index += 1
 
         if failed_agents:
             raise RuntimeError(f"❌ Failed to create agents: {', '.join(failed_agents)}")
@@ -750,7 +764,7 @@ class ControlServer:
     def _setup_logging(self):
         """Setup experiment logging to file and console."""
         try:
-            log_file = os.path.join(self.results_dir, "control-server_output.log")
+            log_file = os.path.join(self.results_dir, "ctrl_output.log")
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
             # Clear any existing handlers to avoid duplicate logs
@@ -774,7 +788,7 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: Dict[str, int], wafl_phase_params: Dict[str, Any], contact_pattern: str):
+    def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
 
@@ -791,7 +805,7 @@ class ControlServer:
             self.logger.info("📋 Phase 0: Creating agents and deploying configurations")
             experiment_parameters = {
                 "epochs": epochs,
-                "wafl_phase_params": wafl_phase_params,
+                "wafl_phase": wafl_phase,
                 "contact_pattern": contact_pattern,
             }
 
@@ -989,7 +1003,7 @@ if __name__ == "__main__":
             exit(1)
 
         # Validate required parameters
-        required_params = ["epochs", "contact_pattern", "wafl_phase_params"]
+        required_params = ["epochs", "contact_pattern", "wafl_phase"]
         missing_params = [param for param in required_params if param not in experiment_parameters]
 
         if missing_params:
@@ -1001,10 +1015,10 @@ if __name__ == "__main__":
 
         print(f"🚀 Starting experiment with {epochs_self} SELF epochs and {epochs_wafl} WAFL epochs")
         print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
-        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase_params']}")
+        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase']}")
 
         # Config file path
-        CONFIG_PATH = "ctrl/wafl_execution_base_config"
+        CONFIG_PATH = "ctrl/execution_config"
 
         # Create ControlServer instance
         controller = ControlServer(config_path=CONFIG_PATH)
@@ -1012,7 +1026,7 @@ if __name__ == "__main__":
         # Run experiment
         controller.run_experiment(
             epochs={"self": epochs_self, "wafl": epochs_wafl},
-            wafl_phase_params=experiment_parameters["wafl_phase_params"],
+            wafl_phase=experiment_parameters["wafl_phase"],
             contact_pattern=experiment_parameters["contact_pattern"],
         )
 

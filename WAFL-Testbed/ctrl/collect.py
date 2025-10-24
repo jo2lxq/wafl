@@ -12,7 +12,7 @@ This script collects experiment artifacts from each WAFL execution server
 and copies them to the control server.
 
 # Prerequisites:
-1.  This script is in the same directory as `wafl_execution_base_config`.
+1.  This script is in the same directory as `execution_config`.
 2.  Passwordless SSH access is configured from the control server to all
     execution servers (e.g., using public key authentication).
 3.  The `scp` command is available and in the system's PATH.
@@ -41,7 +41,7 @@ def get_project_paths() -> Tuple[str, str, str]:
         ctrl_dir = os.path.dirname(script_path)
         project_root_path = os.path.dirname(ctrl_dir)
         project_name = os.path.basename(project_root_path)
-        config_path = os.path.join(ctrl_dir, "wafl_execution_base_config")
+        config_path = os.path.join(ctrl_dir, "execution_config")
         return project_name, project_root_path, config_path
     except Exception as e:
         print(f"Error: Could not determine project paths: {e}", file=sys.stderr)
@@ -51,7 +51,7 @@ def get_project_paths() -> Tuple[str, str, str]:
 
 def get_config_from_file(config_path: str) -> Dict[str, str]:
     """
-    Parses the `wafl_execution_base_config` file into a dictionary.
+    Parses the `execution_config` file into a dictionary.
 
     Args:
         config_path: The path to the configuration file.

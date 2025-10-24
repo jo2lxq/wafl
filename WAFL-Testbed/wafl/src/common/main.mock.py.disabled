@@ -85,7 +85,7 @@ class ExecutionServer:
         """Load config file (.wafl_execution_config_base)."""
         print(f"📝 Loading config file {config_path}")
 
-        # run source wafl_execution_base_config
+        # run source execution_config
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
