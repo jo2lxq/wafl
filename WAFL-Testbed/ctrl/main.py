@@ -135,11 +135,11 @@ class WaflAgent:
                     {"content": config_json, "filename": "config.json", "description": "agent configuration"}
                 )
 
-                # 2. Contact pattern (optional)
+                # 2. Contact pattern
                 contact_pattern = experiment_parameters.get("contact_pattern")
                 if contact_pattern is None:
                     raise ValueError("contact_pattern cannot be None")
-                contact_pattern_path = os.path.join("ctrl", "contact_pattern", contact_pattern)
+                contact_pattern_path = os.path.join("data", "contact_pattern", contact_pattern)
 
                 if not os.path.exists(contact_pattern_path):
                     raise FileNotFoundError(f"Contact pattern file not found: {contact_pattern_path}")

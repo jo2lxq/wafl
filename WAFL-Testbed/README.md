@@ -86,23 +86,27 @@ Select interpreter: `Ctrl+Shift+P` → "Python: Select Interpreter" → `.venv/b
 
 ```
 WAFL-Testbed/
-├── mise.toml                   # mise configuration
-├── pyproject.toml              # Python project config
-├── .env                        # Environment variables (not in git)
-├── .env.sample                 # Environment variables template
-├── ctrl/                       # Control server scripts
-│   ├── main.py                 # Main control script
-│   ├── deploy.sh               # Deployment script
-│   ├── collect.py              # Result collection
-│   ├── analyze.py              # Result analysis
-│   ├── generate_datasets.py    # Dataset splitting
-│   ├── parameters.json         # Experiment parameters
-│   ├── execution_config        # Experiment execution config (not in git)
+├── mise.toml                         # mise configuration
+├── pyproject.toml                    # Python project config
+├── .env                              # Environment variables (not in git)
+├── .env.sample                       # Environment variables template
+├── utils/                            # Utility scripts
+│   ├── execution_config              # Experiment execution config (not in git)
+│   ├── generate_contact_patterns.py  # Contact pattern generation
+│   ├── generate_nonIID_filters.py    # Non-IID filter generation
+│   └── generate_datasets.py          # Dataset splitting
+├── ctrl/                             # Control server scripts
+│   ├── main.py                       # Main control script
+│   ├── deploy.sh                     # Deployment script
+│   ├── collect.py                    # Result collection
+│   ├── analyze.py                    # Result analysis
+│   ├── parameters.json               # Experiment parameters
+│   ├── execution_config              # Experiment execution config (not in git)
 │   └── contact_pattern/
-├── wafl/                       # Execution server code
+├── wafl/                             # Execution server code
 │   ├── dataset/
-│   │   ├── common/             # Common data for all devices
-│   │   └── 0/, 1/, .../        # Device-specific data
+│   │   ├── common/                   # Common data for all devices
+│   │   └── 0/, 1/, .../              # Device-specific data
 │   ├── config/
 │   │   ├── common/
 │   │   └── 0/, 1/, .../
@@ -111,8 +115,8 @@ WAFL-Testbed/
 │       │   ├── main.py
 │       │   └── net.py
 │       └── 0/, 1/, .../
-├── data/                       # Local data storage
-└── results/                    # Experiment results
+├── data/                             # Local data storage
+└── results/                          # Experiment results
 ```
 
 **Note:** `wafl/` uses `common/` for shared files and `[device_name]/` for device-specific files. During deployment, `common/` files are deployed to all devices, then device-specific files override as needed.
@@ -123,8 +127,8 @@ WAFL-Testbed/
 
 ```bash
 source .venv/bin/activate
-cd ctrl
-python generate_datasets.py
+python utils/generate_nonIID_filters.py
+python utils/generate_datasets.py
 ```
 
 ### Run Experiment
