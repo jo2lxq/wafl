@@ -133,9 +133,17 @@ Edit `ctrl/parameters.json`:
 
 ```json
 {
-  "epochs": {"self": 64, "wafl": 5120},
+  "epochs": {
+    "self": 64,
+    "wafl": 5120
+  },
   "contact_pattern": "rwp_n10_a0500_r100_p10_s01.json",
-  "wafl_phase_params": {"aggregation_strategy": "FedAvg"}
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  }
 }
 ```
 
