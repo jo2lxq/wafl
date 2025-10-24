@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 
-def snapshot(x, y, t, areasize, radio_range, animation_dir):
+def snapshot(x, y, t, areasize, radio_range, images_dir, title=""):
     """Generate snapshot visualization of node positions and connections."""
     plt.clf()
     plt.scatter(x, y, s=20, c="Black", marker="o")
@@ -35,7 +35,9 @@ def snapshot(x, y, t, areasize, radio_range, animation_dir):
     plt.gca().set_aspect("equal")
     plt.xlabel("X")
     plt.ylabel("Y")
-    plt.savefig(os.path.join(animation_dir, f"node_location_{t:04d}.png"))
+    if title:
+        plt.title(title, fontsize=12)
+    plt.savefig(os.path.join(images_dir, f"node_location_{t:04d}.png"))
 
 
 def trajectory(x, y, start, end, areasize, trajectory_dir):
@@ -91,21 +93,17 @@ def generate_contact_pattern(
     filename = f"rwp_n{n_node:02d}_a{areasize:04d}_r{radio_range:03d}_p{pose_time:02d}_s{randomseed:02d}"
 
     # Create subdirectory for this contact pattern
-    animation_dir = os.path.join(
-        output_dir,
-        "animation",
-        filename,
-    )
-    trajectory_dir = os.path.join(
-        output_dir,
-        "trajectory",
-        filename,
-    )
+    images_dir = os.path.join(output_dir, "images")
+    # trajectory_dir = os.path.join(
+    #     output_dir,
+    #     "trajectory",
+    #     filename,
+    # )
 
-    if not os.path.exists(animation_dir):
-        os.makedirs(animation_dir)
-    if not os.path.exists(trajectory_dir):
-        os.makedirs(trajectory_dir)
+    if not os.path.exists(images_dir):
+        os.makedirs(images_dir)
+    # if not os.path.exists(trajectory_dir):
+    #     os.makedirs(trajectory_dir)
 
     x_trajectory = [[] for i in range(n_node)]
     y_trajectory = [[] for i in range(n_node)]
@@ -124,8 +122,9 @@ def generate_contact_pattern(
                 x_trajectory[i].append(x)
                 y_trajectory[i].append(y)
 
-            snapshot_path = os.path.join(animation_dir, f"node_location_{t:04d}.png")
-            snapshot(px, py, t, areasize, radio_range, animation_dir)
+            snapshot_path = os.path.join(images_dir, f"node_location_{t:04d}.png")
+            title = f"{filename} | Epoch: {t}"
+            snapshot(px, py, t, areasize, radio_range, images_dir, title)
             animation_frames.append(snapshot_path)
 
             # Generate trajectory every 100 steps
@@ -184,7 +183,7 @@ def generate_contact_pattern(
 
     # Generate GIF animation if animation is enabled
     if generate_animation and animation_frames:
-        gif_path = os.path.join(animation_dir, "animation.gif")
+        gif_path = os.path.join(output_dir, f"{filename}.gif")
         images = []
         # Sample frames to reduce GIF size (e.g., every 10th frame)
         sampled_frames = animation_frames[::10] if len(animation_frames) > 100 else animation_frames
@@ -196,28 +195,33 @@ def generate_contact_pattern(
                 gif_path,
                 save_all=True,
                 append_images=images[1:],
-                duration=100,  # milliseconds per frame
+                duration=200,
                 loop=0,
             )
             print(f"GIF animation saved to {gif_path}")
+
+            # Delete individual frame images
+            for frame_path in animation_frames:
+                if os.path.exists(frame_path):
+                    os.remove(frame_path)
+            os.rmdir(images_dir)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate contact pattern using Random Waypoint mobility model")
     parser.add_argument("--times", type=int, default=5000, help="Number of time steps (default: 5000)")
-    parser.add_argument("--nodes", type=int, default=10, help="Number of nodes (default: 10)")
+    parser.add_argument("--nodes", type=int, nargs="+", default=[10], help="Number of nodes (default: 10)")
     parser.add_argument("--min-speed", type=float, default=3, help="Minimum travel speed (default: 3)")
     parser.add_argument("--max-speed", type=float, default=7, help="Maximum travel speed (default: 7)")
     parser.add_argument("--radio-range", type=int, default=100, help="Radio range (default: 100)")
     parser.add_argument(
         "--pose-time",
         type=int,
-        nargs="+",
-        default=[10, 40, 100],
-        help="Pose time values (default: 10 40 100)",
+        default=10,
+        help="Pose time (default: 10)",
     )
-    parser.add_argument("--areasize", type=int, nargs="+", default=[500], help="Area size values (default: 500)")
-    parser.add_argument("--randomseed", type=int, nargs="+", default=[1], help="Random seed values (default: 1)")
+    parser.add_argument("--areasize", type=int, default=500, help="Area size (default: 500)")
+    parser.add_argument("--randomseed", type=int, default=1, help="Random seed (default: 1)")
     parser.add_argument(
         "--output-dir",
         type=str,
@@ -246,24 +250,29 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    # Generate contact patterns for all parameter combinations
-    parameters = []
-    for areasize in args.areasize:
-        for pose_time in args.pose_time:
-            for randomseed in args.randomseed:
-                parameters.append((areasize, pose_time, randomseed))
+    # Generate contact patterns for all node configurations
+    for n_node in args.nodes:
+        print("\nGenerating contact pattern with parameters:")
+        print(f"  times: {args.times}")
+        print(f"  nodes: {n_node}")
+        print(f"  min_speed: {args.min_speed}")
+        print(f"  max_speed: {args.max_speed}")
+        print(f"  radio_range: {args.radio_range}")
+        print(f"  areasize: {args.areasize}")
+        print(f"  pose_time: {args.pose_time}")
+        print(f"  randomseed: {args.randomseed}")
+        print(f"  animation: {args.animation}")
+        print(f"  output_dir: {args.output_dir}")
 
-    for areasize, pose_time, randomseed in parameters:
-        print(f"\nGenerating contact pattern: areasize={areasize}, pose_time={pose_time}, randomseed={randomseed}")
         generate_contact_pattern(
             args.times,
-            args.nodes,
+            n_node,
             args.min_speed,
             args.max_speed,
             args.radio_range,
-            areasize,
-            pose_time,
-            randomseed,
+            args.areasize,
+            args.pose_time,
+            args.randomseed,
             args.output_dir,
             args.animation,
         )
