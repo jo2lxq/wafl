@@ -91,7 +91,6 @@ WAFL-Testbed/
 ├── .env                              # Environment variables (not in git)
 ├── .env.sample                       # Environment variables template
 ├── utils/                            # Utility scripts
-│   ├── execution_config              # Experiment execution config (not in git)
 │   ├── generate_contact_patterns.py  # Contact pattern generation
 │   ├── generate_nonIID_filters.py    # Non-IID filter generation
 │   └── generate_datasets.py          # Dataset splitting
