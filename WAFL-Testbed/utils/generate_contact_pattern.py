@@ -185,8 +185,7 @@ def generate_contact_pattern(
     if generate_animation and animation_frames:
         gif_path = os.path.join(output_dir, f"{filename}.gif")
         images = []
-        # Sample frames to reduce GIF size (e.g., every 10th frame)
-        sampled_frames = animation_frames[::10] if len(animation_frames) > 100 else animation_frames
+        sampled_frames = animation_frames[:256] if len(animation_frames) > 256 else animation_frames
         for frame_path in sampled_frames:
             images.append(Image.open(frame_path))
 
@@ -195,7 +194,7 @@ def generate_contact_pattern(
                 gif_path,
                 save_all=True,
                 append_images=images[1:],
-                duration=200,
+                duration=100,
                 loop=0,
             )
             print(f"GIF animation saved to {gif_path}")
