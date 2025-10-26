@@ -81,7 +81,7 @@ def generate_contact_pattern(
 
     # Main simulation loop
     for t in tqdm(range(n_time), desc="Simulating time steps", unit="step"):
-        if generate_animation:
+        if generate_animation and t < 256:
             px, py = zip(*node_location)
             title = f"{filename} | Epoch: {t}"
             snapshot(px, py, t, areasize, radio_range, images_dir, title)
