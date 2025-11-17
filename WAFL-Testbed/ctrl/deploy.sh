@@ -104,6 +104,7 @@ deploy_to_device() {
         rm -rf $DEPLOYMENT_LOCATION/$TARGET_NAME/src; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/dataset; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/config; \
+        mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/results; \
         mkdir -p $DEPLOYMENT_LOCATION/$TARGET_NAME/src" &&
 
     # The Base Configuration shell script is also sent to the execution servers
@@ -129,6 +130,7 @@ deploy_to_device() {
         { echo '📥 uv not found, installing uv...' && \
         curl -LsSf https://astral.sh/uv/install.sh | sh && \
         export PATH=\"\$HOME/.local/bin:\$PATH\"; }; } && \
+        export UV_HTTP_TIMEOUT=3600 && \
         { ~/.local/bin/uv venv .venv --clear && \
         source .venv/bin/activate && \
         ~/.local/bin/uv sync || true; }" &&
