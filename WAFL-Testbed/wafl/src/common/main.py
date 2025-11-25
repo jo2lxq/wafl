@@ -9,13 +9,16 @@ import pickle
 import socket
 import threading
 import time
-import zlib
 from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from compression_manager import CompressionManager
+from logger import MetricsLogger
+from monitor_resource import monitor
 from net import Net
+from udp_model_sharing import UDPModelSharing
 
 
 class PickledDataset(torch.utils.data.Dataset):
@@ -66,12 +69,8 @@ class ModelLearningUtils:
         self.model_sharing = model_sharing
         self.ctrl_tcp = ctrl_tcp
         self.wafl_phase_params = wafl_phase_params
-        self.train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2
-        )
-        self.test_loader = torch.utils.data.DataLoader(
-            test_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2
-        )
+        self.train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2)
+        self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2)
         self.logger = logging.getLogger("ModelLearningUtils")
         self.model_instance_path = model_instance_path
         with open(contact_pattern_path, "r") as f:
@@ -95,6 +94,35 @@ class ModelLearningUtils:
         self.train_loss = 0
         self.train_accuracy = 0
         self.epoch_number = 0
+        self.stop_requested = False
+
+        # SSP metrics tracking
+        self.epoch_start_time = None
+        self.batches_processed = 0
+        self.current_gradient_norm = 0.0
+
+    def stop_current_epoch(self) -> dict:
+        """Stops the current learning epoch immediately and returns wasted metrics.
+
+        Returns:
+            dict: Contains 'wasted_ms' and 'wasted_norm' for SSP logging
+        """
+        self.stop_requested = True
+        self.logger.info("🛑 Stop requested for current epoch (SSP Reset).")
+
+        # Calculate wasted metrics
+        wasted_ms = 0.0
+        if self.epoch_start_time is not None:
+            wasted_ms = (time.time() - self.epoch_start_time) * 1000
+
+        wasted_metrics = {
+            "wasted_ms": wasted_ms,
+            "wasted_norm": self.current_gradient_norm,
+            "batches_processed": self.batches_processed,
+        }
+
+        self.logger.info(f"⚠️ SSP Reset: Wasted {wasted_ms:.2f}ms, {self.batches_processed} batches, gradient_norm={self.current_gradient_norm:.6f}")
+        return wasted_metrics
 
     def get_neighbour_list(self, five_digit_number_str: str = "99999") -> List[int]:
         """
@@ -114,6 +142,13 @@ class ModelLearningUtils:
         if not WAFL_LEARN:
             self.logger.info(f"🧠 Beginning the Self-Learning Epoch: {five_digit_number_str}")
         SUCCESS = False
+
+        # Reset SSP tracking
+        self.stop_requested = False
+        self.epoch_start_time = time.time()
+        self.batches_processed = 0
+        self.current_gradient_norm = 0.0
+
         try:
             running_loss = 0.0
             total_loss = 0.0
@@ -128,17 +163,31 @@ class ModelLearningUtils:
                 y_output = self.net(x_train)
                 loss = self.criterion(y_output, y_train)
                 loss.backward()
+
+                # Track gradient norm for SSP wasted computation
+                total_norm = 0.0
+                for p in self.net.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                self.current_gradient_norm = total_norm**0.5
+
                 self.optimizer.step()
                 batch_loss = loss.item()
                 running_loss += batch_loss
                 total_loss += batch_loss
                 num_batches += 1
+                self.batches_processed = num_batches
                 _, predicted = torch.max(y_output.data, 1)
                 total_train += y_train.size(0)
                 correct_train += (predicted == y_train).sum().item()
                 if (i + 1) % 50 == 0:
                     self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
+
+                if self.stop_requested:
+                    self.logger.warning("⚠️ Epoch interrupted by stop request (SSP Reset).")
+                    return False
             self.train_loss = total_loss / num_batches if num_batches > 0 else 0.0
             self.train_accuracy = correct_train / total_train if total_train > 0 else 0.0
             if not WAFL_LEARN:
@@ -149,6 +198,18 @@ class ModelLearningUtils:
             self.logger.info(f"📉 Test Loss: {test_loss:.4f}")
             self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
             self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
+
+            # Log to structured logger
+            self.ctrl_tcp.metrics_logger.log(
+                "epoch_complete",
+                epoch=self.epoch_number,
+                train_acc=self.train_accuracy,
+                train_loss=self.train_loss,
+                test_acc=test_accuracy,
+                test_loss=test_loss,
+                phase="SELF",
+            )
+
             self.epoch_number += 1
             torch.save(
                 self.net.state_dict(),
@@ -192,6 +253,18 @@ class ModelLearningUtils:
                 self.logger.info(f"📉 Test Loss (no exchange): {test_loss:.4f}")
                 self.logger.info(f"📈 Test Accuracy (no exchange): {test_accuracy:.4f}")
                 self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
+
+                # Log to structured logger
+                self.ctrl_tcp.metrics_logger.log(
+                    "epoch_complete",
+                    epoch=self.epoch_number,
+                    train_acc=self.train_accuracy,
+                    train_loss=self.train_loss,
+                    test_acc=test_accuracy,
+                    test_loss=test_loss,
+                    phase="WAFL",
+                )
+
                 self.epoch_number += 1
                 torch.save(
                     self.net.state_dict(),
@@ -234,18 +307,14 @@ class ModelLearningUtils:
         self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")
         return avg_test_loss, accuracy
 
-    def _save_results_to_csv(
-        self, epoch_str: int, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float
-    ):
+    def _save_results_to_csv(self, epoch_str: int, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float):
         """
         Save training results to CSV file.
         """
         try:
             with open(self.csv_file_path, "a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(
-                    [epoch_str, f"{train_accuracy:.4f}", f"{train_loss:.6f}", f"{test_accuracy:.4f}", f"{test_loss:.6f}"]
-                )
+                writer.writerow([epoch_str, f"{train_accuracy:.4f}", f"{train_loss:.6f}", f"{test_accuracy:.4f}", f"{test_loss:.6f}"])
             self.logger.debug(f"📝 Results saved to CSV for epoch {epoch_str}")
         except Exception as e:
             self.logger.error(f"💥 Failed to save results to CSV: {e}")
@@ -273,9 +342,59 @@ class ModelSharingUtils:
         self.timeout = timeout
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.info("Initialized the Model Sharing Utils instance.")
+
+        # Load method settings from parameters.json
+        try:
+            with open("ctrl/parameters.json", "r") as f:
+                params = json.load(f)
+                method_config = params.get("method", {})
+                udp_config = method_config.get("udp", {})
+                comp_config = method_config.get("compression", {})
+
+                self.udp_enabled = udp_config.get("enabled", False)
+                self.udp_fec_m = udp_config.get("fec_m", 9)
+
+                self.compression_enabled = comp_config.get("enabled", False)
+                self.initial_comp_method = comp_config.get("initial_method", "zlib")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to load method settings from parameters.json: {e}. Using defaults.")
+            self.udp_enabled = False
+            self.udp_fec_m = 9
+            self.compression_enabled = False
+            self.initial_comp_method = "zlib"
+
+        # Initialize UDP and Compression
+        if self.udp_enabled:
+            self.logger.info(f"🚀 UDP Enabled (FEC M={self.udp_fec_m})")
+            self.udp_sharing = UDPModelSharing(self.addr, self.port, fec_m=self.udp_fec_m)
+            # Start listener callback
+            self.udp_sharing.start_listener(self._on_udp_model_received)
+        else:
+            self.logger.info("UDP Disabled")
+            self.udp_sharing = None
+
+        if self.compression_enabled:
+            self.logger.info(f"🗜️ Compression Enabled (Initial: {self.initial_comp_method})")
+            self.compression_manager = CompressionManager(initial_method=self.initial_comp_method)
+        else:
+            self.logger.info("Compression Disabled")
+            self.compression_manager = None
+
+        # UDP Received models buffer
+        self.received_models = {}  # {ip: data}
+        self.received_models_lock = threading.Lock()
+
         self.listener_thread = threading.Thread(target=self._socket_listener_thread, daemon=False, name="P2P_Listener")
         self.listener_thread.start()
-        self.logger.info("🚀 Launched the P2P Transfer Thread.")
+
+        self.logger.info("🚀 Launched the P2P Transfer Threads (TCP & UDP).")
+
+    def _on_udp_model_received(self, data: bytes, source_ip: str):
+        """Callback for UDP model reception."""
+        self.logger.info(f"📦 Received UDP model from {source_ip} ({len(data)} bytes)")
+        with self.received_models_lock:
+            self.received_models[source_ip] = data
 
     def _serialize_model(self, LE_model: Any) -> bytes:
         """
@@ -285,6 +404,10 @@ class ModelSharingUtils:
         self.logger.debug("🔢 Serializing the model for transfer.")
         try:
             serialized_output = pickle.dumps(LE_model)
+            # Apply compression if enabled
+            if self.compression_manager:
+                compressed_output = self.compression_manager.compress(serialized_output)
+                return compressed_output
             return serialized_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
@@ -297,35 +420,13 @@ class ModelSharingUtils:
         """
         self.logger.debug("🔢 De-serializing the received model.")
         try:
-            deserialized_output = pickle.loads(SR_model)
+            # Decompress if enabled
+            if self.compression_manager:
+                decompressed_data = self.compression_manager.decompress(SR_model)
+                deserialized_output = pickle.loads(decompressed_data)
+            else:
+                deserialized_output = pickle.loads(SR_model)
             return deserialized_output
-        except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"ERROR"
-
-    def _compress_model(self, LE_model: bytes) -> bytes:
-        """
-        Lossless compression of the WAFL model for transfer.
-        """
-        self.logger.info("📦 Compressing the model for transfer.")
-        try:
-            compressed_output = zlib.compress(LE_model)
-            original_size_megabytes = len(LE_model) / 1e6
-            compressed_size_megabytes = len(compressed_output) / 1e6
-            self.logger.debug(f"🗜️ Compressed from {original_size_megabytes:.2f}MB to {compressed_size_megabytes:.2f}MB.")
-            return compressed_output
-        except Exception as exc:
-            self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
-            return b"ERROR"
-
-    def _decompress_model(self, SR_Model: bytes) -> bytes:
-        """
-        De-compression of the received WAFL model using ZLib.
-        """
-        self.logger.debug("📦 De-compressing the received model.")
-        try:
-            decompressed_output = zlib.decompress(SR_Model)
-            return decompressed_output
         except Exception as exc:
             self.logger.error(f"The following error occurred: {str(exc)[:100]}...")
             return b"ERROR"
@@ -340,18 +441,44 @@ class ModelSharingUtils:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 self.logger.debug(f"📥 Requesting WAFL model from peer: {str(peer_IP)}")
+
+                # Try UDP if enabled
+                if self.udp_enabled and "protocol=udp" not in other_options:
+                    other_options += "&protocol=udp"
+
                 command = f"{ModelSharingUtils.cMDLREQ}:src={self.addr}{other_options}\r\n"
                 s.settimeout(self.timeout)
                 s.connect((peer_IP, self.port))
                 s.sendall(command.encode("utf-8"))
-                data = []
-                while True:
-                    packet = s.recv(4096)
-                    if not packet:
-                        break
-                    data.append(packet)
-            data = b"".join(data)
-            data = self._decompress_model(data)
+
+                # Check response
+                # If UDP, we expect "OK_UDP" or similar, then wait for UDP.
+                # If TCP, we get data directly.
+
+                # Read first chunk to see if it is OK_UDP
+                first_packet = s.recv(4096)
+                if b"OK_UDP" in first_packet:
+                    self.logger.info(f"Waiting for UDP model from {peer_IP}...")
+                    # Wait for UDP data
+                    start_wait = time.time()
+                    while time.time() - start_wait < self.timeout * 2:  # Give more time for UDP
+                        with self.received_models_lock:
+                            if peer_IP in self.received_models:
+                                data = self.received_models.pop(peer_IP)
+                                break
+                        time.sleep(0.1)
+                    else:
+                        raise Exception("UDP RECEIVE TIMEOUT")
+                else:
+                    # TCP fallback or standard TCP
+                    data = [first_packet]
+                    while True:
+                        packet = s.recv(4096)
+                        if not packet:
+                            break
+                        data.append(packet)
+                    data = b"".join(data)
+
             data = self._deserialize_model(data)
             if data == b"ERROR" or data is None:
                 raise Exception("FETCH ERROR")
@@ -370,20 +497,44 @@ class ModelSharingUtils:
         try:
             self.logger.debug("⏳ Preparing the WAFL model data to be dispatched.")
             self.logger.debug(f"🖨️ The received OPTIONS for dispatch: {options}")
+
+            use_udp = "protocol=udp" in options and self.udp_enabled
+
             # OPTIONS-specific processing
             # code should be added here.
             # For now the entire model is dispatched.
             model_data = self.vMODEL_INSTANCE
             if self.vMODEL_INSTANCE_CACHE is None:
                 model_data = self._serialize_model(model_data)
-                model_data = self._compress_model(model_data)
+                # Compression is already applied in _serialize_model
                 self.vMODEL_INSTANCE_CACHE = model_data
             else:
                 model_data = self.vMODEL_INSTANCE_CACHE
+
             if model_data == b"ERROR":
                 self.vMODEL_INSTANCE_CACHE = None
                 raise Exception("DISPATCH ERROR")
-            conn.sendall(model_data)
+
+            if use_udp:
+                # Get peer IP from connection
+                peer_ip = conn.getpeername()[0]
+                self.logger.info(f"📡 Dispatching model via UDP to {peer_ip}")
+                # Send OK via TCP first? Or just send UDP?
+                # Usually we should confirm receipt of request.
+                # But _dispatch_model is called inside the loop.
+                # If we send UDP, we might not send anything on TCP, or send "OK".
+                # But the requester expects data on TCP if not UDP.
+                # If UDP, requester is waiting on UDP.
+                # We should send a small confirmation on TCP.
+                conn.sendall(b"OK_UDP\r\n")
+
+                # Send via UDP
+                success = self.udp_sharing.send_model(model_data, peer_ip, self.port)  # Use same port
+                if not success:
+                    raise Exception("UDP DISPATCH ERROR")
+            else:
+                conn.sendall(model_data)
+
             self.logger.debug("✅ Successfully sent the model data to the peer.")
             return True
         except Exception as exc:
@@ -398,7 +549,7 @@ class ModelSharingUtils:
         Will be run from the __init__() function.
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((self.addr, self.port))
+            s.bind(("0.0.0.0", self.port))
             s.settimeout(self.timeout)
             s.listen()
             self.logger.info(f"🔗 Socket bound at {self.addr}:{self.port} and listening.")
@@ -515,6 +666,19 @@ class CTRL_TCP:
 
         self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
+
+        # Initialize Metrics Logger
+        self.metrics_logger = MetricsLogger(self.experiment_id, self.name)
+
+        # Start Resource Monitor
+        self.monitor_thread = threading.Thread(
+            target=monitor,
+            args=(f"./results/{self.experiment_id}/resources_{self.name}.csv", 1.0),
+            daemon=True,
+            name="ResourceMonitor",
+        )
+        self.monitor_thread.start()
+
         self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
 
     def _load_config(self, config_path: str) -> bool:
@@ -610,9 +774,7 @@ class CTRL_TCP:
         try:
             return self.device_ips[agent_index]
         except IndexError:
-            self.logger.warning(
-                f"Index for agent {agent_index} is out of bounds for the IP list. Data inconsistency might exist."
-            )
+            self.logger.warning(f"Index for agent {agent_index} is out of bounds for the IP list. Data inconsistency might exist.")
             return None
 
     def setup_local_wafl_node(self, agent_index: int, device_name: str) -> None:
@@ -680,7 +842,7 @@ class CTRL_TCP:
         """
         self.logger.info("Waiting for the control server to be ready...")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((self.addr, self.ctrl_port))
+            s.bind(("0.0.0.0", self.ctrl_port))
             s.listen()
             self.logger.info(f"🔗 Socket bound at {self.addr}:{self.ctrl_port} and listening.")
 
@@ -765,6 +927,45 @@ class CTRL_TCP:
                     return False
                 status_response = self._get_status()
                 conn.sendall(status_response.encode("utf-8"))
+                return True
+
+            elif main_command == "FORCE_NEXT":
+                if len(parts) != 1:
+                    self.logger.warning(f"Incorrect form of FORCE_NEXT command: {command_str}")
+                    conn.sendall("ERROR\r\n".encode("utf-8"))
+                    return False
+
+                self.logger.info("⚠️ Received FORCE_NEXT command. Resetting current epoch (SSP Reset).")
+                wasted_metrics = None
+
+                if self.learning_thread and self.learning_thread.is_alive():
+                    if self.model_learning:
+                        # Get wasted metrics before stopping
+                        wasted_metrics = self.model_learning.stop_current_epoch()
+
+                    # Wait for thread to finish
+                    self.learning_thread.join(timeout=10)
+                    if self.learning_thread.is_alive():
+                        self.logger.error("Failed to stop learning thread gracefully.")
+                    else:
+                        self.logger.info("Learning thread stopped successfully.")
+
+                    # Log detailed wasted computation metrics
+                    if wasted_metrics:
+                        self.metrics_logger.log(
+                            "ssp_force_next",
+                            epoch=self.current_epoch_number,
+                            phase=self.current_epoch_type,
+                            wasted_ms=wasted_metrics.get("wasted_ms", 0.0),
+                            wasted_norm=wasted_metrics.get("wasted_norm", 0.0),
+                            batches_processed=wasted_metrics.get("batches_processed", 0),
+                        )
+                        self.logger.info(f"📊 SSP Metrics: wasted_ms={wasted_metrics['wasted_ms']:.2f}, wasted_norm={wasted_metrics['wasted_norm']:.6f}, batches={wasted_metrics['batches_processed']}")
+                    else:
+                        # Fallback logging if metrics not available
+                        self.metrics_logger.log("ssp_force_next", epoch=self.current_epoch_number, phase=self.current_epoch_type)
+
+                conn.sendall("OK\r\n".encode("utf-8"))
                 return True
 
             elif main_command == "BEGIN":

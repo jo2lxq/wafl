@@ -78,13 +78,17 @@ if __name__ == "__main__":
         labels = labels.tolist()
 
         for i in range(batch_size):
+            # Adjust label assignment if n_node > n_output
+            node_label = labels[i] % n_output  # Ensure label is within n_output range
+            target_node = node_label % n_node  # Map label to a node
+
             if random.randint(0, 99) < ratio:
-                indices[labels[i] % n_node].append(index + i)
-                means[labels[i] % n_node] += images[i].mean(dim=(1, 2))
-                stds[labels[i] % n_node] += images[i].std(dim=(1, 2))
+                indices[target_node].append(index + i)
+                means[target_node] += images[i].mean(dim=(1, 2))
+                stds[target_node] += images[i].std(dim=(1, 2))
             else:
                 n = random.randint(0, n_node - 2)
-                if labels[i] <= n:
+                if target_node <= n:
                     n += 1
                 indices[n].append(index + i)
                 means[n] += images[i].mean(dim=(1, 2))

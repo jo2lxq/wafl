@@ -24,22 +24,28 @@ run = [
   "rsync -avz ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/mise setup\"",
+  "rsync -avz ./Dockerfile ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./.dockerignore ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ./ctrl/deploy.sh\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/mise setup\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && bash ctrl/setup.sh\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/deploy.py\"",
 ]
 
 [tasks.start]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/main.py'\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/start_experiment.py && python ctrl/main.py'\"",
 ]
-depends = ["deploy"]
 
-[tasks.analyze]
+[tasks.collect]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/collect.py\"",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ./ctrl/analyze.py\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/collect_results.py\"",
   "rsync -avz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
+]
+
+[tasks.stop]
+run = [
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/cleanup.py\"",
 ]

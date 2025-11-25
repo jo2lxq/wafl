@@ -1,0 +1,79 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+docs/
+*.md
+README.md
+
+# Results and logs
+results/
+*.log
+*.csv
+*.jsonl
+
+# Mise and task runner
+.mise/
+mise.toml
+.env
+
+# Setup scripts (not needed in container)
+ctrl/setup.sh
+
+# Gemini artifacts
+.gemini/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Misc
+*.bak
+*.tmp
+.DS_Store

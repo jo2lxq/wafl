@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import socket
-import subprocess
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -32,11 +31,17 @@ class WaflAgent:
         config: Dict[str, Any],
         experiment_parameters: Dict[str, Any],
         timeout: int = 10,
+        container_ctrl_port: int = None,
+        host_p2p_port: int = None,
+        container_p2p_port: int = None,
     ):
         self.agent_index = agent_index
         self.name = device_name
         self.ip = ip_address
         self.ctrl_port = ctrl_port
+        self.container_ctrl_port = container_ctrl_port or ctrl_port
+        self.host_p2p_port = host_p2p_port or config.get("WAFL_DEVICE_P2P_PORT", 10002)
+        self.container_p2p_port = container_p2p_port or self.host_p2p_port
         self.status = "UNKNOWN"
         self.logger = logging.getLogger(f"WaflAgent-{device_name}")
         self.pid = None
@@ -71,8 +76,8 @@ class WaflAgent:
             "infrastructure": {
                 "device_names": self.config["WAFL_DEVICE_NAMES"],
                 "device_ips": self.config["WAFL_DEVICE_IPS"],
-                "ctrl_port": self.config["WAFL_DEVICE_CTRL_PORT"],
-                "p2p_port": self.config["WAFL_DEVICE_P2P_PORT"],
+                "ctrl_port": self.container_ctrl_port,
+                "p2p_port": self.container_p2p_port,
             },
             "experiment_parameters": {
                 "epochs": experiment_parameters.get("epochs"),
@@ -131,9 +136,7 @@ class WaflAgent:
                 # 1. Agent configuration (always required)
                 unified_config = self._create_unified_config(experiment_parameters)
                 config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
-                files_to_deploy.append(
-                    {"content": config_json, "filename": "config.json", "description": "agent configuration"}
-                )
+                files_to_deploy.append({"content": config_json, "filename": "config.json", "description": "agent configuration"})
 
                 # 2. Contact pattern
                 contact_pattern = experiment_parameters.get("contact_pattern")
@@ -193,9 +196,7 @@ class WaflAgent:
                 if not verification_success:
                     raise RuntimeError("Configuration file verification failed")
 
-                self.logger.info(
-                    f"✅ All configurations deployed successfully to agent {self.name} ({len(deployed_files)} files)"
-                )
+                self.logger.info(f"✅ All configurations deployed successfully to agent {self.name} ({len(deployed_files)} files)")
                 return True
 
         except FileNotFoundError as e:
@@ -240,7 +241,7 @@ class WaflAgent:
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
             config_dir = os.path.join(target_path, "config")
-            config_file_path = os.path.join(config_dir, "config.json")
+            config_file_path = os.path.join(config_dir, f"config_{self.agent_index}.json")
 
             self.logger.debug(f"🔗 Deploying config to {username}@{self.ip}:{config_file_path}")
 
@@ -300,131 +301,32 @@ class WaflAgent:
         Returns:
             bool: True if successful, False otherwise
         """
-        self.logger.info(f"🚀 Starting remote process for experiment '{experiment_id}' on {self.ip}")
+        self.logger.info(f"🚀 Verifying remote process for experiment '{experiment_id}' on {self.ip}")
 
-        try:
-            ssh_port = 22
-            username = self.config["USER"]
-            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+        # Since we are using Docker, the process is already started by start_experiment.py
+        # We just need to wait for the port to be ready.
 
-            if not os.path.exists(private_key_path):
-                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+        max_retries = 30
+        retry_interval = 2
 
-            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
+        for i in range(max_retries):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(2)
+                    result = s.connect_ex((self.ip, self.container_ctrl_port))
+                    if result == 0:
+                        self.status = "READY"
+                        self.logger.info(f"✅ Remote agent {self.name} is ready at {self.ip}:{self.container_ctrl_port}")
+                        return True
+            except Exception:
+                pass
 
-            command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
+            self.logger.debug(f"⏳ Waiting for agent {self.name} to be ready ({i + 1}/{max_retries})...")
+            time.sleep(retry_interval)
 
-            venv_path = os.path.join(target_path, ".venv", "bin", "activate")
-            python_script = os.path.join(target_path, "src/main.py")
-            output_file = os.path.join(target_path, "results", experiment_id, "output.log")
-            command_start = (
-                f"cd {target_path} && "
-                f"source {venv_path} && "
-                f"nohup python3 -u {python_script} "
-                f"> {output_file} 2>&1 < /dev/null & echo $!"
-            )
-
-            self.logger.debug(f"🔗 Connecting to {username}@{self.ip}:{ssh_port}")
-
-            with paramiko.SSHClient() as ssh:
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
-
-                # More thorough port cleanup
-                ctrl_port = self.config["WAFL_DEVICE_CTRL_PORT"]
-                p2p_port = self.config["WAFL_DEVICE_P2P_PORT"]
-
-                # Kill processes using ctrl port with multiple methods
-                self.logger.info(f"🔪 Killing processes using port {ctrl_port}")
-
-                # Method 1: Standard lsof + kill
-                command_kill_ctrl = f"lsof -ti:{ctrl_port} | xargs -r kill -9"
-                stdin, stdout, stderr = ssh.exec_command(command_kill_ctrl)
-                exit_status = stdout.channel.recv_exit_status()
-
-                # Method 2: Also try netstat + awk approach as backup
-                command_kill_ctrl_netstat = (
-                    f"netstat -tlnp | grep ':{ctrl_port} ' | awk '{{print $7}}' | cut -d'/' -f1 | xargs -r kill -9"
-                )
-                stdin, stdout, stderr = ssh.exec_command(command_kill_ctrl_netstat)
-                stdout.channel.recv_exit_status()
-
-                self.logger.info(f"✅ Attempted to kill all processes using ctrl port {ctrl_port}")
-
-                # Kill processes using p2p port with multiple methods
-                self.logger.info(f"🔪 Killing processes using port {p2p_port}")
-
-                command_kill_p2p = f"lsof -ti:{p2p_port} | xargs -r kill -9"
-                stdin, stdout, stderr = ssh.exec_command(command_kill_p2p)
-                stdout.channel.recv_exit_status()
-
-                command_kill_p2p_netstat = (
-                    f"netstat -tlnp | grep ':{p2p_port} ' | awk '{{print $7}}' | cut -d'/' -f1 | xargs -r kill -9"
-                )
-                stdin, stdout, stderr = ssh.exec_command(command_kill_p2p_netstat)
-                stdout.channel.recv_exit_status()
-
-                self.logger.info(f"✅ Attempted to kill all processes using p2p port {p2p_port}")
-
-                # Verify ports are actually free before proceeding
-                check_ctrl_port = f"lsof -i:{ctrl_port} | wc -l"
-                check_p2p_port = f"lsof -i:{p2p_port} | wc -l"
-
-                stdin, stdout, stderr = ssh.exec_command(check_ctrl_port)
-                ctrl_count = int(stdout.read().decode().strip())
-
-                stdin, stdout, stderr = ssh.exec_command(check_p2p_port)
-                p2p_count = int(stdout.read().decode().strip())
-
-                if ctrl_count > 0:
-                    self.logger.warning(f"⚠️ Port {ctrl_port} still has {ctrl_count} processes using it")
-                if p2p_count > 0:
-                    self.logger.warning(f"⚠️ Port {p2p_port} still has {p2p_count} processes using it")
-
-                # Additional wait if ports are still in use
-                if ctrl_count > 0 or p2p_count > 0:
-                    self.logger.info("⏳ Additional wait for stubborn processes...")
-                    time.sleep(10)
-
-                # Create results directory
-                stdin, stdout, stderr = ssh.exec_command(command_create_results)
-                exit_status = stdout.channel.recv_exit_status()
-                if exit_status != 0:
-                    error_msg = stderr.read().decode().strip()
-                    self.logger.warning(f"⚠️ Results directory creation warning: {error_msg}")
-
-                # Start main process
-                stdin, stdout, stderr = ssh.exec_command(command_start)
-                self.pid = stdout.readline().strip()
-                exit_status = stdout.channel.recv_exit_status()
-
-                if not self.pid or not self.pid.isdigit():
-                    error_msg = stderr.read().decode().strip()
-                    raise RuntimeError(f"❌ Failed to start remote process: {error_msg}")
-
-                stdout.channel.close()
-
-                self.status = "READY"
-                self.logger.info(f"✅ Remote process started successfully with PID: {self.pid}")
-                return True
-
-        except FileNotFoundError as e:
-            self.logger.error(f"🔑 SSH key error: {e}")
-            self.status = "ERROR"
-            return False
-        except paramiko.AuthenticationException as e:
-            self.logger.error(f"🔒 SSH authentication failed for {self.ip}: {e}")
-            self.status = "ERROR"
-            return False
-        except paramiko.SSHException as e:
-            self.logger.error(f"🌐 SSH connection error to {self.ip}: {e}")
-            self.status = "ERROR"
-            return False
-        except Exception as e:
-            self.logger.error(f"💥 Unexpected error starting remote process: {e}", exc_info=True)
-            self.status = "ERROR"
-            return False
+        self.logger.error(f"❌ Timed out waiting for agent {self.name} to be ready")
+        self.status = "ERROR"
+        return False
 
     def _send_command(self, command: str) -> Tuple[bool, str]:
         """
@@ -499,9 +401,7 @@ class WaflAgent:
             if len(parts) == 2 and parts[1].isdigit():
                 expected_log_count = int(parts[1])
                 if len(logs) != expected_log_count:
-                    self.logger.warning(
-                        f"📊 Log count mismatch for agent {self.name}. Expected {expected_log_count}, got {len(logs)}"
-                    )
+                    self.logger.warning(f"📊 Log count mismatch for agent {self.name}. Expected {expected_log_count}, got {len(logs)}")
 
             # Validate status code
             valid_statuses = ["EXEC", "DONE", "ERROR", "READY"]
@@ -626,86 +526,35 @@ class ControlServer:
     Main implementation of ctrl/main.py.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self):
         self.logger = logging.getLogger("ControlServer")
-        self.config = self._load_config(config_path)
+        self.config = self._load_config()
         self.experiment_id = self._generate_experiment_id(self.config.get("EXPERIMENT_NAME", "exp"))
         self.results_dir = self._create_results_directory()
         self.agents: List[WaflAgent] = []
         self._setup_logging()
 
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load config file (.wafl_execution_config_base)."""
+    def _load_config(self) -> Dict[str, Any]:
+        """Load config file (execution_config.json)."""
+        config_path = os.path.join("ctrl", "execution_config.json")
         self.logger.info(f"📝 Loading configuration from {config_path}")
 
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"🚫 Config file not found: {config_path}")
 
         try:
-            # Load environment variables from shell script
-            self._load_shell_env_vars(config_path)
+            with open(config_path, "r") as f:
+                config = json.load(f)
 
-            # Validate required environment variables
-            required_vars = [
-                "WAFL_DEVICE_NAMES",
-                "WAFL_DEVICE_IPS",
-                "DEPLOYMENT_LOCATION",
-                "USER",
-            ]
-            missing_vars = [var for var in required_vars if not os.environ.get(var)]
+            # Add some default values expected by other parts of the code
+            config["EXPERIMENT_NAME"] = "wafl-experiment"
 
-            if missing_vars:
-                raise ValueError(f"🚫 Missing required environment variables: {', '.join(missing_vars)}")
-
-            project_path = os.getcwd()
-            project_name = os.path.basename(project_path)
-
-            config = {
-                "WAFL_DEVICE_NAMES": os.environ.get("WAFL_DEVICE_NAMES", "0").split(","),
-                "WAFL_DEVICE_IPS": os.environ.get("WAFL_DEVICE_IPS", "localhost").split(","),
-                "WAFL_DEVICE_CTRL_PORT": int(os.environ.get("WAFL_DEVICE_CTRL_PORT", "10001")),
-                "WAFL_DEVICE_P2P_PORT": int(os.environ.get("WAFL_DEVICE_P2P_PORT", "10002")),
-                "DEPLOYMENT_LOCATION": os.environ.get("DEPLOYMENT_LOCATION"),
-                "USER": os.environ.get("USER"),
-                "PROJECT_NAME": project_name,
-                "EXPERIMENT_NAME": os.environ.get("EXPERIMENT_NAME", "exp"),
-            }
-
-            # Validate device configuration
-            if len(config["WAFL_DEVICE_NAMES"]) != len(config["WAFL_DEVICE_IPS"]):
-                raise ValueError(
-                    f"🚫 Device names and IPs count mismatch: "
-                    f"{len(config['WAFL_DEVICE_NAMES'])} names vs {len(config['WAFL_DEVICE_IPS'])} IPs"
-                )
-
-            self.logger.info(f"✅ Configuration loaded successfully. Devices: {config['WAFL_DEVICE_NAMES']}")
+            self.logger.info("✅ Configuration loaded successfully from JSON")
             return config
 
         except Exception as e:
             self.logger.error(f"💥 Failed to load configuration: {e}", exc_info=True)
             raise
-
-    def _load_shell_env_vars(self, config_path: str):
-        """Load environment variables from shell script file using subprocess."""
-        try:
-            cmd = f"bash -c 'source {config_path} && env'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, timeout=10)
-
-            env_count = 0
-            for line in result.stdout.strip().split("\n"):
-                if "=" in line and not line.startswith("_"):
-                    key, value = line.split("=", 1)
-                    os.environ[key] = value
-                    env_count += 1
-
-            self.logger.debug(f"📝 Loaded {env_count} environment variables from {config_path}")
-
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"⏰ Timeout loading config file {config_path}")
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"💥 Error executing config file {config_path}: {e.stderr}")
-        except Exception as e:
-            raise RuntimeError(f"💥 Unexpected error loading config: {e}")
 
     def _generate_experiment_id(self, name: str) -> str:
         """Generate experiment ID in 'experiment-name-timestamp' format."""
@@ -727,39 +576,62 @@ class ControlServer:
 
     def _create_agents(self, experiment_parameters: Dict[str, Any]) -> List[WaflAgent]:
         """Create WaflAgent instance list based on config and experiment parameters."""
-        agents = []
-        names = self.config["WAFL_DEVICE_NAMES"]
-        ips = self.config["WAFL_DEVICE_IPS"]
-        port = self.config["WAFL_DEVICE_CTRL_PORT"]
 
-        experiment_parameters["experiment_id"] = self.experiment_id
-        experiment_parameters["results_dir"] = self.results_dir
-
-        failed_agents = []
-        agent_index = 0
-        for name, ip in zip(names, ips):
+        # Check for execution_config.json
+        json_config_path = os.path.join("ctrl", "execution_config.json")
+        if os.path.exists(json_config_path):
+            self.logger.info(f"📄 Loading topology from {json_config_path}")
             try:
-                agent = WaflAgent(
-                    agent_index=agent_index,
-                    device_name=name,
-                    ip_address=ip,
-                    ctrl_port=port,
-                    config=self.config,
-                    experiment_parameters=experiment_parameters,
-                )
-                agents.append(agent)
-                self.logger.info(f"🤖 Created and configured agent '{name}' for {ip}:{port}")
+                with open(json_config_path, "r") as f:
+                    topology = json.load(f)
+
+                nodes = topology.get("nodes", [])
+                experiment_parameters["experiment_id"] = self.experiment_id
+                experiment_parameters["results_dir"] = self.results_dir
+
+                agents = []
+                failed_agents = []
+                for node in nodes:
+                    try:
+                        agent_index = node["id"]
+                        device_name = str(agent_index)
+                        ip = node["physical_ip"]
+                        ctrl_port = node["host_port_ctrl"]
+                        container_ctrl_port = node["container_port_ctrl"]
+                        host_p2p_port = node["host_port_p2p"]
+                        container_p2p_port = 10002  # Default or from JSON if added
+
+                        agent = WaflAgent(
+                            agent_index=agent_index,
+                            device_name=device_name,
+                            ip_address=ip,
+                            ctrl_port=ctrl_port,
+                            config=self.config,
+                            experiment_parameters=experiment_parameters,
+                            container_ctrl_port=container_ctrl_port,
+                            host_p2p_port=host_p2p_port,
+                            container_p2p_port=container_p2p_port,
+                        )
+                        agents.append(agent)
+                        self.logger.info(f"🤖 Created agent '{device_name}' for {ip}:{ctrl_port}")
+                    except Exception as e:
+                        self.logger.error(f"💥 Failed to create agent '{node.get('id')}': {e}")
+                        failed_agents.append(str(node.get("id")))
+
+                if failed_agents:
+                    raise RuntimeError(f"❌ Failed to create agents: {', '.join(failed_agents)}")
+
+                self.logger.info(f"✅ Created {len(agents)} agents from JSON topology")
+                return agents
             except Exception as e:
-                self.logger.error(f"💥 Failed to create agent '{name}': {e}")
-                failed_agents.append(name)
-            finally:
-                agent_index += 1
+                self.logger.error(f"💥 Failed to load topology from JSON: {e}")
+                raise
 
-        if failed_agents:
-            raise RuntimeError(f"❌ Failed to create agents: {', '.join(failed_agents)}")
-
-        self.logger.info(f"✅ Created {len(agents)} agents successfully with configurations deployed")
-        return agents
+                self.logger.info(f"✅ Created {len(agents)} agents from JSON topology")
+                return agents
+            except Exception as e:
+                self.logger.error(f"💥 Failed to load topology from JSON: {e}")
+                raise
 
     def _setup_logging(self):
         """Setup experiment logging to file and console."""
@@ -788,17 +660,25 @@ class ControlServer:
             print(f"💥 Failed to setup logging: {e}")
             raise
 
-    def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str):
+    def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str, ssp_config: Dict[str, Any] = None):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
+
+        Args:
+            epochs: Dictionary with 'self' and 'wafl' epoch counts
+            wafl_phase: WAFL phase parameters
+            contact_pattern: Contact pattern file name
+            ssp_config: SSP configuration with 'staleness' and 'ssp_threshold' keys
 
         Note:
             Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
         """
-        self.logger.info(
-            f"🚀 Starting experiment: {self.experiment_id} (SELF epochs: {epochs['self']}, WAFL epochs: {epochs['wafl']})"
-        )
+        self.logger.info(f"🚀 Starting experiment: {self.experiment_id} (SELF epochs: {epochs['self']}, WAFL epochs: {epochs['wafl']})")
         experiment_success = False
+
+        # Set default SSP config if not provided
+        if ssp_config is None:
+            ssp_config = {"staleness": 0, "ssp_threshold": 1.0}
 
         try:
             # 0. Create agents with unified configuration deployment
@@ -812,62 +692,22 @@ class ControlServer:
             self.agents = self._create_agents(experiment_parameters)
             self.logger.info("✅ All agents created and configured successfully")
 
-            # 1. Start remote processes on all agents
-            self.logger.info(f"🎬 Phase 1: Starting {len(self.agents)} remote processes")
-            failed_agents = []
-
-            for agent in self.agents:
-                if not agent.start_remote_process(self.experiment_id):
-                    failed_agents.append(agent.name)
-
-            if failed_agents:
-                raise RuntimeError(f"❌ Failed to start agents: {', '.join(failed_agents)}")
-
-            # Allow some time for processes to stabilize
-            self.logger.info("⏳ Waiting 20 seconds for agents to stabilize...")
-            time.sleep(20)
-
-            self.logger.info("✅ All agents started successfully")
-
-            # 2. Main SELF training loop
-            self.logger.info(f"🎓 Phase 2: Starting SELF training loop ({epochs['self']} epochs)")
-
-            for epoch in range(1, epochs["self"] + 1):
-                self.logger.info(f"📚 === SELF Epoch {epoch}/{epochs['self']} ===")
-
-                # Send begin commands to all agents
-                failed_commands = []
-                for agent in self.agents:
-                    if not agent.begin_epoch(phase="SELF", epoch=epoch):
-                        failed_commands.append(agent.name)
-
-                if failed_commands:
-                    raise RuntimeError(f"❌ Failed to start SELF epoch {epoch} on agents: {', '.join(failed_commands)}")
-
-                # Wait for completion
-                self._wait_for_all_agents_to_complete(current_epoch=epoch)
-                self.logger.info(f"✅ SELF Epoch {epoch}/{epochs['self']} completed successfully")
-
+            # 1. Run SELF phase
+            self.logger.info(f"🏃 Phase 1: Starting SELF phase ({epochs['self']} epochs)")
+            # SELF phase is independent, so staleness is effectively infinite or irrelevant.
+            # We use a large staleness to allow free running.
+            self._run_phase("SELF", epochs["self"], staleness=999999)
             self.logger.info("🎉 All SELF training epochs completed successfully")
 
-            # 3. Main WAFL training loop
-            self.logger.info(f"🎓 Phase 3: Starting WAFL training loop ({epochs['wafl']} epochs)")
+            # 2. Run WAFL phase
+            self.logger.info(f"🤝 Phase 2: Starting WAFL phase ({epochs['wafl']} epochs)")
 
-            for epoch in range(1, epochs["wafl"] + 1):
-                self.logger.info(f"📚 === WAFL Epoch {epoch}/{epochs['wafl']} ===")
+            staleness = ssp_config.get("staleness", 0)
+            ssp_threshold = ssp_config.get("ssp_threshold", 1.0)
 
-                # Send begin commands to all agents
-                failed_commands = []
-                for agent in self.agents:
-                    if not agent.begin_epoch(phase="WAFL", epoch=epoch):
-                        failed_commands.append(agent.name)
+            self.logger.info(f"⚙️  Synchronization: SSP (Staleness: {staleness}, Threshold: {ssp_threshold})")
 
-                if failed_commands:
-                    raise RuntimeError(f"❌ Failed to start WAFL epoch {epoch} on agents: {', '.join(failed_commands)}")
-
-                # Wait for completion
-                self._wait_for_all_agents_to_complete(current_epoch=epoch)
-                self.logger.info(f"✅ WAFL Epoch {epoch}/{epochs['wafl']} completed successfully")
+            self._run_phase("WAFL", epochs["wafl"], staleness=staleness, ssp_threshold=ssp_threshold)
 
             self.logger.info("🎉 All WAFL training epochs completed successfully")
             experiment_success = True
@@ -884,71 +724,126 @@ class ControlServer:
             status = "SUCCESS" if experiment_success else "FAILED"
             self.logger.info(f"🏁 Experiment {self.experiment_id} finished with status: {status}")
 
-    def _wait_for_all_agents_to_complete(self, current_epoch: int, poll_interval: int = 5, timeout: int = 3600):
-        """Polls agents until they all complete the current epoch."""
-        self.logger.info(f"⏳ Waiting for all agents to complete epoch {current_epoch}")
+    def _run_phase(self, phase_name: str, total_epochs: int, staleness: int, ssp_threshold: float = 1.0):
+        """
+        Runs a training phase (SELF or WAFL) with SSP synchronization.
+        ssp_threshold: Fraction of agents (0.0-1.0) required to complete an epoch before forcing others to skip.
+        """
+        agent_epochs = {agent.name: 0 for agent in self.agents}
+        agent_status = {agent.name: "IDLE" for agent in self.agents}  # IDLE, RUNNING
+
+        # Track completion count per epoch
+        # We need to know how many agents have completed epoch X
+
         start_time = time.time()
         last_progress_log = 0
 
         while True:
-            elapsed_time = time.time() - start_time
+            min_epoch = min(agent_epochs.values())
 
-            if elapsed_time > timeout:
-                raise TimeoutError(
-                    f"⏰ Timeout waiting for epoch {current_epoch} completion after {timeout}s. Some agents may be stuck."
-                )
-
-            finished_agents = set()
-            error_agents = []
-
-            for agent in self.agents:
-                try:
-                    status_code, logs = agent.get_status()
-
-                    # Log agent output
-                    if logs:
-                        for log_line in logs:
-                            if log_line.strip():  # Skip empty lines
-                                self.logger.info(f"[{agent.name}] {log_line}")
-
-                    # Check for errors
-                    if "ERROR" in status_code:
-                        error_agents.append(f"{agent.name}({status_code})")
-                        continue
-
-                    # Check completion status
-                    if status_code.startswith("DONE"):
-                        try:
-                            self.logger.info(
-                                f"✅ Agent {agent.name} completed epoch {current_epoch} with status: {status_code}"
-                            )
-                            done_epoch = int(status_code.split("-")[-2])
-                            if done_epoch >= current_epoch:
-                                finished_agents.add(agent.name)
-                        except (ValueError, IndexError):
-                            self.logger.warning(f"⚠️ Could not parse epoch from status '{status_code}' for agent {agent.name}")
-
-                except Exception as e:
-                    self.logger.error(f"💥 Error getting status from agent {agent.name}: {e}")
-                    error_agents.append(f"{agent.name}(COMM_ERROR)")
-
-            # Report errors immediately
-            if error_agents:
-                raise RuntimeError(f"❌ Agents reported errors: {', '.join(error_agents)}")
-
-            # Progress logging (every 60 seconds)
-            if elapsed_time - last_progress_log >= 60:
-                self.logger.info(
-                    f"📊 Progress: {len(finished_agents)}/{len(self.agents)} agents completed (elapsed: {elapsed_time:.0f}s)"
-                )
-                last_progress_log = elapsed_time
-
-            # Check if all completed
-            if len(finished_agents) == len(self.agents):
-                self.logger.info(f"✅ All agents completed epoch {current_epoch} in {elapsed_time:.1f}s")
+            # Check completion
+            if min_epoch >= total_epochs:
                 break
 
-            time.sleep(poll_interval)
+            # SSP Reset Check
+            if ssp_threshold < 1.0:
+                # Check if enough agents have completed max_epoch (or any epoch > min_epoch)
+                # Actually, we usually check if enough agents completed epoch E to force everyone to E+1?
+                # Or if enough completed E, force everyone to finish E?
+                # The plan says: "When completed nodes reach N * p ... FORCE_NEXT_EPOCH ... Uncompleted nodes discard ... and proceed to next epoch"
+                # So if N*p agents finish epoch E, we force everyone else to finish E (skip) and be ready for E+1.
+
+                # Count completions for each epoch
+                epoch_counts = {}
+                for e in agent_epochs.values():
+                    epoch_counts[e] = epoch_counts.get(e, 0) + 1
+
+                # Check if any epoch E has enough completions
+                # We are interested in the highest epoch that has reached threshold
+                # But we only care about epochs > min_epoch?
+                # If min_epoch is 5, and 90% are at 6, we force the 10% at 5 to skip to 6.
+
+                target_epoch = -1
+                for e in sorted(epoch_counts.keys(), reverse=True):
+                    if e > min_epoch:
+                        count = 0
+                        # Count agents who have completed e OR HIGHER
+                        for ae in agent_epochs.values():
+                            if ae >= e:
+                                count += 1
+
+                        if count >= len(self.agents) * ssp_threshold:
+                            target_epoch = e
+                            break
+
+                if target_epoch != -1:
+                    # Force everyone < target_epoch to skip to target_epoch
+                    self.logger.info(f"⚡ SSP Threshold reached for epoch {target_epoch}. Forcing slow agents to skip.")
+                    for agent in self.agents:
+                        if agent_epochs[agent.name] < target_epoch:
+                            self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {agent_epochs[agent.name]}) to skip to {target_epoch}")
+                            # Send FORCE_NEXT command
+                            # We might need to send it multiple times if they are far behind?
+                            # Or FORCE_NEXT just stops current.
+                            # We need to update our tracking.
+
+                            # If agent is RUNNING, stop it.
+                            if agent_status[agent.name] == "RUNNING":
+                                success, response = agent._send_command("FORCE_NEXT\r\n")
+                                # We assume it stops and reports something?
+                                # Actually, we just assume it stops.
+                                agent_status[agent.name] = "IDLE"
+
+                            # Update local state to pretend it finished
+                            agent_epochs[agent.name] = target_epoch
+
+            # Schedule agents
+            for agent in self.agents:
+                current_epoch = agent_epochs[agent.name]
+
+                if current_epoch < total_epochs:
+                    # SSP Constraint
+                    if (current_epoch + 1) - min_epoch <= staleness + 1:
+                        if agent_status[agent.name] == "IDLE":
+                            next_epoch = current_epoch + 1
+                            success = agent.begin_epoch(phase_name, next_epoch)
+                            if success:
+                                agent_status[agent.name] = "RUNNING"
+                            else:
+                                self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent.name}, retrying...")
+
+            # Poll status
+            for agent in self.agents:
+                if agent_status[agent.name] == "RUNNING":
+                    status, logs = agent.get_status()
+
+                    if logs:
+                        for log_line in logs:
+                            if log_line.strip():
+                                self.logger.info(f"[{agent.name}] {log_line}")
+
+                    if "ERROR" in status:
+                        self.logger.error(f"Agent {agent.name} reported error: {status}")
+
+                    if status.startswith("DONE"):
+                        try:
+                            parts = status.split("-")
+                            if len(parts) >= 3:
+                                done_epoch = int(parts[2])
+                                if done_epoch > agent_epochs[agent.name]:
+                                    agent_epochs[agent.name] = done_epoch
+                                    agent_status[agent.name] = "IDLE"
+                                    self.logger.info(f"✅ Agent {agent.name} completed {phase_name} epoch {done_epoch}")
+                        except Exception as e:
+                            self.logger.error(f"Error parsing status {status}: {e}")
+
+            # Progress logging
+            elapsed_time = time.time() - start_time
+            if elapsed_time - last_progress_log >= 30:
+                self.logger.info(f"📊 {phase_name} Progress: Min Epoch {min_epoch}/{total_epochs}")
+                last_progress_log = elapsed_time
+
+            time.sleep(1)
 
     def _shutdown_all_agents(self):
         """Terminates all agent processes, trying gracefully first, then forcefully."""
@@ -1017,17 +912,21 @@ if __name__ == "__main__":
         print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
         print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase']}")
 
-        # Config file path
-        CONFIG_PATH = "ctrl/execution_config"
-
         # Create ControlServer instance
-        controller = ControlServer(config_path=CONFIG_PATH)
+        controller = ControlServer()
 
         # Run experiment
+        # Extract SSP settings
+        ssp_settings = experiment_parameters.get("method", {}).get("ssp", {})
+        ssp_enabled = ssp_settings.get("enabled", True)
+        staleness = ssp_settings.get("staleness", 0) if ssp_enabled else 0
+        ssp_threshold = ssp_settings.get("ssp_threshold", 1.0) if ssp_enabled else 1.0
+
         controller.run_experiment(
             epochs={"self": epochs_self, "wafl": epochs_wafl},
             wafl_phase=experiment_parameters["wafl_phase"],
             contact_pattern=experiment_parameters["contact_pattern"],
+            ssp_config={"staleness": staleness, "ssp_threshold": ssp_threshold},
         )
 
     except KeyboardInterrupt:

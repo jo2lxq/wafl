@@ -1,196 +1,387 @@
-# WAFL Emulation Testbed
+# WAFL-Testbed
 
-The WAFL Emulation Testbed project, launched in April 2025, is trying to develop a research platform for WAFL's device-to-device collaborative learning over real TCP/IP-based communications. The previous researches were mainly conducted by "simulation", which executes "model exchange" on the memory space in a single computer. This emulation platform has 10 devices (assuming 10 GPU-equipped computers) and one control server connected in a local area network. Even though these devices can always be connected over the Ethernet, device-to-device contact patterns can be defined and controlled to ensure the reproducibility of the experiments.
+**日本語** | [English](#english-version)
 
-<img src="./assets/wafl-emulation-testbed.png">
+---
 
-## Setup
+## 日本語版
 
-### Prerequisites
+### 概要
 
-- Python 3.11.4 (auto-installed via mise)
-- SSH access to all servers (passwordless public key authentication)
-- `~/.ssh/id_ed25519` private key
+WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は，大規模実環境無線アドホック連合学習（WAFL: Wireless Ad-hoc Federated Learning）における同期方式・通信プロトコルのスケーラビリティと信頼性を実機ベースで評価するための研究プラットフォームである．
 
-### 1. Install mise
+従来のシミュレーションベース研究では見えなかった**実環境固有の制約**（OS・ネットワークスタックの遅延，物理リソース競合，同期待ち時間の指数関数的増大）を定量化し，実用的な設計指針を提供する．
 
-[mise](https://mise.jdx.dev/) manages runtime versions and tasks.
+### 主要機能
+
+#### 実装済みプロトコル・手法
+
+1. **Semi-Synchronous Protocol (SSP) - Reset Model**
+   - 遅延ノードを切り捨てて学習速度を優先
+   - 閾値 `ssp_threshold` で完了率を制御（例: 0.9 = 90% 完了で強制進行）
+   - 破棄された計算量の詳細メトリクス（`wasted_ms`, `wasted_norm`, `batches_processed`）
+
+2. **UDP + XOR-based FEC (Forward Error Correction)**
+   - TCP 再送遅延を回避した高速 UDP 通信
+   - Block-based XOR 冗長パケット（パラメータ `fec_m` で冗長率制御）
+   - 生存率 (Survival Rate) と FEC 復元統計の記録
+
+3. **Adaptive Compression**
+   - 帯域と計算負荷に応じた動的圧縮方式選択
+   - サポート方式: None, LZ4 (高速), zlib (高圧縮)
+   - 実測ベースの最適化: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
+
+#### トポロジー生成
+
+1. **Random Waypoint (RWP)** - 移動ありモデル
+   - ノードが移動し続ける標準的な WAFL シナリオ
+   - ツール: `utils/generate_contact_pattern.py`
+
+2. **Random Geometric Graph (RGG)** - 静的トポロジー
+   - ノード位置固定，純粋なグラフ密度評価用
+   - Dense（平均次数 ≥ 10）/ Sparse（平均次数 ≤ 4）
+   - ツール: `utils/generate_rgg_topology.py`
+
+### クイックスタート
+
+#### 1. 前提条件
+
+**コントロールサーバー**:
+- OS: Linux（Ubuntu 推奨）
+- Python 3.11+
+- [mise](https://mise.jdx.dev/)（タスクランナー）
+
+**実行サーバー（エージェント）**:
+- OS: Linux
+- Docker（インストール済み＆実行中）
+
+**ネットワーク**:
+- コントロールサーバーから全実行サーバーへのパスワードなし SSH アクセス
+
+#### 2. セットアップ
 
 ```bash
-# Install mise
+# 1. mise インストール
 curl https://mise.run | sh
 
-# Activate mise in your shell
-echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc  # for bash
+# 2. シェルで mise を有効化（bash の例）
+echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
 source ~/.bashrc
 
-# Verify installation
-mise --version
-```
-
-### 2. Configure Environment Variables
-
-Create `.env` file for deployment settings:
-
-```bash
-cp .env.sample .env
-```
-
-Edit `.env`:
-
-```bash
-DEPLOY_CTRL_SERVER_USER=your_username
-DEPLOY_CTRL_SERVER_HOST=your_ctrl_server_hostname
-DEPLOY_CTRL_SERVER_DIST=/path/to/deployment/directory
-```
-
-Create `execution_config` file for execution settings:
-
-```bash
-cd ctrl
-cp execution_config_sample execution_config
-```
-
-Edit `ctrl/execution_config`:
-
-```bash
-export CTRL_SERVER_IP='192.168.11.10'
-export WAFL_DEVICE_NAMES='100,101,102,103,104,105,106,107,108,109'
-export WAFL_DEVICE_IPS='192.168.11.100,192.168.11.101,...'
-export WAFL_DEVICE_CTRL_PORT=10001
-export WAFL_DEVICE_P2P_PORT=10002
-export USER='your_username'
-export DEPLOYMENT_LOCATION='/path/to/workspace'
-export EXPERIMENT_NAME='your_experiment_name'
-```
-
-**Note:** Ensure `WAFL_DEVICE_NAMES` and `WAFL_DEVICE_IPS` have matching element counts.
-
-### 3. Install Dependencies
-
-```bash
+# 3. プロジェクトディレクトリで依存関係インストール
+cd WAFL-Testbed
 mise setup
 ```
 
-This installs Python, uv, creates `.venv`, installs dependencies, and sets up pre-commit hooks.
-
-### 4. VS Code Setup (Optional)
-
-Install recommended extensions:
-- [Ruff](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff)
-- [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-
-Select interpreter: `Ctrl+Shift+P` → "Python: Select Interpreter" → `.venv/bin/python`
-
-## Directory Structure
-
-```
-WAFL-Testbed/
-├── mise.toml                         # mise configuration
-├── pyproject.toml                    # Python project config
-├── .env                              # Environment variables (not in git)
-├── .env.sample                       # Environment variables template
-├── utils/                            # Utility scripts
-│   ├── generate_contact_patterns.py  # Contact pattern generation
-│   ├── generate_nonIID_filters.py    # Non-IID filter generation
-│   └── generate_datasets.py          # Dataset splitting
-├── ctrl/                             # Control server scripts
-│   ├── main.py                       # Main control script
-│   ├── deploy.sh                     # Deployment script
-│   ├── collect.py                    # Result collection
-│   ├── analyze.py                    # Result analysis
-│   ├── parameters.json               # Experiment parameters
-│   ├── execution_config              # Experiment execution config (not in git)
-│   └── contact_pattern/
-├── wafl/                             # Execution server code
-│   ├── dataset/
-│   │   ├── common/                   # Common data for all devices
-│   │   └── 0/, 1/, .../              # Device-specific data
-│   ├── config/
-│   │   ├── common/
-│   │   └── 0/, 1/, .../
-│   └── src/
-│       ├── common/
-│       │   ├── main.py
-│       │   └── net.py
-│       └── 0/, 1/, .../
-├── data/                             # Local data storage
-└── results/                          # Experiment results
-```
-
-**Note:** `wafl/` uses `common/` for shared files and `[device_name]/` for device-specific files. During deployment, `common/` files are deployed to all devices, then device-specific files override as needed.
-
-## Usage
-
-### Generate Datasets
+#### 3. SSH 設定
 
 ```bash
-source .venv/bin/activate
-python utils/generate_nonIID_filters.py
-python utils/generate_datasets.py
+# 1. SSH キーペア生成（既存のものがない場合）
+ssh-keygen -t ed25519
+
+# 2. 公開鍵を各実行サーバーにコピー
+ssh-copy-id denjo@192.168.11.100
+ssh-copy-id denjo@192.168.11.101
+# ... 全ノードで繰り返し
 ```
 
-### Run Experiment
+#### 4. 設定ファイル編集
 
-Edit `ctrl/parameters.json`:
-
+**`ctrl/execution_config.json`** - インフラ設定:
 ```json
 {
-  "epochs": {
-    "self": 64,
-    "wafl": 5120
-  },
-  "contact_pattern": "rwp_n10_a0500_r100_p10_s01.json",
+  "nodes": [
+    {
+      "id": 0,
+      "physical_ip": "192.168.11.100",
+      "container_port_ctrl": 10001,
+      "host_port_ctrl": 10001,
+      "host_port_p2p": 10002,
+      "cpu_limit": "1.0"
+    }
+  ],
+  "deployment_location": "/home/denjo",
+  "user": "denjo"
+}
+```
+
+**`ctrl/parameters.json`** - 実験パラメータ:
+```json
+{
+  "epochs": {"self": 64, "wafl": 4096},
+  "contact_pattern": "rwp_n28_a1000_r100_p10_s01.json",
   "wafl_phase": {
-    "aggregation_strategy": "FedAvg",
     "batch_size": 32,
-    "learning_rate": 0.001,
-    "coefficiency": 1.0
+    "learning_rate": 0.001
+  },
+  "method": {
+    "ssp": {"enabled": true, "ssp_threshold": 0.9},
+    "udp": {"enabled": false, "fec_m": 9},
+    "compression": {"enabled": false}
   }
 }
 ```
 
-Start experiment:
+#### 5. 実験実行
 
 ```bash
-mise start
+# トポロジー生成（初回のみ）
+python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense
+
+# 全ノードへデプロイ
+mise run deploy
+
+# 実験開始
+mise run start
+
+# 結果収集
+mise run collect
+
+# クリーンアップ
+mise run stop
 ```
 
-Monitor via screen session:
+### ディレクトリ構造
+
+```
+WAFL-Testbed/
+├── docs/                   # 詳細ドキュメント
+│   ├── architecture.md     # システムアーキテクチャ
+│   ├── configuration.md    # 設定ガイド
+│   ├── setup.md            # セットアップガイド
+│   └── usage.md            # 使用方法
+├── ctrl/                   # コントロールサーバー
+│   ├── main.py             # オーケストレーター
+│   ├── execution_config.json  # インフラ設定
+│   └── parameters.json     # 実験パラメータ
+├── wafl/                   # 実行エージェント
+│   ├── src/common/
+│   │   ├── main.py         # エージェントメイン
+│   │   ├── udp_model_sharing.py  # UDP/FEC 実装
+│   │   ├── compression_manager.py  # Adaptive Compression
+│   │   └── logger.py       # 構造化ログ
+│   └── config/             # エージェント設定（自動生成）
+├── utils/                  # ユーティリティ
+│   ├── generate_contact_pattern.py  # RWP トポロジー生成
+│   ├── generate_rgg_topology.py     # RGG トポロジー生成
+│   ├── generate_datasets.py         # データセット生成
+│   └── generate_nonIID_filters.py   # Non-IID フィルター
+├── data/                   # データ・トポロジー
+│   └── contact_pattern/    # 接触パターン JSON
+└── results/                # 実験結果
+```
+
+### ドキュメント
+
+- [システムアーキテクチャ](docs/architecture.md) - 設計とコンポーネント
+- [セットアップガイド](docs/setup.md) - インストールと初期設定
+- [設定ガイド](docs/configuration.md) - パラメータ詳細
+- [使用方法](docs/usage.md) - 実験実行手順
+
+### ログとメトリクス
+
+実験結果は構造化された JSON Lines 形式で記録される：
+
+```jsonl
+{"timestamp": 1732567890.123, "node": "0", "type": "epoch_complete", "epoch": 1, "train_acc": 0.95, ...}
+{"timestamp": 1732567890.456, "node": "0", "type": "ssp_force_next", "wasted_ms": 1234.56, ...}
+{"timestamp": 1732567890.789, "node": "0", "type": "udp_stats", "survival_rate": 0.98, ...}
+```
+
+**主要メトリクス**:
+- **効率性**: Wall-clock time, Wasted Computation
+- **ネットワーク**: Goodput, Survival Rate, Traffic Volume
+- **システム負荷**: CPU Usage, NIC Usage
+- **学習品質**: Accuracy vs Time
+
+---
+
+## English Version
+
+### Overview
+
+WAFL-Testbed is a research platform for evaluating the **scalability and reliability of synchronization schemes and communication protocols** in large-scale, real-world Wireless Ad-hoc Federated Learning (WAFL) environments using a hybrid physical/container infrastructure.
+
+Unlike traditional simulation-based research, this testbed quantifies **real-world constraints** invisible in simulators: OS/network stack latency, physical resource contention, and exponential synchronization overhead growth.
+
+### Key Features
+
+#### Implemented Protocols & Methods
+
+1. **Semi-Synchronous Protocol (SSP) - Reset Model**
+   - Prioritizes learning speed by discarding slow nodes
+   - Configurable threshold `ssp_threshold` (e.g., 0.9 = force progress at 90% completion)
+   - Detailed wasted computation metrics (`wasted_ms`, `wasted_norm`, `batches_processed`)
+
+2. **UDP + XOR-based FEC (Forward Error Correction)**
+   - Avoids TCP retransmission delays with fast UDP transfer
+   - Block-based XOR redundancy (redundancy controlled by `fec_m` parameter)
+   - Survival rate and FEC recovery statistics tracking
+
+3. **Adaptive Compression**
+   - Dynamic compression method selection based on bandwidth and CPU load
+   - Supported methods: None, LZ4 (fast), zlib (high compression)
+   - Measurement-based optimization: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
+
+#### Topology Generation
+
+1. **Random Waypoint (RWP)** - Mobile Model
+   - Standard WAFL scenario with continuous node movement
+   - Tool: `utils/generate_contact_pattern.py`
+
+2. **Random Geometric Graph (RGG)** - Static Topology
+   - Fixed node positions for pure graph density evaluation
+   - Dense (avg degree ≥ 10) / Sparse (avg degree ≤ 4)
+   - Tool: `utils/generate_rgg_topology.py`
+
+### Quick Start
+
+#### 1. Prerequisites
+
+**Control Server**:
+- OS: Linux (Ubuntu recommended)
+- Python 3.11+
+- [mise](https://mise.jdx.dev/) (task runner)
+
+**Execution Servers (Agents)**:
+- OS: Linux
+- Docker (installed & running)
+
+**Network**:
+- Passwordless SSH access from Control Server to all Execution Servers
+
+#### 2. Setup
 
 ```bash
-ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}
-screen -r wafl
+# 1. Install mise
+curl https://mise.run | sh
+
+# 2. Activate mise in shell (bash example)
+echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
+source ~/.bashrc
+
+# 3. Install dependencies in project directory
+cd WAFL-Testbed
+mise setup
 ```
 
-### Collect and Analyze Results
+#### 3. SSH Configuration
 
 ```bash
-mise analyze
+# 1. Generate SSH key pair (if you don't have one)
+ssh-keygen -t ed25519
+
+# 2. Copy public key to each Execution Server
+ssh-copy-id denjo@192.168.11.100
+ssh-copy-id denjo@192.168.11.101
+# ... repeat for all nodes
 ```
 
-Results are saved to `results/[experiment_id]`.
+#### 4. Edit Configuration Files
 
-## Development
+**`ctrl/execution_config.json`** - Infrastructure:
+```json
+{
+  "nodes": [
+    {
+      "id": 0,
+      "physical_ip": "192.168.11.100",
+      "container_port_ctrl": 10001,
+      "host_port_ctrl": 10001,
+      "host_port_p2p": 10002,
+      "cpu_limit": "1.0"
+    }
+  ],
+  "deployment_location": "/home/denjo",
+  "user": "denjo"
+}
+```
 
-### Available mise Tasks
+**`ctrl/parameters.json`** - Experiment Parameters:
+```json
+{
+  "epochs": {"self": 64, "wafl": 4096},
+  "contact_pattern": "rwp_n28_a1000_r100_p10_s01.json",
+  "wafl_phase": {
+    "batch_size": 32,
+    "learning_rate": 0.001
+  },
+  "method": {
+    "ssp": {"enabled": true, "ssp_threshold": 0.9},
+    "udp": {"enabled": false, "fec_m": 9},
+    "compression": {"enabled": false}
+  }
+}
+```
 
-- `mise setup` - Install Python, uv, dependencies, and pre-commit hooks
-- `mise lint` - Run ruff linter with auto-fix
-- `mise deploy` - Deploy to control and execution servers
-- `mise start` - Start experiment
-- `mise analyze` - Collect and analyze results
-
-### Add Packages
+#### 5. Run Experiment
 
 ```bash
-source .venv/bin/activate
-uv add <package-name>
+# Generate topology (first time only)
+python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense
+
+# Deploy to all nodes
+mise run deploy
+
+# Start experiment
+mise run start
+
+# Collect results
+mise run collect
+
+# Cleanup
+mise run stop
 ```
 
-### CI/CD
+### Directory Structure
 
-GitHub Actions runs checks on pushes to:
-- `testbed-develop`
-- `testbed-develop-ctrl`
-- `testbed-develop-wafl`
+```
+WAFL-Testbed/
+├── docs/                   # Detailed documentation
+│   ├── architecture.md     # System architecture
+│   ├── configuration.md    # Configuration guide
+│   ├── setup.md            # Setup guide
+│   └── usage.md            # Usage guide
+├── ctrl/                   # Control Server
+│   ├── main.py             # Orchestrator
+│   ├── execution_config.json  # Infrastructure config
+│   └── parameters.json     # Experiment parameters
+├── wafl/                   # Execution Agents
+│   ├── src/common/
+│   │   ├── main.py         # Agent main
+│   │   ├── udp_model_sharing.py  # UDP/FEC implementation
+│   │   ├── compression_manager.py  # Adaptive Compression
+│   │   └── logger.py       # Structured logging
+│   └── config/             # Agent config (auto-generated)
+├── utils/                  # Utilities
+│   ├── generate_contact_pattern.py  # RWP topology generation
+│   ├── generate_rgg_topology.py     # RGG topology generation
+│   ├── generate_datasets.py         # Dataset generation
+│   └── generate_nonIID_filters.py   # Non-IID filter generation
+├── data/                   # Data & Topology
+│   └── contact_pattern/    # Contact pattern JSONs
+└── results/                # Experiment results
+```
+
+### Documentation
+
+- [System Architecture](docs/architecture.md) - Design and components
+- [Setup Guide](docs/setup.md) - Installation and initial setup
+- [Configuration Guide](docs/configuration.md) - Parameter details
+- [Usage Guide](docs/usage.md) - Experiment execution
+
+### Logs and Metrics
+
+Experiment results are recorded in structured JSON Lines format:
+
+```jsonl
+{"timestamp": 1732567890.123, "node": "0", "type": "epoch_complete", "epoch": 1, "train_acc": 0.95, ...}
+{"timestamp": 1732567890.456, "node": "0", "type": "ssp_force_next", "wasted_ms": 1234.56, ...}
+{"timestamp": 1732567890.789, "node": "0", "type": "udp_stats", "survival_rate": 0.98, ...}
+```
+
+**Key Metrics**:
+- **Efficiency**: Wall-clock time, Wasted Computation
+- **Network**: Goodput, Survival Rate, Traffic Volume
+- **System Load**: CPU Usage, NIC Usage
+- **Learning Quality**: Accuracy vs Time

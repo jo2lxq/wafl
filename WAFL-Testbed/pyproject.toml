@@ -16,6 +16,9 @@ dependencies = [
     "seaborn>=0.13.2",
     "functions>=0.7.0",
     "tqdm>=4.67.1",
+    "psutil>=5.9.0",
+    "zfec>=1.5.0",
+    "lz4>=4.3.3",
 ]
 
 [tool.ruff]
@@ -27,7 +30,7 @@ exclude = [
     "assets",
 ]
 indent-width = 4
-line-length = 128
+line-length = 256
 
 [tool.ruff.format]
 quote-style = "double"
