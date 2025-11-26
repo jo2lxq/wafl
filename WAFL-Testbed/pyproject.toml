@@ -19,6 +19,7 @@ dependencies = [
     "psutil>=5.9.0",
     "zfec>=1.5.0",
     "lz4>=4.3.3",
+    "traci>=1.25.0",
 ]
 
 [tool.ruff]
@@ -30,7 +31,7 @@ exclude = [
     "assets",
 ]
 indent-width = 4
-line-length = 256
+line-length = 512
 
 [tool.ruff.format]
 quote-style = "double"

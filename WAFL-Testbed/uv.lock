@@ -748,6 +748,14 @@ wheels = [
 ]
 
 [[package]]
+name = "sumolib"
+version = "1.25.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/48/39dbcca267b826eaf7b0edc1f0e78f85698b4132393a894fe58656535927/sumolib-1.25.0-py3-none-any.whl", hash = "sha256:32e431ba0737dc44f25916371900996e09d6dac51c93cd178fdb2c91c6aa18a9", size = 278270, upload-time = "2025-11-13T09:43:16.826Z" },
+]
+
+[[package]]
 name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -822,6 +830,17 @@ wheels = [
 ]
 
 [[package]]
+name = "traci"
+version = "1.25.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sumolib" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/7b/f3b53b523616e8fed7f354de6389307cc5664e16660085fa4934a0c9b09d/traci-1.25.0-py3-none-any.whl", hash = "sha256:76bffcb529cb6a8d9494d496f0190ae82c1be4ea28a879fd537ac22b59c4223a", size = 278508, upload-time = "2025-11-13T09:43:18.052Z" },
+]
+
+[[package]]
 name = "triton"
 version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -882,6 +901,7 @@ dependencies = [
     { name = "torch" },
     { name = "torchvision" },
     { name = "tqdm" },
+    { name = "traci" },
     { name = "zfec" },
 ]
 
@@ -900,6 +920,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.7.1" },
     { name = "torchvision", specifier = ">=0.22.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "traci", specifier = ">=1.25.0" },
     { name = "zfec", specifier = ">=1.5.0" },
 ]
 

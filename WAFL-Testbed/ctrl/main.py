@@ -88,6 +88,10 @@ class WaflAgent:
             },
         }
 
+        # Add mobility-aware configuration if provided
+        if "mobility_aware" in experiment_parameters:
+            unified_config["mobility_aware"] = experiment_parameters["mobility_aware"]
+
         self.logger.debug(f"🔧 Created unified configuration for agent {self.name}")
         return unified_config
 
@@ -532,7 +536,11 @@ class ControlServer:
         self.experiment_id = self._generate_experiment_id(self.config.get("EXPERIMENT_NAME", "exp"))
         self.results_dir = self._create_results_directory()
         self.agents: List[WaflAgent] = []
+        self.mobility_aware_config = None
+        self.network_conditions = None
+        self.path_loss_model = None
         self._setup_logging()
+        self._load_mobility_aware_config()
 
     def _load_config(self) -> Dict[str, Any]:
         """Load config file (execution_config.json)."""
@@ -588,6 +596,21 @@ class ControlServer:
                 nodes = topology.get("nodes", [])
                 experiment_parameters["experiment_id"] = self.experiment_id
                 experiment_parameters["results_dir"] = self.results_dir
+
+                # Add mobility-aware configuration if enabled
+                if self.mobility_aware_config:
+                    # Generate node IP mapping (Docker network: 172.18.0.x)
+                    node_ip_mapping = {}
+                    for i, node in enumerate(nodes):
+                        node_id = str(node["id"])
+                        node_ip_mapping[node_id] = f"172.18.0.{i + 2}"
+
+                    experiment_parameters["mobility_aware"] = {
+                        "enabled": True,
+                        "network_conditions": self.network_conditions,
+                        "node_ip_mapping": node_ip_mapping,
+                    }
+                    self.logger.info("📡 Mobility-aware configuration added to experiment parameters")
 
                 agents = []
                 failed_agents = []
@@ -659,6 +682,43 @@ class ControlServer:
         except Exception as e:
             print(f"💥 Failed to setup logging: {e}")
             raise
+
+    def _load_mobility_aware_config(self):
+        """Load mobility-aware configuration if enabled."""
+        params_path = "ctrl/parameters.json"
+        try:
+            with open(params_path) as f:
+                params = json.load(f)
+
+            mobility_config = params.get("mobility_aware", {})
+            if not mobility_config.get("enabled", False):
+                self.logger.info("📡 Mobility-aware mode: DISABLED (using static network conditions)")
+                return
+
+            self.logger.info("📡 Mobility-aware mode: ENABLED")
+            self.mobility_aware_config = mobility_config
+
+            # Load network conditions
+            conditions_file = os.path.join("data", mobility_config.get("network_conditions_file", "network_conditions_mobility.json"))
+            if os.path.exists(conditions_file):
+                with open(conditions_file) as f:
+                    self.network_conditions = json.load(f)
+                self.logger.info(f"✅ Loaded network conditions from {conditions_file}")
+            else:
+                self.logger.warning(f"⚠️ Network conditions file not found: {conditions_file}")
+
+            # Load path loss model
+            model_file = os.path.join("data", mobility_config.get("path_loss_model_file", "sumo/path_loss_model.json"))
+            if os.path.exists(model_file):
+                with open(model_file) as f:
+                    self.path_loss_model = json.load(f)
+                self.logger.info(f"✅ Loaded path loss model from {model_file}")
+            else:
+                self.logger.warning(f"⚠️ Path loss model file not found: {model_file}")
+
+        except Exception as e:
+            self.logger.error(f"💥 Failed to load mobility-aware config: {e}")
+            self.mobility_aware_config = None
 
     def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str, ssp_config: Dict[str, Any] = None):
         """
@@ -797,6 +857,10 @@ class ControlServer:
                             # Update local state to pretend it finished
                             agent_epochs[agent.name] = target_epoch
 
+            # Apply dynamic network conditions if mobility-aware mode is enabled
+            if self.mobility_aware_config and phase_name == "WAFL":
+                self._apply_dynamic_network_conditions(min_epoch)
+
             # Schedule agents
             for agent in self.agents:
                 current_epoch = agent_epochs[agent.name]
@@ -878,6 +942,49 @@ class ControlServer:
                     self.logger.error(f"💥 Force kill failed for agent {agent.name}: {e}")
 
         self.logger.info("🏁 Agent shutdown process completed")
+
+    def _apply_dynamic_network_conditions(self, epoch: int):
+        """Apply dynamic network conditions for the given epoch using tc."""
+        if not self.network_conditions or not self.path_loss_model:
+            return
+
+        # Check if epoch is within bounds (array-based format)
+        if epoch >= len(self.network_conditions):
+            self.logger.debug(f"No network conditions for epoch {epoch} (only {len(self.network_conditions)} epochs available)")
+            return
+
+        self.logger.info(f"📡 Applying dynamic network conditions for epoch {epoch}")
+
+        # Get path loss model file path
+        model_file = os.path.join("data", self.mobility_aware_config.get("path_loss_model_file", "sumo/path_loss_model.json"))
+        conditions_file = os.path.join("data", self.mobility_aware_config.get("network_conditions_file", "network_conditions_mobility.json"))
+        exec_config_file = "ctrl/execution_config.json"
+
+        # Apply tc rules for each agent
+        for agent in self.agents:
+            container_name = f"wafl-node-{agent.agent_index}"
+            node_id = str(agent.agent_index)
+
+            # Run apply_dynamic_tc.py via SSH with execution-config for IP mapping
+            cmd = f"cd {self.config.get('deployment_location', '/home/denjo')} && python3 utils/apply_dynamic_tc.py --container {container_name} --epoch {epoch} --node-id {node_id} --conditions {conditions_file} --pathloss {model_file} --execution-config {exec_config_file}"
+
+            try:
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(agent.ip, username=self.config.get("user", "denjo"))
+
+                stdin, stdout, stderr = ssh.exec_command(cmd)
+                exit_status = stdout.channel.recv_exit_status()
+
+                if exit_status == 0:
+                    self.logger.debug(f"✅ Applied tc rules for agent {agent.name} (epoch {epoch})")
+                else:
+                    error_msg = stderr.read().decode().strip()
+                    self.logger.warning(f"⚠️ Failed to apply tc rules for agent {agent.name}: {error_msg}")
+
+                ssh.close()
+            except Exception as e:
+                self.logger.error(f"💥 Error applying tc for agent {agent.name}: {e}")
 
 
 if __name__ == "__main__":

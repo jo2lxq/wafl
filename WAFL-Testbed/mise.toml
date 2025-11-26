@@ -48,3 +48,10 @@ run = [
 run = [
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/cleanup.py\"",
 ]
+
+[tasks.sumo]
+description = "Complete mobility preprocessing pipeline (unified script)"
+run = [
+  ". .venv/bin/activate && python utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/",
+  ". .venv/bin/activate && python utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
+]

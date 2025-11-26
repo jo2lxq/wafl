@@ -31,6 +31,13 @@ WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は�
    - サポート方式: None, LZ4 (高速), zlib (高圧縮)
    - 実測ベースの最適化: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
 
+4. **Mobility-Aware Network Emulation**
+   - SUMO シミュレーションによるモビリティトレース生成
+   - ノード間距離に基づく動的ネットワーク品質エミュレーション
+   - Per-Peer Limitation: HTB + Filter による相手ごとのネットワーク制限
+   - 4段階品質ランク（Excellent/Good/Fair/Poor）
+   - 詳細: [docs/mobility_aware.md](docs/mobility_aware.md)
+
 #### トポロジー生成
 
 1. **Random Waypoint (RWP)** - 移動ありモデル
@@ -41,6 +48,11 @@ WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は�
    - ノード位置固定，純粋なグラフ密度評価用
    - Dense（平均次数 ≥ 10）/ Sparse（平均次数 ≤ 4）
    - ツール: `utils/generate_rgg_topology.py`
+
+3. **SUMO Mobility Trace** - モビリティベース
+   - SUMO シミュレーションから抽出したリアルな移動パターン
+   - ワンコマンド実行: `mise run sumo`
+
 
 ### クイックスタート
 
@@ -223,6 +235,13 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
    - Supported methods: None, LZ4 (fast), zlib (high compression)
    - Measurement-based optimization: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
 
+4. **Mobility-Aware Network Emulation**
+   - SUMO simulation-based mobility trace generation
+   - Distance-based dynamic network quality emulation
+   - Per-Peer Limitation: HTB + Filter for per-destination network constraints
+   - 4-tier quality ranks (Excellent/Good/Fair/Poor)
+   - Details: [docs/mobility_aware.md](docs/mobility_aware.md)
+
 #### Topology Generation
 
 1. **Random Waypoint (RWP)** - Mobile Model
@@ -233,6 +252,11 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
    - Fixed node positions for pure graph density evaluation
    - Dense (avg degree ≥ 10) / Sparse (avg degree ≤ 4)
    - Tool: `utils/generate_rgg_topology.py`
+
+3. **SUMO Mobility Trace** - Mobility-Based
+   - Realistic movement patterns extracted from SUMO simulations
+   - One-command execution: `mise run sumo`
+
 
 ### Quick Start
 

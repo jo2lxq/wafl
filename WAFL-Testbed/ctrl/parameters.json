@@ -15,6 +15,12 @@
     "loss": "0%",
     "rate": "100mbit"
   },
+  "mobility_aware": {
+    "enabled": false,
+    "contact_pattern_file": "contact_pattern_mobility.json",
+    "network_conditions_file": "network_conditions_mobility.json",
+    "path_loss_model_file": "sumo/path_loss_model.json"
+  },
   "method": {
     "ssp": {
       "enabled": true,
