@@ -132,7 +132,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 生成方法:
 ```bash
 # RWP (移動あり)
-python utils/generate_contact_pattern.py --nodes 28 --times 5000
+python utils/generate_rwp_topology.py --nodes 28 --times 5000
 
 # RGG Dense (静的・高密度)
 python utils/generate_rgg_topology.py --nodes 28 --epochs 5000 --density dense

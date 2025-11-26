@@ -35,7 +35,7 @@ WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は�
 
 1. **Random Waypoint (RWP)** - 移動ありモデル
    - ノードが移動し続ける標準的な WAFL シナリオ
-   - ツール: `utils/generate_contact_pattern.py`
+   - ツール: `utils/generate_rwp_topology.py`
 
 2. **Random Geometric Graph (RGG)** - 静的トポロジー
    - ノード位置固定，純粋なグラフ密度評価用
@@ -162,7 +162,7 @@ WAFL-Testbed/
 │   │   └── logger.py       # 構造化ログ
 │   └── config/             # エージェント設定（自動生成）
 ├── utils/                  # ユーティリティ
-│   ├── generate_contact_pattern.py  # RWP トポロジー生成
+│   ├── generate_rwp_topology.py     # RWP トポロジー生成
 │   ├── generate_rgg_topology.py     # RGG トポロジー生成
 │   ├── generate_datasets.py         # データセット生成
 │   └── generate_nonIID_filters.py   # Non-IID フィルター
@@ -227,7 +227,7 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
 
 1. **Random Waypoint (RWP)** - Mobile Model
    - Standard WAFL scenario with continuous node movement
-   - Tool: `utils/generate_contact_pattern.py`
+   - Tool: `utils/generate_rwp_topology.py`
 
 2. **Random Geometric Graph (RGG)** - Static Topology
    - Fixed node positions for pure graph density evaluation
@@ -354,7 +354,7 @@ WAFL-Testbed/
 │   │   └── logger.py       # Structured logging
 │   └── config/             # Agent config (auto-generated)
 ├── utils/                  # Utilities
-│   ├── generate_contact_pattern.py  # RWP topology generation
+│   ├── generate_rwp_topology.py     # RWP topology generation
 │   ├── generate_rgg_topology.py     # RGG topology generation
 │   ├── generate_datasets.py         # Dataset generation
 │   └── generate_nonIID_filters.py   # Non-IID filter generation

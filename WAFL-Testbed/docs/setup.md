@@ -211,7 +211,7 @@ python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense --r
 python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density sparse --randomseed 1
 
 # RWP (移動あり)
-python utils/generate_contact_pattern.py --nodes 3 --times 100
+python utils/generate_rwp_topology.py --nodes 3 --times 100
 ```
 
 生成されたファイルは `data/contact_pattern/` に保存される．

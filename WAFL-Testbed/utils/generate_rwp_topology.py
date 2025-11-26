@@ -40,7 +40,7 @@ def snapshot(x, y, t, areasize, radio_range, images_dir, title=""):
     plt.savefig(os.path.join(images_dir, f"node_location_{t:04d}.png"))
 
 
-def generate_contact_pattern(
+def generate_rwp_topology(
     n_time,
     n_node,
     min_travel_speed,
@@ -187,7 +187,7 @@ def main():
         print(f"  animation: {args.animation}")
         print(f"  output_dir: {args.output_dir}")
 
-        generate_contact_pattern(
+        generate_rwp_topology(
             args.times,
             n_node,
             args.min_speed,

@@ -1,30 +1,28 @@
+import json
 import os
 import pickle
-import subprocess
 
 import torch
 import torchvision
 
 # --- Configuration ---
-# Load configuration from execution_config
-config_path = "./ctrl/execution_config"
+# Load configuration from execution_config.json
+config_path = "./ctrl/execution_config.json"
+
 try:
-    result = subprocess.run(
-        f"source {config_path} && echo $WAFL_DEVICE_NAMES",
-        shell=True,
-        capture_output=True,
-        text=True,
-        executable="/bin/bash",
-        check=True,
-    )
-except subprocess.CalledProcessError as e:
-    raise RuntimeError(f"Failed to source execution_config or echo WAFL_DEVICE_NAMES: {e}") from e
-device_names_str = result.stdout.strip()
-if not device_names_str:
-    raise RuntimeError(
-        f"WAFL_DEVICE_NAMES is not set or empty after sourcing {config_path}. Please check your execution_config file."
-    )
-device_names = device_names_str.split(",")
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    # Extract node names from the JSON configuration
+    # Assuming the structure has a "nodes" list with "name" fields
+    device_names = [str(node["name"]) for node in config.get("nodes", [])]
+
+except (FileNotFoundError, json.JSONDecodeError) as e:
+    raise RuntimeError(f"Failed to load or parse {config_path}: {e}")
+
+if not device_names:
+    raise RuntimeError(f"No nodes found in {config_path}. Please check your execution_config.json file.")
+
 N_DEVICES = len(device_names)  # 🤖 Number of execution servers (WAFL Agents) from config.
 
 DATA_PATH = "./data/"  # 📥 Path to store the original downloaded dataset (e.g., MNIST).

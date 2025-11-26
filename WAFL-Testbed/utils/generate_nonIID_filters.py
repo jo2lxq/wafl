@@ -70,7 +70,14 @@ if __name__ == "__main__":
     index = 0
 
     ## 3. Creating the Non-IID filter
-    print("🔄 Creating Non-IID filter...")
+    print("🔄 Creating Non-IID filter (Class-Balanced Grouping)...")
+
+    # Pre-calculate candidate nodes for each label (Class-Balanced Grouping)
+    # label_to_nodes[label] = [node_id_1, node_id_2, ...]
+    label_to_nodes = {y: [] for y in range(n_output)}
+    for k in range(n_node):
+        label_to_nodes[k % n_output].append(k)
+
     for data in tqdm(trainloader, desc="Processing batches", unit="batch"):
         images, labels = data
 
@@ -78,18 +85,29 @@ if __name__ == "__main__":
         labels = labels.tolist()
 
         for i in range(batch_size):
-            # Adjust label assignment if n_node > n_output
-            node_label = labels[i] % n_output  # Ensure label is within n_output range
-            target_node = node_label % n_node  # Map label to a node
+            label = labels[i] % n_output  # Ensure label is within n_output range
+
+            # 1. Identify candidate nodes for this label (Primary Class)
+            candidate_nodes = label_to_nodes[label]
+
+            # 2. Randomly select one target node from the candidates
+            target_node = random.choice(candidate_nodes)
 
             if random.randint(0, 99) < ratio:
+                # Assign to the target node (Primary Data)
                 indices[target_node].append(index + i)
                 means[target_node] += images[i].mean(dim=(1, 2))
                 stds[target_node] += images[i].std(dim=(1, 2))
             else:
+                # Assign to a random noise node (Noise Data)
+                # Select from all nodes excluding the target_node
+                # Note: random.randint(a, b) includes b
+                # To pick x from [0, n_node-1] excluding target_node:
+                # Pick n from [0, n_node-2], if n >= target_node, then n += 1
                 n = random.randint(0, n_node - 2)
-                if target_node <= n:
+                if n >= target_node:
                     n += 1
+
                 indices[n].append(index + i)
                 means[n] += images[i].mean(dim=(1, 2))
                 stds[n] += images[i].std(dim=(1, 2))
