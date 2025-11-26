@@ -70,7 +70,7 @@ mise run start
      --cpus="1.0" \                    # CPU 制限（設定による）
      -p 10001:10001 \                  # 制御ポート
      -p 10002:10002 \                  # P2P ポート
-     wafl-node:v1.0
+     wafl-node:latest
    ```
 
 2. **リソース制限**: CPU 制限 (`--cpus`) を適用（`cpu_limit` 設定による）
@@ -368,7 +368,7 @@ ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
 - [ ] `execution_config.json` の IP アドレスが正しい
 - [ ] `parameters.json` の contact_pattern ファイルが存在する
 - [ ] 全ノードに SSH でパスワードなし接続可能
-- [ ] 全ノードに Docker イメージ `wafl-node:v1.0` が存在
+- [ ] 全ノードに Docker イメージ `wafl-node:latest` が存在
 - [ ] 前回の実験をクリーンアップ済み (`mise run stop`)
 
 #### 実験中の推奨事項

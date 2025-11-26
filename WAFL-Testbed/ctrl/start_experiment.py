@@ -59,7 +59,7 @@ def main():
             ports = f"-p {host_ctrl}:{cont_ctrl} -p {host_p2p}:{cont_p2p} "
 
             env_vars = "-e LOG_LEVEL=INFO "
-            image = "wafl-node:v1.0"
+            image = "wafl-node:latest"
 
             # Resource limits
             cpu_limit = node.get("cpu_limit")

@@ -11,6 +11,7 @@ run = [
   ". .venv/bin/activate",
   "uv sync",
   "uv run pre-commit install || true",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && bash ctrl/setup.sh\"",
 ]
 
 [tasks.lint]
@@ -29,8 +30,6 @@ run = [
   "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/mise setup\"",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && bash ctrl/setup.sh\"",
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python ctrl/deploy.py\"",
 ]
 

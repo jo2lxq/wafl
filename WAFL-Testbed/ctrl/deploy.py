@@ -103,8 +103,8 @@ def deploy_to_node(node, config, deployment_location, user):
             return False
 
     # Build Docker image on remote node
-    log(f"🏗️ Building Docker image on {device_name}...", device=device_name)
-    build_cmd = f"cd {target_dir} && DOCKER_BUILDKIT=1 docker build --rm -t wafl-node:v1.0 ."
+    log(f"🏗️  Building Docker image on {device_name}...", device=device_name)
+    build_cmd = f"cd {target_dir} && DOCKER_BUILDKIT=1 docker build --rm -t wafl-node:latest ."
     if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, build_cmd]):
         log(f"❌ Failed to build Docker image on {device_name}", device=device_name)
         return False

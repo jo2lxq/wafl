@@ -20,9 +20,6 @@ set -e  # エラー時に即座に終了
 # ==========================================
 CONFIG_FILE="ctrl/execution_config.json"
 NTP_SERVER_IP="192.168.11.10"  # NTP サーバーの IP（必要に応じて変更）
-IMAGE_NAME="wafl-node"
-IMAGE_TAG="v1.0"
-FULL_IMAGE_NAME="${IMAGE_NAME}:${IMAGE_TAG}"
 
 # 色の定義
 RED='\033[0;31m'
@@ -71,7 +68,6 @@ echo "  Config file: $CONFIG_FILE"
 echo "  Remote user: $REMOTE_USER"
 echo "  Unique hosts: ${HOSTS[@]}"
 echo "  NTP server: $NTP_SERVER_IP"
-echo "  Docker image: $FULL_IMAGE_NAME"
 echo ""
 
 # ==========================================
