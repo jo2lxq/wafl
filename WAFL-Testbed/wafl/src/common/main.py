@@ -14,11 +14,11 @@ from typing import Any, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from compression_manager import CompressionManager
-from logger import MetricsLogger
-from monitor_resource import monitor
-from net import Net
-from udp_model_sharing import UDPModelSharing
+
+from .compression_manager import CompressionManager
+from .logger import MetricsLogger
+from .net import Net
+from .udp_model_sharing import UDPModelSharing
 
 
 class PickledDataset(torch.utils.data.Dataset):
@@ -84,13 +84,21 @@ class ModelLearningUtils:
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.wafl_phase_params["learning_rate"])
         self.experiment_id = experiment_id
-        self.csv_file_path = f"./results/{self.experiment_id}/learning-data.csv"
-        os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
-        with open(self.csv_file_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["epoch", "train_acc", "train_loss", "test_acc", "test_loss"])
-        self.logger.info(f"📊 CSV file created: {self.csv_file_path}")
-        self.logger.info("Initialized the Model Learning Utils instance.")
+        # Metrics logger is initialized in WaflAgent but we need access to it or create one
+        # Actually ModelLearningUtils is initialized inside WaflAgent (in ctrl/main.py) or used by it?
+        # Wait, this is running on the node.
+        # The MetricsLogger is passed or initialized?
+        # In the original code, MetricsLogger was initialized in CTRL_TCP or similar?
+        # Let's check where MetricsLogger is instantiated.
+        # It seems it was instantiated in CTRL_TCP.__init__ in the previous `view_file` of main.py (lines 670+).
+        # But ModelLearningUtils is independent.
+        # We should probably initialize MetricsLogger here if we want to use it, OR pass it.
+        # However, to keep it simple and avoid changing signatures too much, let's instantiate it here.
+        from .logger import MetricsLogger
+
+        self.metrics_logger = MetricsLogger(experiment_id, "node")  # node name is not used in filename
+
+        self.logger.debug("Initialized Model Learning Utils")
         self.train_loss = 0
         self.train_accuracy = 0
         self.epoch_number = 0
@@ -139,8 +147,9 @@ class ModelLearningUtils:
         """
         Implementation of the Self-Learning Epoch Logic for WAFL-MLP.
         """
+        phase_name = "WAFL" if WAFL_LEARN else "SELF"
         if not WAFL_LEARN:
-            self.logger.info(f"🧠 Beginning the Self-Learning Epoch: {five_digit_number_str}")
+            self.logger.debug(f"Training [SELF] - Epoch {five_digit_number_str} started")
         SUCCESS = False
 
         # Reset SSP tracking
@@ -190,25 +199,26 @@ class ModelLearningUtils:
                     return False
             self.train_loss = total_loss / num_batches if num_batches > 0 else 0.0
             self.train_accuracy = correct_train / total_train if total_train > 0 else 0.0
+
+            # Always evaluate the model to get test metrics
+            test_loss, test_accuracy = self._evaluate_model()
+
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {five_digit_number_str}")
+
             self.logger.info(f"📉 Training Loss: {self.train_loss:.6f}")
             self.logger.info(f"📈 Training Accuracy: {self.train_accuracy:.4f}")
-            test_loss, test_accuracy = self._evaluate_model()
             self.logger.info(f"📉 Test Loss: {test_loss:.4f}")
             self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
-            self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
 
-            # Log to structured logger
-            self.ctrl_tcp.metrics_logger.log(
-                "epoch_complete",
-                epoch=self.epoch_number,
-                train_acc=self.train_accuracy,
-                train_loss=self.train_loss,
-                test_acc=test_accuracy,
-                test_loss=test_loss,
-                phase="SELF",
-            )
+            # Log metrics to CSV
+            metrics = {
+                "train_loss": self.train_loss,
+                "train_accuracy": self.train_accuracy,
+                "test_loss": test_loss,
+                "test_accuracy": test_accuracy,
+            }
+            self.ctrl_tcp.metrics_logger.log_epoch(phase_name, self.epoch_number + 1, metrics)
 
             self.epoch_number += 1
             torch.save(
@@ -238,32 +248,35 @@ class ModelLearningUtils:
                     self.logger.error(f"Could not get IP for neighbour {neighbour}")
                     continue
                 received_model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
+                if isinstance(received_model, str):
+                    self.logger.error(f"Failed to receive model from {neighbour}")
+                    continue
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
             self.net.load_state_dict(local_model)
+
             SELF_LEARN_FLAG = True
             if n_nbr:
+                # Call self_learn with WAFL_LEARN=True to correct logging
                 SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
             else:
                 self.logger.info("No model exchange with other agents in this WAFL epoch.")
                 test_loss, test_accuracy = self._evaluate_model()
+
                 self.logger.info(f"📉 Training Loss (no exchange): {self.train_loss:.6f}")
                 self.logger.info(f"📈 Training Accuracy (no exchange): {self.train_accuracy:.4f}")
                 self.logger.info(f"📉 Test Loss (no exchange): {test_loss:.4f}")
                 self.logger.info(f"📈 Test Accuracy (no exchange): {test_accuracy:.4f}")
-                self._save_results_to_csv(self.epoch_number, self.train_accuracy, self.train_loss, test_accuracy, test_loss)
 
-                # Log to structured logger
-                self.ctrl_tcp.metrics_logger.log(
-                    "epoch_complete",
-                    epoch=self.epoch_number,
-                    train_acc=self.train_accuracy,
-                    train_loss=self.train_loss,
-                    test_acc=test_accuracy,
-                    test_loss=test_loss,
-                    phase="WAFL",
-                )
+                # Log metrics to CSV
+                metrics = {
+                    "train_loss": self.train_loss,
+                    "train_accuracy": self.train_accuracy,
+                    "test_loss": test_loss,
+                    "test_accuracy": test_accuracy,
+                }
+                self.ctrl_tcp.metrics_logger.log_epoch("WAFL", self.epoch_number + 1, metrics)
 
                 self.epoch_number += 1
                 torch.save(
@@ -271,6 +284,7 @@ class ModelLearningUtils:
                     self.model_instance_path,
                 )
                 self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
+
             if not SELF_LEARN_FLAG:
                 raise Exception("SELF-LEARNING ERROR")
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {five_digit_number_str}")
@@ -304,20 +318,8 @@ class ModelLearningUtils:
         self.net.train()
         accuracy = correct / total
         avg_test_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        self.logger.info(f"📉 Test Loss: {avg_test_loss:.6f}")
+        self.logger.debug(f"Model evaluation - Test loss: {avg_test_loss:.6f}")
         return avg_test_loss, accuracy
-
-    def _save_results_to_csv(self, epoch_str: int, train_accuracy: float, train_loss: float, test_accuracy: float, test_loss: float):
-        """
-        Save training results to CSV file.
-        """
-        try:
-            with open(self.csv_file_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow([epoch_str, f"{train_accuracy:.4f}", f"{train_loss:.6f}", f"{test_accuracy:.4f}", f"{test_loss:.6f}"])
-            self.logger.debug(f"📝 Results saved to CSV for epoch {epoch_str}")
-        except Exception as e:
-            self.logger.error(f"💥 Failed to save results to CSV: {e}")
 
 
 class ModelSharingUtils:
@@ -341,7 +343,7 @@ class ModelSharingUtils:
         self.port = port
         self.timeout = timeout
         self.logger = logging.getLogger("ModelSharingUtils")
-        self.logger.info("Initialized the Model Sharing Utils instance.")
+        self.logger.debug("Initialized Model Sharing Utils")
 
         # Load method settings from parameters.json
         try:
@@ -552,7 +554,7 @@ class ModelSharingUtils:
             s.bind(("0.0.0.0", self.port))
             s.settimeout(self.timeout)
             s.listen()
-            self.logger.info(f"🔗 Socket bound at {self.addr}:{self.port} and listening.")
+            self.logger.info(f"P2P server listening on {self.addr}:{self.port}")
             while self.fLISTENER_ACTIVE:
                 try:
                     conn, addr_info = s.accept()
@@ -571,7 +573,7 @@ class ModelSharingUtils:
                     command, options = data.split(":")
                     if command != ModelSharingUtils.cMDLREQ:
                         raise Exception("COMMAND MISMATCH")
-                    self.logger.info("📡 Dispatching Model Data to the WAFL Peer.")
+                    self.logger.info("P2P server - Sending model data to peer")
                     DISPATCHED = self._dispatch_model(conn, options)
                     if not DISPATCHED:
                         raise Exception("NOT DISPATCHED")
@@ -610,7 +612,7 @@ class ModelSharingUtils:
         while not FETCHED and self.fLISTENER_ACTIVE:
             FETCHED, model_data = self._fetch_model(peer_IP, other_options)
             if FETCHED:
-                self.logger.info(f"✅ Retrieved model parameters from peer: {str(peer_IP)}")
+                self.logger.info(f"Model received from peer {str(peer_IP)}")
                 return model_data
             time.sleep(WAIT_TIME)
             WAIT_TIME **= GROWTH_FACTOR
@@ -668,18 +670,18 @@ class CTRL_TCP:
         self.ctrl_listener_thread.start()
 
         # Initialize Metrics Logger
-        self.metrics_logger = MetricsLogger(self.experiment_id, self.name)
+        self.metrics_logger = MetricsLogger(self.experiment_id, self.name, self.start_timestamp)
 
         # Start Resource Monitor
         self.monitor_thread = threading.Thread(
-            target=monitor,
-            args=(f"./results/{self.experiment_id}/resources_{self.name}.csv", 1.0),
+            target=self._monitor_resources,
+            args=(f"./results/{self.experiment_id}/resources.csv", 1.0, self.start_timestamp),
             daemon=True,
             name="ResourceMonitor",
         )
         self.monitor_thread.start()
 
-        self.logger.info("Initialized the CTRL_TCP instance with configuration parameters.")
+        self.logger.debug("Initialized CTRL_TCP instance")
 
     def _load_config(self, config_path: str) -> bool:
         """
@@ -704,6 +706,12 @@ class CTRL_TCP:
             if not isinstance(self.experiment_id, str):
                 self.logger.error("Invalid format for 'experiment_info.experiment_id' in JSON. String required.")
                 return False
+
+            self.start_timestamp = experiment_info.get("start_timestamp")
+            if self.start_timestamp is None:
+                self.logger.warning("start_timestamp not found in config, using current time fallback")
+                self.start_timestamp = time.time()
+
             wafl_devices_data = config_data.get("infrastructure")
             if not isinstance(wafl_devices_data, dict):
                 self.logger.error("Invalid format for 'wafl_devices' in JSON. Dictionary required.")
@@ -777,6 +785,50 @@ class CTRL_TCP:
             self.logger.warning(f"Index for agent {agent_index} is out of bounds for the IP list. Data inconsistency might exist.")
             return None
 
+    def _monitor_resources(self, output_file: str, interval: float, start_timestamp: float):
+        """Monitor system resources and write to CSV."""
+        import psutil
+
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        # Write header if file doesn't exist
+        if not os.path.exists(output_file):
+            with open(output_file, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["timestamp", "cpu_percent", "memory_percent", "memory_used_mb"])
+
+        while True:
+            try:
+                # Calculate relative time
+                current_time = time.time()
+                relative_time = current_time - start_timestamp
+
+                cpu_percent = psutil.cpu_percent(interval=None)
+                memory_info = psutil.virtual_memory()
+                memory_percent = memory_info.percent
+                memory_used_mb = memory_info.used / (1024 * 1024)
+
+                with open(output_file, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([relative_time, cpu_percent, memory_percent, memory_used_mb])
+
+                time.sleep(interval)
+            except Exception as e:
+                self.logger.error(f"Error in resource monitor: {e}")
+                time.sleep(interval)
+                timestamp = time.time()
+                cpu_percent = psutil.cpu_percent(interval=None)
+                memory = psutil.virtual_memory()
+
+                with open(output_file, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, cpu_percent, memory.percent, memory.used / (1024 * 1024)])
+
+                time.sleep(interval)
+            except Exception as e:
+                self.logger.error(f"Error monitoring resources: {e}")
+                time.sleep(interval)
+
     def setup_local_wafl_node(self, agent_index: int, device_name: str) -> None:
         """
         Sets up the node with the given device name.
@@ -796,8 +848,8 @@ class CTRL_TCP:
         self.model_sharing = ModelSharingUtils(agent_index, device_name, device_ip, self.p2p_port, self.timeout)
         self.model_learning = ModelLearningUtils(
             "./dataset",
-            f"./results/{self.experiment_id}/model_instance.pth",
-            "./config/contact_pattern.json",
+            f"./results/{self.experiment_id}/model.pth",
+            "./contact_pattern.json",
             self.model_sharing,
             self,
             self.experiment_id,
@@ -844,7 +896,7 @@ class CTRL_TCP:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("0.0.0.0", self.ctrl_port))
             s.listen()
-            self.logger.info(f"🔗 Socket bound at {self.addr}:{self.ctrl_port} and listening.")
+            self.logger.info(f"Control server listening on {self.addr}:{self.ctrl_port}")
 
             while self.fLISTENER_ACTIVE:
                 try:
@@ -861,7 +913,7 @@ class CTRL_TCP:
                         self.logger.warning("No valid command received from client or reception failed.")
 
                     conn.close()
-                    self.logger.info(f"Connection with {addr_info[0]}:{addr_info[1]} closed.")
+                    self.logger.info(f"Control connection closed - {addr_info[0]}:{addr_info[1]}")
 
                 except socket.timeout:
                     # This is expected behavior to allow the loop to check fLISTENER_ACTIVE.
@@ -878,7 +930,7 @@ class CTRL_TCP:
         Returns:
             bool: True if the command was successfully processed, False otherwise.
         """
-        self.logger.info(f"Processing command: '{command_str}'")
+        self.logger.info(f"Command received: {command_str}")
         parts = command_str.split("-")
 
         main_command = parts[0] if len(parts) > 0 else ""
@@ -890,7 +942,7 @@ class CTRL_TCP:
                     conn.sendall("ERROR\r\n".encode("utf-8"))
                     return False
                 # Handle the KILL command by setting flags to terminate loops.
-                self.logger.info("KILL command received. Shutting down listeners and ongoing tasks.")
+                self.logger.info("KILL command - Shutting down gracefully")
                 self.fLISTENER_ACTIVE = False
                 if self.model_sharing is not None:
                     self.model_sharing.fLISTENER_ACTIVE = False
@@ -1116,4 +1168,10 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         force=True,
     )
-    comm_interface = CTRL_TCP("./config/config.json")
+    comm_interface = CTRL_TCP("./config.json")
+
+    # Keep the main thread alive while the control server thread runs
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        logging.info("Shutting down...")

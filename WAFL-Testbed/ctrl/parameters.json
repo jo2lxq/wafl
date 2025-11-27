@@ -1,7 +1,7 @@
 {
   "epochs": {
     "self": 64,
-    "wafl": 4096
+    "wafl": 2048
   },
   "contact_pattern": "rwp_n28_a1000_r100_p10_s01.json",
   "wafl_phase": {
@@ -23,7 +23,7 @@
   },
   "method": {
     "ssp": {
-      "enabled": true,
+      "enabled": false,
       "staleness": 5,
       "ssp_threshold": 0.9
     },

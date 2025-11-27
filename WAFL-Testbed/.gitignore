@@ -4,5 +4,5 @@ results/
 data/
 
 **/*.pkl
-.env
-execution_config
+**/*.d
+**/.env

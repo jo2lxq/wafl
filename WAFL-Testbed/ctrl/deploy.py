@@ -109,6 +109,12 @@ def deploy_to_node(node, config, deployment_location, user):
         log(f"❌ Failed to build Docker image on {device_name}", device=device_name)
         return False
 
+    # Prune Docker images
+    prune_cmd = f"cd {target_dir} && docker image prune -f"
+    if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, prune_cmd]):
+        log(f"❌ Failed to prune Docker images on {device_name}", device=device_name)
+        return False
+
     log(f"✅ Successfully deployed to {device_name}", device=device_name)
     return True
 

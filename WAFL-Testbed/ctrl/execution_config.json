@@ -197,6 +197,8 @@
       "host_port_p2p": 10002
     }
   ],
-  "deployment_location": "/home/denjo",
-  "user": "denjo"
+  "deployment_location": "/home/denjo/workspace/ktakahashi",
+  "user": "denjo",
+  "experiment_name": "normal",
+  "log_level": "info"
 }

@@ -14,19 +14,34 @@ if [ -z "$CONTAINER" ]; then
     exit 1
 fi
 
-# 1. Get Container PID
-PID=$(docker inspect -f '{{.State.Pid}}' $CONTAINER)
-if [ -z "$PID" ]; then
-    echo "Error: Container $CONTAINER not found or not running."
+# 1. Check if container exists and is running
+CONTAINER_STATE=$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null)
+if [ "$CONTAINER_STATE" != "true" ]; then
+    echo "Error: Container $CONTAINER is not running (State: $CONTAINER_STATE)."
+    echo "Waiting 2 seconds for container to start..."
+    sleep 2
+    CONTAINER_STATE=$(docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null)
+    if [ "$CONTAINER_STATE" != "true" ]; then
+        echo "Error: Container $CONTAINER still not running after wait."
+        exit 1
+    fi
+fi
+
+# 2. Get Container PID
+PID=$(docker inspect -f '{{.State.Pid}}' $CONTAINER 2>/dev/null)
+if [ -z "$PID" ] || [ "$PID" = "0" ]; then
+    echo "Error: Container $CONTAINER not found or PID is 0."
+    echo "Container status:"
+    docker inspect -f 'Running: {{.State.Running}}, Status: {{.State.Status}}, PID: {{.State.Pid}}' $CONTAINER 2>/dev/null || echo "Container not found"
     exit 1
 fi
 
 echo "Container $CONTAINER found with PID $PID"
 
-# 2. Get veth interface index from container's namespace
+# 3. Get veth interface index from container's namespace
 # We need to run ip link inside the container's network namespace
 # Since we are on the host, we can use nsenter
-VETH_INDEX=$(sudo nsenter -t $PID -n ip link | grep "eth0@" | awk -F': ' '{print $1}')
+VETH_INDEX=$(sudo nsenter --net=/proc/$PID/ns/net ip link | grep "eth0@" | awk -F': ' '{print $1}')
 
 if [ -z "$VETH_INDEX" ]; then
     echo "Error: Could not find eth0 interface index in container."
@@ -35,7 +50,7 @@ fi
 
 echo "Container eth0 index: $VETH_INDEX"
 
-# 3. Find the corresponding veth interface on the host
+# 4. Find the corresponding veth interface on the host
 # The host veth interface will have an index that matches the container's iflink,
 # but usually we look for the interface that links TO the container's index.
 # Actually, `ip link` on host shows `vethXXXX@ifYYYY`. YYYY is the index inside the container.
@@ -43,7 +58,7 @@ echo "Container eth0 index: $VETH_INDEX"
 # A more reliable way:
 # Inside container: `cat /sys/class/net/eth0/iflink` -> gets the index of the peer on host.
 
-HOST_VETH_INDEX=$(sudo nsenter -t $PID -n cat /sys/class/net/eth0/iflink)
+HOST_VETH_INDEX=$(sudo nsenter --net=/proc/$PID/ns/net cat /sys/class/net/eth0/iflink)
 HOST_VETH=$(ip link | grep "^${HOST_VETH_INDEX}:" | awk -F': ' '{print $2}' | awk -F'@' '{print $1}')
 
 if [ -z "$HOST_VETH" ]; then
@@ -53,7 +68,7 @@ fi
 
 echo "Identified host interface: $HOST_VETH"
 
-# 4. Apply tc rules
+# 5. Apply tc rules
 echo "Applying TC rules to $HOST_VETH: Delay=$DELAY, Loss=$LOSS, Rate=$RATE"
 
 # Clear existing rules

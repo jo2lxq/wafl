@@ -41,6 +41,10 @@ WORKDIR /app
 # Copy only dependency files first (for better layer caching)
 COPY pyproject.toml uv.lock ./
 
+# Copy wafl directory structure (needed for package installation)
+COPY wafl/__init__.py ./wafl/__init__.py
+COPY wafl/src/__init__.py ./wafl/src/__init__.py
+
 # Install dependencies with cache mount for uv
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -62,4 +66,4 @@ COPY ctrl/ ./ctrl/
 EXPOSE 10001 10002
 
 # Default command (can be overridden)
-CMD ["uv", "run", "python", "-m", "wafl.main"]
+CMD ["uv", "run", "python", "-m", "src.common.main"]

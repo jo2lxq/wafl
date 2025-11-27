@@ -45,14 +45,17 @@ WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は�
    - ツール: `utils/generate_rwp_topology.py`
 
 2. **Random Geometric Graph (RGG)** - 静的トポロジー
-   - ノード位置固定，純粋なグラフ密度評価用
-   - Dense（平均次数 ≥ 10）/ Sparse（平均次数 ≤ 4）
-   - ツール: `utils/generate_rgg_topology.py`
+1.  **Random Waypoint (RWP)** - 移動ありモデル
+    -   ノードが移動し続ける標準的な WAFL シナリオ
+    -   ツール: `utils/generate_rwp_topology.py`
 
-3. **SUMO Mobility Trace** - モビリティベース
-   - SUMO シミュレーションから抽出したリアルな移動パターン
-   - ワンコマンド実行: `mise run sumo`
+2.  **Random Geometric Graph (RGG)** - 静的トポロジー
+    -   ノード位置固定，純粋なグラフ密度評価用
+    -   Dense（平均次数 ≥ 10）/ Sparse（平均次数 ≤ 4）
+    -   ツール: `utils/generate_rgg_topology.py`
 
+3.  **SUMO Mobility Trace** - モビリティベース
+    -   SUMO シミュレーションから抽出したリアルな移動パターン
 
 ### クイックスタート
 
@@ -149,8 +152,8 @@ mise run start
 # 結果収集
 mise run collect
 
-# クリーンアップ
-mise run stop
+# 停止
+# Ctrl+C で停止（全エージェントが正常終了します）
 ```
 
 ### ディレクトリ構造
@@ -220,43 +223,42 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
 
 #### Implemented Protocols & Methods
 
-1. **Semi-Synchronous Protocol (SSP) - Reset Model**
-   - Prioritizes learning speed by discarding slow nodes
-   - Configurable threshold `ssp_threshold` (e.g., 0.9 = force progress at 90% completion)
-   - Detailed wasted computation metrics (`wasted_ms`, `wasted_norm`, `batches_processed`)
+1.  **Semi-Synchronous Protocol (SSP) - Reset Model**
+    -   Prioritizes learning speed by discarding slow nodes
+    -   Configurable threshold `ssp_threshold` (e.g., 0.9 = force progress at 90% completion)
+    -   Detailed wasted computation metrics (`wasted_ms`, `wasted_norm`, `batches_processed`)
 
-2. **UDP + XOR-based FEC (Forward Error Correction)**
-   - Avoids TCP retransmission delays with fast UDP transfer
-   - Block-based XOR redundancy (redundancy controlled by `fec_m` parameter)
-   - Survival rate and FEC recovery statistics tracking
+2.  **UDP + XOR-based FEC (Forward Error Correction)**
+    -   Avoids TCP retransmission delays with fast UDP transfer
+    -   Block-based XOR redundancy (redundancy controlled by `fec_m` parameter)
+    -   Survival rate and FEC recovery statistics tracking
 
-3. **Adaptive Compression**
-   - Dynamic compression method selection based on bandwidth and CPU load
-   - Supported methods: None, LZ4 (fast), zlib (high compression)
-   - Measurement-based optimization: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
+3.  **Adaptive Compression**
+    -   Dynamic compression method selection based on bandwidth and CPU load
+    -   Supported methods: None, LZ4 (fast), zlib (high compression)
+    -   Measurement-based optimization: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
 
-4. **Mobility-Aware Network Emulation**
-   - SUMO simulation-based mobility trace generation
-   - Distance-based dynamic network quality emulation
-   - Per-Peer Limitation: HTB + Filter for per-destination network constraints
-   - 4-tier quality ranks (Excellent/Good/Fair/Poor)
-   - Details: [docs/mobility_aware.md](docs/mobility_aware.md)
+4.  **Mobility-Aware Network Emulation**
+    -   SUMO simulation-based mobility trace generation
+    -   Distance-based dynamic network quality emulation
+    -   Per-Peer Limitation: HTB + Filter for per-destination network constraints
+    -   4-tier quality ranks (Excellent/Good/Fair/Poor)
+    -   Details: [docs/mobility_aware.md](docs/mobility_aware.md)
 
 #### Topology Generation
 
-1. **Random Waypoint (RWP)** - Mobile Model
-   - Standard WAFL scenario with continuous node movement
-   - Tool: `utils/generate_rwp_topology.py`
+1.  **Random Waypoint (RWP)** - Mobile Model
+    -   Standard WAFL scenario with continuous node movement
+    -   Tool: `utils/generate_rwp_topology.py`
 
-2. **Random Geometric Graph (RGG)** - Static Topology
-   - Fixed node positions for pure graph density evaluation
-   - Dense (avg degree ≥ 10) / Sparse (avg degree ≤ 4)
-   - Tool: `utils/generate_rgg_topology.py`
+2.  **Random Geometric Graph (RGG)** - Static Topology
+    -   Fixed node positions for pure graph density evaluation
+    -   Dense (avg degree ≥ 10) / Sparse (avg degree ≤ 4)
+    -   Tool: `utils/generate_rgg_topology.py`
 
-3. **SUMO Mobility Trace** - Mobility-Based
-   - Realistic movement patterns extracted from SUMO simulations
-   - One-command execution: `mise run sumo`
-
+3.  **SUMO Mobility Trace** - Mobility-Based
+    -   Realistic movement patterns extracted from SUMO simulations
+    -   One-command execution: `mise run sumo`
 
 ### Quick Start
 
@@ -353,8 +355,14 @@ mise run start
 # Collect results
 mise run collect
 
-# Cleanup
-mise run stop
+# Stop
+# Press Ctrl+C to stop (graceful shutdown of all agents)
+```
+
+### 5. Cleanup
+Stop the experiment by pressing `Ctrl+C`. The control server will handle the graceful shutdown of all agents.
+```bash
+# Press Ctrl+C in the terminal running 'mise start'
 ```
 
 ### Directory Structure

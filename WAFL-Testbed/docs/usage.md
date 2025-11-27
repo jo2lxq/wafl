@@ -171,39 +171,9 @@ results/
 
 ---
 
-### 4. クリーンアップ (Cleanup)
+### 4. 高度な使用法
 
-全コンテナを停止し，ネットワーク設定をリセットする．
-
-```bash
-mise run stop
-```
-
-#### 実行内容
-
-1. 全実行サーバーで Docker コンテナを停止・削除
-   ```bash
-   docker stop wafl-node-0
-   docker rm wafl-node-0
-   ```
-
-2. `tc` ルールを削除（ネットワーク設定をリセット）
-   ```bash
-   tc qdisc del dev veth0 root
-   ```
-
-3. 一時ファイルのクリーンアップ
-
-**重要**: 実験後は必ずこのコマンドを実行すること
-- ゾンビプロセスの防止
-- ネットワークルールの残留防止
-- ポート衝突の防止
-
----
-
-### 5. 高度な使用法
-
-#### 5.1 カスタムトポロジーで実験
+#### 4.1 カスタムトポロジーで実験
 
 ```bash
 # 1. トポロジー生成
@@ -217,7 +187,7 @@ mise run deploy
 mise run start
 ```
 
-#### 5.2 異なる SSP 閾値での比較実験
+#### 4.2 異なる SSP 閾値での比較実験
 
 **実験 1: 厳密同期 (Baseline)**
 ```json
@@ -236,7 +206,7 @@ mise run start
 
 各設定で実験を実行し，結果を比較する．
 
-#### 5.3 UDP + FEC の有効性検証
+#### 4.3 UDP + FEC の有効性検証
 
 **Step 1**: Baseline (TCP，パケットロスなし)
 ```json
@@ -264,7 +234,7 @@ mise run start
 
 `results/` 内の `survival_rate` を比較する．
 
-#### 5.4 Adaptive Compression の動作確認
+#### 4.4 Adaptive Compression の動作確認
 
 ```json
 {
@@ -282,7 +252,7 @@ mise run start
 
 ---
 
-### 6. トラブルシューティング
+### 5. トラブルシューティング
 
 #### 問題: 接続エラー
 
@@ -361,7 +331,7 @@ ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
 
 ---
 
-### 7. ベストプラクティス
+### 6. ベストプラクティス
 
 #### 実験前チェックリスト
 
@@ -369,7 +339,6 @@ ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
 - [ ] `parameters.json` の contact_pattern ファイルが存在する
 - [ ] 全ノードに SSH でパスワードなし接続可能
 - [ ] 全ノードに Docker イメージ `wafl-node:latest` が存在
-- [ ] 前回の実験をクリーンアップ済み (`mise run stop`)
 
 #### 実験中の推奨事項
 
@@ -380,7 +349,7 @@ ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
 #### 実験後の推奨事項
 
 - 必ず `mise run collect` で結果を収集
-- `mise run stop` でクリーンアップ
+- `Ctrl+C` でクリーンアップ
 - 実験 ID をメモ（後で結果を特定するため）
 
 ---
@@ -422,14 +391,6 @@ mise run collect
 ```
 
 Collects logs and metrics from all nodes to `results/{experiment_id}/`.
-
-### 4. Cleanup
-
-```bash
-mise run stop
-```
-
-Stops containers and resets network settings.
 
 ### Troubleshooting
 

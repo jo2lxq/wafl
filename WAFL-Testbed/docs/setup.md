@@ -236,9 +236,6 @@ mise run deploy
 
 # 実験開始（Ctrl+C で停止可能）
 mise run start
-
-# 終了後，クリーンアップ
-mise run stop
 ```
 
 **期待される出力**:
@@ -290,7 +287,7 @@ sudo usermod -aG docker $USER
 sudo ss -tulpn | grep 10001
 
 # 既存プロセスを停止
-mise run stop
+# Ctrl+C で停止するか，手動で docker stop を実行
 
 # または execution_config.json でポート番号を変更
 ```
@@ -395,7 +392,6 @@ python utils/generate_datasets.py
 ```bash
 mise run deploy
 mise run start
-mise run stop
 ```
 
 ### Troubleshooting
