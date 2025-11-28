@@ -26,15 +26,23 @@ def load_config():
 
 
 def get_latest_experiment_id():
-    """Find the latest experiment directory in results/."""
+    """Find the latest experiment directory in results/ based on timestamp in name."""
     if not RESULTS_DIR.exists():
         return None
-    # List all directories in results/
-    dirs = [d for d in RESULTS_DIR.iterdir() if d.is_dir()]
+    # List all directories in results/ excluding hidden ones like .deploy
+    dirs = [d for d in RESULTS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")]
     if not dirs:
         return None
-    # Return the one with the latest modification time
-    return max(dirs, key=lambda d: d.stat().st_mtime).name
+
+    # Helper to extract timestamp from folder name (e.g., normal-20251127T175937)
+    def extract_timestamp(d):
+        try:
+            return d.name.split("-")[-1]
+        except IndexError:
+            return ""
+
+    # Return the one with the latest timestamp string (lexicographical sort works for ISO-like format)
+    return max(dirs, key=extract_timestamp).name
 
 
 def collect_results(experiment_id, config):
@@ -130,29 +138,72 @@ def analyze_results(experiment_id):
     sns.set_theme(style="darkgrid")
 
     # Melt dataframe for easier plotting with seaborn
-    # We want to plot train_accuracy and test_accuracy
     acc_df = df.melt(id_vars=["epoch", "phase", "node"], value_vars=["train_accuracy", "test_accuracy"], var_name="metric", value_name="value")
     loss_df = df.melt(id_vars=["epoch", "phase", "node"], value_vars=["train_loss", "test_loss"], var_name="metric", value_name="value")
 
+    # --- Helper to add phase switch line ---
+    def add_phase_line(ax, x_col="epoch"):
+        # Find start of WAFL phase
+        wafl_start = df[df["phase"] == "WAFL"][x_col].min()
+        if not pd.isna(wafl_start):
+            ax.axvline(x=wafl_start, color="firebrick", linestyle="--", alpha=0.7)
+            # Place text slightly to the right of the line, at the top
+            y_min, y_max = ax.get_ylim()
+            ax.text(wafl_start, y_max * 0.15, " Phase Switch", color="firebrick", va="bottom")
+
+    # --- Aggregated Plots (Mean + SD) ---
+    # optimization: use errorbar='sd' (standard deviation) instead of bootstrap CI (slow)
     if not acc_df.empty:
         plt.figure(figsize=(12, 6))
-        sns.lineplot(data=acc_df, x="epoch", y="value", hue="metric", style="phase", markers=True, dashes=False)
-        plt.title(f"Accuracy over Epochs ({experiment_id})")
+        ax = sns.lineplot(data=acc_df, x="epoch", y="value", hue="metric", style="phase", markers=False, dashes=False, errorbar="sd")
+        add_phase_line(ax, "epoch")
+        plt.title(f"Accuracy over Epochs (Mean ± SD) - {experiment_id}")
         plt.ylabel("Accuracy")
         plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "accuracy_curve.png")
+        plt.savefig(analysis_dir / "accuracy_mean.png")
         plt.close()
-        print("  ✅ Generated accuracy_curve.png")
+        print("  ✅ Generated accuracy_mean.png")
 
     if not loss_df.empty:
         plt.figure(figsize=(12, 6))
-        sns.lineplot(data=loss_df, x="epoch", y="value", hue="metric", style="phase", markers=True, dashes=False)
-        plt.title(f"Loss over Epochs ({experiment_id})")
+        ax = sns.lineplot(data=loss_df, x="epoch", y="value", hue="metric", style="phase", markers=False, dashes=False, errorbar="sd")
+        add_phase_line(ax, "epoch")
+        plt.title(f"Loss over Epochs (Mean ± SD) - {experiment_id}")
         plt.ylabel("Loss")
         plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "loss_curve.png")
+        plt.savefig(analysis_dir / "loss_mean.png")
         plt.close()
-        print("  ✅ Generated loss_curve.png")
+        print("  ✅ Generated loss_mean.png")
+
+    # --- Node-wise Plots (Spaghetti Plots) ---
+    # Useful for identifying outliers or stragglers
+    # optimization: estimator=None avoids expensive aggregation
+    if not df.empty:
+        # Node-wise Test Accuracy
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(data=df, x="epoch", y="test_accuracy", hue="node", alpha=0.3, legend=False, palette="viridis", estimator=None)
+        # Changed mean line color to navy (softer than black)
+        ax = sns.lineplot(data=df, x="epoch", y="test_accuracy", color="navy", linewidth=2, label="Mean", errorbar=None)
+        add_phase_line(ax, "epoch")
+        plt.title(f"Node-wise Test Accuracy - {experiment_id}")
+        plt.ylabel("Test Accuracy")
+        plt.xlabel("Epoch")
+        plt.savefig(analysis_dir / "accuracy_nodes.png")
+        plt.close()
+        print("  ✅ Generated accuracy_nodes.png")
+
+        # Node-wise Test Loss
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(data=df, x="epoch", y="test_loss", hue="node", alpha=0.3, legend=False, palette="viridis", estimator=None)
+        # Changed mean line color to navy
+        ax = sns.lineplot(data=df, x="epoch", y="test_loss", color="navy", linewidth=2, label="Mean", errorbar=None)
+        add_phase_line(ax, "epoch")
+        plt.title(f"Node-wise Test Loss - {experiment_id}")
+        plt.ylabel("Test Loss")
+        plt.xlabel("Epoch")
+        plt.savefig(analysis_dir / "loss_nodes.png")
+        plt.close()
+        print("  ✅ Generated loss_nodes.png")
 
     # 3. Resource Usage Analysis
     resources_data = []
@@ -169,32 +220,6 @@ def analyze_results(experiment_id):
                         resources_data.append(rdf)
                 except Exception:
                     pass
-
-    if resources_data:
-        res_df = pd.concat(resources_data)
-
-        # CPU Usage
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(data=res_df, x="timestamp", y="cpu_percent", hue="node", alpha=0.5, legend=False)
-        # Add mean line
-        sns.lineplot(data=res_df, x="timestamp", y="cpu_percent", color="red", linewidth=2, label="Mean")
-        plt.title(f"CPU Usage over Time ({experiment_id})")
-        plt.ylabel("CPU (%)")
-        plt.xlabel("Time (s)")
-        plt.savefig(analysis_dir / "cpu_usage.png")
-        plt.close()
-        print("  ✅ Generated cpu_usage.png")
-
-        # Memory Usage
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(data=res_df, x="timestamp", y="memory_used_mb", hue="node", alpha=0.5, legend=False)
-        sns.lineplot(data=res_df, x="timestamp", y="memory_used_mb", color="red", linewidth=2, label="Mean")
-        plt.title(f"Memory Usage over Time ({experiment_id})")
-        plt.ylabel("Memory (MB)")
-        plt.xlabel("Time (s)")
-        plt.savefig(analysis_dir / "memory_usage.png")
-        plt.close()
-        print("  ✅ Generated memory_usage.png")
 
     print(f"✨ Analysis complete. Results in: {analysis_dir}")
 

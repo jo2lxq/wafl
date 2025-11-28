@@ -1,7 +1,7 @@
 {
   "epochs": {
-    "self": 64,
-    "wafl": 2048
+    "self": 4,
+    "wafl": 8
   },
   "contact_pattern": "rwp_n28_a1000_r100_p10_s01.json",
   "wafl_phase": {
@@ -11,6 +11,7 @@
     "coefficiency": 1.0
   },
   "network_condition": {
+    "enabled": false,
     "delay": "50ms",
     "loss": "0%",
     "rate": "100mbit"

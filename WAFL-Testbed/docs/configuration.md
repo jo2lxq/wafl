@@ -96,6 +96,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
     "coefficiency": 1.0
   },
   "network_condition": {
+    "enabled": true,
     "delay": "50ms",
     "loss": "3%",
     "rate": "10mbit"
@@ -154,9 +155,12 @@ python utils/generate_rgg_topology.py --nodes 28 --epochs 5000 --density sparse
 
 | パラメータ | 説明                           | 例                                 | tc コマンド   |
 | ---------- | ------------------------------ | ---------------------------------- | ------------- |
+| `enabled`  | ネットワーク条件の有効化       | `true`, `false`                    | -             |
 | `delay`    | ネットワーク遅延（レイテンシ） | `"50ms"`, `"100ms"`                | `delay 50ms`  |
 | `loss`     | パケットロス率                 | `"0%"`, `"3%"`, `"10%"`            | `loss 3%`     |
 | `rate`     | 帯域制限                       | `"100mbit"`, `"10mbit"`, `"1mbit"` | `rate 10mbit` |
+
+**注意**: `enabled` を `false` に設定すると、`delay`、`loss`、`rate` の設定に関わらず、ネットワーク条件のエミュレーションがスキップされます。デフォルトは `true` です。
 
 ### 3. `method` セクション - 研究手法の設定
 

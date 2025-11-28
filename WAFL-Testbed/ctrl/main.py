@@ -445,7 +445,7 @@ class WaflAgent:
                 self.logger.debug(f"Container [2/4] - Started successfully (ID: {container_id[:12]})")
 
                 # Step 3: Apply network rules
-                self.logger.debug("Container [3/4] - Applying network conditions")
+                self.logger.debug("Container [3/4] - Checking network conditions")
 
                 # Load network conditions from parameters.json
                 params_path = os.path.join("ctrl", "parameters.json")
@@ -453,25 +453,30 @@ class WaflAgent:
                     with open(params_path) as f:
                         params = json.load(f)
                         net_cond = params.get("network_condition", {})
+                        enabled = net_cond.get("enabled", True)  # Default to True for backward compatibility
                         delay = net_cond.get("delay", "50ms")
                         loss = net_cond.get("loss", "0%")
                         rate = net_cond.get("rate", "100mbit")
                 except Exception as e:
                     self.logger.warning(f"Failed to read network conditions from parameters.json: {e}. Using defaults.")
+                    enabled = True
                     delay = "50ms"
                     loss = "0%"
                     rate = "100mbit"
 
-                tc_cmd = f"sudo {target_path}/ctrl/apply_network_rules.sh {container_name} {delay} {loss} {rate}"
-                stdin, stdout, stderr = ssh.exec_command(tc_cmd)
-                exit_status = stdout.channel.recv_exit_status()
+                if enabled:
+                    tc_cmd = f"sudo {target_path}/ctrl/apply_network_rules.sh {container_name} {delay} {loss} {rate}"
+                    stdin, stdout, stderr = ssh.exec_command(tc_cmd)
+                    exit_status = stdout.channel.recv_exit_status()
 
-                if exit_status != 0:
-                    error_msg = stderr.read().decode().strip()
-                    self.logger.warning(f"⚠️ Network rules application had issues: {error_msg}")
-                    # Don't fail the entire process for network rules
+                    if exit_status != 0:
+                        error_msg = stderr.read().decode().strip()
+                        self.logger.warning(f"⚠️ Network rules application had issues: {error_msg}")
+                        # Don't fail the entire process for network rules
+                    else:
+                        self.logger.debug(f"Container [3/4] - Network rules applied (delay={delay}, loss={loss}, rate={rate})")
                 else:
-                    self.logger.debug(f"Container [3/4] - Network rules applied (delay={delay}, loss={loss}, rate={rate})")
+                    self.logger.debug("Container [3/4] - Network conditions disabled (enabled=false)")
 
             # Step 4: Wait for container to be ready
             return self._wait_for_container_ready()
