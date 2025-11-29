@@ -5,8 +5,9 @@ import os
 import socket
 import subprocess
 import time
-from typing import Any, Dict, List, Tuple
 from getpass import getpass
+from typing import Any, Dict, List, Tuple
+
 import paramiko
 
 
@@ -321,7 +322,7 @@ class WaflAgent:
             command_tcpdump = (
                 f"sudo -S -p '' bash -lc \"nohup tcpdump -i enp0s31f6 tcp port 10002 "
                 f"-s 0 -C 5 -W 10 -B 4096 -U -w {tcpdump_pcap_file} "
-                f"> /dev/null 2>&1 &\""
+                f'> /dev/null 2>&1 &"'
             )
             venv_path = os.path.join(target_path, ".venv", "bin", "activate")
             python_script = os.path.join(target_path, "src/main.py")
@@ -656,7 +657,7 @@ class WaflAgent:
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
-                
+
                 # Tcpdump pkill block: BEGINS
                 stdin, stdout, stderr = ssh.exec_command(command_tcpdump_kill)
                 stdin.write(ssh_password + "\n")
@@ -666,7 +667,7 @@ class WaflAgent:
                     error_msg = stderr.read().decode().strip()
                     self.logger.warning(f"⚠️ Zombie tcpdump warning: {error_msg}")
                 # Tcpdump pkill block: ENDS
-                
+
                 stdin, stdout, stderr = ssh.exec_command(command_kill)
                 exit_status = stdout.channel.recv_exit_status()
                 if exit_status == 0:
