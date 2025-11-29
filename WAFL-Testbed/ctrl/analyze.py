@@ -66,7 +66,7 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
+def load_and_transform_data(experiment_path: str):
     """
     Finds `learning-data.csv` files, loads them, and transforms them from
     wide format to long format for easier plotting.
@@ -109,15 +109,34 @@ def load_and_transform_data(experiment_path: str) -> Optional[pd.DataFrame]:
                     df_long = pd.concat([df_train, df_test], ignore_index=True)
                     df_long["device_id"] = int(device_id_str)
                     all_data.append(df_long)
-                    print(f"  - Loaded & reshaped data for Device #{device_id_str}")
+                    print(f"  - Loaded & reshaped training metrics for Device #{device_id_str}")
+                except Exception as e:
+                    print(f"  - ⚠️ Warning: Could not process {csv_path}. Reason: {e}")
+    net_data = []
+    for device_id_str in os.listdir(experiment_path):
+        device_path = os.path.join(experiment_path, device_id_str)
+        if os.path.isdir(device_path) and device_id_str.isdigit():
+            csv_path = os.path.join(device_path, "network-data.csv")
+            if os.path.exists(csv_path):
+                try:
+                    # Read the wide-format CSV
+                    df_wide = pd.read_csv(csv_path)
+                    df_wide["epoch"] = df_wide["epoch"].astype(int)
+                    df_wide["inbound_bytes"] = df_wide["inbound_bytes"].astype(int)
+                    df_wide["outbound_bytes"] = df_wide["outbound_bytes"].astype(int)
+                    df_wide["inbound_megabytes"] = df_wide["inbound_bytes"] / 1e+6
+                    df_wide["outbound_megabytes"] = df_wide["outbound_bytes"] / 1e+6
+                    df_wide["total_megabytes"] = df_wide["inbound_megabytes"] + df_wide["outbound_megabytes"]
+                    df_wide["device_id"] = int(device_id_str)
+                    net_data.append(df_wide)
+                    print(f"  - Loaded & reshaped network metrics for Device #{device_id_str}")
                 except Exception as e:
                     print(f"  - ⚠️ Warning: Could not process {csv_path}. Reason: {e}")
 
     if not all_data:
         print("❌ Error: No valid `learning-data.csv` files were found.", file=sys.stderr)
         return None
-
-    return pd.concat(all_data, ignore_index=True)
+    return pd.concat(all_data, ignore_index=True), pd.concat(net_data, ignore_index=True)
 
 
 def get_epoch_ranges(experiment_path: str) -> dict:
@@ -138,6 +157,192 @@ def get_epoch_ranges(experiment_path: str) -> dict:
     return {}
 
 
+def plot_network_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, epoch_ranges: Optional[dict] = None):
+    """
+    Generate and save network statistics charts.
+    """
+    print("\n📊 Generating network plots...")
+    sns.set_theme(style="whitegrid")
+    plt.rcParams.update({"font.size": 16})
+
+    # === Plot 1: Total Traffic Chart (Epoch) ===
+    plt.figure(figsize=(12, 7))
+    sns.set_style("whitegrid")
+    ax = plt.gca()
+    pivot = df.pivot(index="epoch", columns="device_id", values="total_megabytes")
+    epochs = pivot.index.values
+    devices = pivot.columns
+    traffic_values = pivot.fillna(0).values.T
+    colors = sns.color_palette("icefire", n_colors=len(devices))
+    ax.stackplot(
+        epochs,
+        traffic_values,
+        labels=devices,
+        colors=colors,
+        linewidth=0
+    )
+    plt.title(f"Epoch-wise P2P Traffic Plot\n{experiment_id}", fontsize=16)
+    plt.xlabel("Epoch", fontsize=16)
+    plt.ylabel("Inbound + Outbound Traffic (MB)", fontsize=16)
+    plt.legend(title="Device ID", loc="upper left", fontsize=10, title_fontsize=10)
+    if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+        self_end = epoch_ranges["self"]
+        ax.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
+        ax.text(self_end, ax.get_ylim()[0], " → WAFL", color="red",
+                ha="left", va="bottom", fontsize=18)
+        ax.text(self_end, ax.get_ylim()[0], "SELF ← ", color="red",
+                ha="right", va="bottom", fontsize=18)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, "network_traffic_total_epoch.png")
+    plt.savefig(save_path, bbox_inches="tight")
+    plt.close()
+    print(f"  🎨 Saved total traffic plot to: {save_path}")
+    # === Plot 1: End ===
+
+    # === Plot 2: Total Traffic Chart (Cumulative) ===
+    plt.figure(figsize=(12, 7))
+    sns.set_style("whitegrid")
+    ax = plt.gca()
+    df_cumulative = df.copy().sort_values(["device_id", "epoch"])
+    df_cumulative["total_megabytes"] = df.groupby("device_id")["total_megabytes"].cumsum()
+    pivot = df_cumulative.pivot(index="epoch", columns="device_id", values="total_megabytes")
+    epochs = pivot.index.values
+    devices = pivot.columns
+    traffic_values = pivot.fillna(0).values.T
+    colors = sns.color_palette("icefire", n_colors=len(devices))
+    ax.stackplot(
+        epochs,
+        traffic_values,
+        labels=devices,
+        colors=colors,
+        linewidth=0
+    )
+    plt.title(f"Cumulative P2P Traffic Plot\n{experiment_id}", fontsize=16)
+    plt.xlabel("Epoch", fontsize=16)
+    plt.ylabel("Inbound + Outbound Traffic (MB)", fontsize=16)
+    plt.legend(title="Device ID", loc="upper left", fontsize=10, title_fontsize=10)
+    if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+        self_end = epoch_ranges["self"]
+        ax.axvline(self_end, color="red", linestyle="--", label="SELF → WAFL")
+        ax.text(self_end, ax.get_ylim()[0], " → WAFL", color="red",
+                ha="left", va="bottom", fontsize=18)
+        ax.text(self_end, ax.get_ylim()[0], "SELF ← ", color="red",
+                ha="right", va="bottom", fontsize=18)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, "network_traffic_total_cumulative.png")
+    plt.savefig(save_path, bbox_inches="tight")
+    plt.close()
+    print(f"  🎨 Saved total traffic plot to: {save_path}")
+    # === Plot 2: End ===
+
+    # === Plot(s) 3: Device Traffic Charts (Epoch) ===
+    for device_id in range(100, 110):
+        plt.figure(figsize=(12, 7))
+        sns.set_style("whitegrid")
+        ax = plt.gca()
+        df_dev = df[df["device_id"] == device_id].copy()
+        df_dev = df_dev.sort_values("epoch")
+        epochs = df_dev["epoch"].to_numpy()
+        traffic_values = df_dev[["inbound_megabytes", "outbound_megabytes"]].fillna(0).to_numpy().T
+        colors = colors = [sns.color_palette("icefire", as_cmap=True)(0.15),
+        sns.color_palette("icefire", as_cmap=True)(0.85)]
+        ax.stackplot(
+            epochs,
+            traffic_values,
+            labels=["Inbound", "Outbound"],
+            colors=colors,
+            linewidth=0
+        )
+        ax.set_title(f"Epoch-wise P2P Traffic Plot for Device {device_id}\n{experiment_id}", fontsize=16)
+        ax.set_xlabel("Epoch", fontsize=16)
+        ax.set_ylabel("Network Traffic (MB)", fontsize=16)
+        ax2 = ax.twinx()
+        sns.lineplot(
+            ax=ax2,
+            data=df_dev,
+            x="epoch",
+            y="neighbour_count",
+            color="green",
+            alpha=0.5,
+            linewidth=0.5,
+            label="Neighbors"
+        )
+        ax2.set_ylabel("Neighbor Count", fontsize=16)
+        ax2.set_ylim(bottom=0)
+        ax2.margins(y=0)
+        ax2.grid(False)
+        handles_left, labels_left = ax.get_legend_handles_labels()
+        handles_right, labels_right = ax2.get_legend_handles_labels()
+        ax.legend(
+            handles_left + handles_right,
+            labels_left + labels_right,
+            title="Legend",
+            loc="upper left",
+            fontsize=14,
+            title_fontsize=16,
+            framealpha=0.85
+        )
+        if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+            self_end = epoch_ranges["self"]
+            ax.axvline(self_end, color="red", linestyle="--")
+            ax.text(self_end, ax.get_ylim()[0], " → WAFL", color="red",
+                    ha="left", va="bottom", fontsize=18)
+            ax.text(self_end, ax.get_ylim()[0], "SELF ← ", color="red",
+                    ha="right", va="bottom", fontsize=18)
+        plt.tight_layout()
+        save_path = os.path.join(output_dir, f"network_traffic_{device_id}_epoch.png")
+        plt.savefig(save_path, bbox_inches="tight")
+        plt.close()
+        print(f"  🎨 Saved device traffic plot to: {save_path}")
+    # Plot(s) 3: End ===
+
+    # === Plot(s) 4: Device Traffic Charts (Cumulative) ===
+    for device_id in range(100, 110):
+        plt.figure(figsize=(12, 7))
+        sns.set_style("whitegrid")
+        ax = plt.gca()
+        df_dev = df[df["device_id"] == device_id].copy().sort_values("epoch")
+        df_dev["inbound_megabytes"] = df_dev["inbound_megabytes"].cumsum()
+        df_dev["outbound_megabytes"] = df_dev["outbound_megabytes"].cumsum()
+        epochs = df_dev["epoch"].to_numpy()
+        traffic_values = df_dev[["inbound_megabytes", "outbound_megabytes"]].fillna(0).to_numpy().T
+        colors = colors = [sns.color_palette("icefire", as_cmap=True)(0.15),
+        sns.color_palette("icefire", as_cmap=True)(0.85)]
+        ax.stackplot(
+            epochs,
+            traffic_values,
+            labels=["Inbound", "Outbound"],
+            colors=colors,
+            linewidth=0
+        )
+        ax.set_title(f"Cumulative P2P Traffic Plot for Device {device_id}\n{experiment_id}", fontsize=16)
+        ax.set_xlabel("Epoch", fontsize=16)
+        ax.set_ylabel("Network Traffic (MB)", fontsize=16)
+        handles_left, labels_left = ax.get_legend_handles_labels()
+        ax.legend(
+            handles_left,
+            labels_left,
+            title="Legend",
+            loc="upper left",
+            fontsize=14,
+            title_fontsize=16,
+            framealpha=0.85
+        )
+        if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
+            self_end = epoch_ranges["self"]
+            ax.axvline(self_end, color="red", linestyle="--")
+            ax.text(self_end, ax.get_ylim()[0], " → WAFL", color="red",
+                    ha="left", va="bottom", fontsize=18)
+            ax.text(self_end, ax.get_ylim()[0], "SELF ← ", color="red",
+                    ha="right", va="bottom", fontsize=18)
+
+        plt.tight_layout()
+        save_path = os.path.join(output_dir, f"network_traffic_{device_id}_cumulative.png")
+        plt.savefig(save_path, bbox_inches="tight")
+        plt.close()
+        print(f"  🎨 Saved device traffic plot to: {save_path}")
+    # === Plot(s) 4: End ===
+
 def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, epoch_ranges: Optional[dict] = None):
     """
     Generates and saves various insightful learning curve plots.
@@ -149,7 +354,7 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     # === Plot 1: Average Accuracy Curve ===
     fig_acc, ax_acc = plt.subplots(figsize=(10, 7))
     sns.lineplot(ax=ax_acc, data=df, x="epoch", y="accuracy", hue="phase", errorbar="sd")
-    ax_acc.set_title(f"Average Accuracy Curve\n(Experiment: {experiment_id})", fontsize=20)
+    ax_acc.set_title(f"Experiment ID: 20251028T004544", fontsize=20)
     ax_acc.set_ylabel("Accuracy", fontsize=16)
     ax_acc.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
@@ -167,7 +372,7 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     # === Plot 2: Average Loss Curve ===
     fig_loss, ax_loss = plt.subplots(figsize=(10, 7))
     sns.lineplot(ax=ax_loss, data=df, x="epoch", y="loss", hue="phase", errorbar="sd")
-    ax_loss.set_title(f"Average Loss Curve\n(Experiment: {experiment_id})", fontsize=20)
+    ax_loss.set_title(f"Experiment ID: 20251028T004544", fontsize=20)
     ax_loss.set_ylabel("Loss", fontsize=16)
     ax_loss.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
@@ -264,7 +469,7 @@ def main():
 
     experiment_path = os.path.join(args.results_dir, experiment_id)
 
-    aggregated_df = load_and_transform_data(experiment_path)
+    aggregated_df, network_df = load_and_transform_data(experiment_path)
 
     if aggregated_df is None or aggregated_df.empty:
         print("\n❌ Analysis aborted due to missing data.")
@@ -280,7 +485,12 @@ def main():
     # --- ここまで追加 ---
 
     plot_learning_curves(aggregated_df, output_summary_dir, experiment_id, epoch_ranges=epoch_ranges)
-
+    plot_network_curves(network_df, output_summary_dir, experiment_id, epoch_ranges=epoch_ranges)
+    print(f"---Supplemental Information---")
+    acc_mean = aggregated_df[(aggregated_df['phase'] == 'test') & (aggregated_df['epoch'] > aggregated_df['epoch'].max() - 100)]['accuracy'].mean() * 100
+    acc_sd = aggregated_df[(aggregated_df['phase'] == 'test') & (aggregated_df['epoch'] > aggregated_df['epoch'].max() - 100)]['accuracy'].std() * 100
+    print(f"---Mean of Final Test Accuracy Values (Last 100 Epochs): {acc_mean}%")
+    print(f"---SD of Final Test Accuracy Values (Last 100 Epochs): {acc_sd}%")
     print("\n🎉 --- Analysis complete! ---")
 
 
