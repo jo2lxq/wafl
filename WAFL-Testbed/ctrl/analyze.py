@@ -306,7 +306,7 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     # === Plot 1: Average Accuracy Curve ===
     fig_acc, ax_acc = plt.subplots(figsize=(10, 7))
     sns.lineplot(ax=ax_acc, data=df, x="epoch", y="accuracy", hue="phase", errorbar="sd")
-    ax_acc.set_title("Experiment ID: 20251028T004544", fontsize=20)
+    ax_acc.set_title(f"Experiment ID: {experiment_id}", fontsize=20)
     ax_acc.set_ylabel("Accuracy", fontsize=16)
     ax_acc.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
@@ -324,7 +324,7 @@ def plot_learning_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, 
     # === Plot 2: Average Loss Curve ===
     fig_loss, ax_loss = plt.subplots(figsize=(10, 7))
     sns.lineplot(ax=ax_loss, data=df, x="epoch", y="loss", hue="phase", errorbar="sd")
-    ax_loss.set_title("Experiment ID: 20251028T004544", fontsize=20)
+    ax_loss.set_title(f"Experiment ID: {experiment_id}", fontsize=20)
     ax_loss.set_ylabel("Loss", fontsize=16)
     ax_loss.set_xlabel("Epoch", fontsize=16)
     if epoch_ranges and epoch_ranges.get("self") and epoch_ranges.get("wafl"):
