@@ -2,11 +2,18 @@ import datetime
 import json
 import logging
 import os
+import sys
+
+# Add project root to sys.path to allow importing from ctrl package
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import socket
 import time
 from typing import Any, Dict, List, Tuple
 
 import paramiko
+
+from ctrl.container_manager import ContainerManager
 
 
 class WaflAgent:
@@ -53,6 +60,14 @@ class WaflAgent:
         self.experiment_id = experiment_id
         self.start_timestamp = start_timestamp
         self.node_config = node_config or {}  # Store full node configuration for container management
+
+        # Initialize ContainerManager
+        self.container_manager = ContainerManager(
+            user=self.config.get("USER", "denjo"),
+            deployment_location=self.config.get("DEPLOYMENT_LOCATION", "/home/denjo"),
+            project_name=self.config.get("PROJECT_NAME", "WAFL-Testbed"),
+            logger=self.logger,
+        )
 
         # Deploy configurations during initialization
         self._deploy_configurations(experiment_parameters)
@@ -151,7 +166,13 @@ class WaflAgent:
                 # 1. Agent configuration (always required)
                 unified_config = self._create_unified_config(experiment_parameters)
                 config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
-                files_to_deploy.append({"content": config_json, "filename": "config.json", "description": "agent configuration"})
+                files_to_deploy.append(
+                    {
+                        "content": config_json,
+                        "filename": "config.json",
+                        "description": "agent configuration",
+                    }
+                )
 
                 # 2. Contact pattern
                 contact_pattern = experiment_parameters.get("contact_pattern")
@@ -285,7 +306,10 @@ class WaflAgent:
             self.logger.error(f"🌐 SSH connection error to agent {self.name}: {e}")
             return False
         except Exception as e:
-            self.logger.error(f"💥 Configuration deployment failed for agent {self.name}: {e}", exc_info=True)
+            self.logger.error(
+                f"💥 Configuration deployment failed for agent {self.name}: {e}",
+                exc_info=True,
+            )
             return False
 
     def _deploy_agent_config(self, experiment_parameters: Dict[str, Any]) -> bool:
@@ -370,119 +394,57 @@ class WaflAgent:
     def _start_docker_container(self, node_config: dict) -> bool:
         """
         Start Docker container on execution server with proper configuration.
-
-        Performs:
-        1. Container cleanup (remove existing container)
-        2. Container startup with mounts, ports, and resource limits
-        3. Network rules application (tc qdisc)
-        4. Readiness verification (port check)
-
-        Args:
-            node_config: Node configuration from execution_config.json
-
-        Returns:
-            bool: True if successful, False otherwise
+        Delegates to ContainerManager for consistency with verify.py.
         """
         self.logger.debug(f"🐳 Container [1/4] - Starting Docker container on {self.ip}")
 
         try:
-            # SSH parameters
-            ssh_port = 22
-            username = self.config["USER"]
-            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+            # Prepare node info
+            # main.py uses self.ctrl_port etc.
+            # ContainerManager expects keys in node_info.
+            node_info = node_config.copy()
+            node_info["physical_ip"] = self.ip
+            node_info["name"] = self.name
+            node_info["host_port_ctrl"] = self.ctrl_port
+            node_info["container_port_ctrl"] = self.container_ctrl_port
+            node_info["host_port_p2p"] = self.host_p2p_port
 
-            if not os.path.exists(private_key_path):
-                raise FileNotFoundError(f"SSH private key not found at {private_key_path}")
+            # Load experiment parameters for network conditions
+            # main.py logic loaded parameters.json manually in the original code.
+            # We should do the same or pass it in.
+            # WaflAgent.__init__ receives experiment_parameters, but doesn't store it fully?
+            # It stores self.config, but experiment_parameters is passed to _deploy_configurations.
+            # Let's check if we can access it.
+            # Wait, WaflAgent is initialized with experiment_parameters.
+            # But it doesn't seem to save it as an attribute in __init__.
+            # Let's reload parameters.json as the original code did, to be safe.
 
-            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
-            target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
-            container_name = f"wafl-node-{self.name}"
+            params_path = os.path.join("ctrl", "parameters.json")
+            experiment_params = {}
+            try:
+                with open(params_path) as f:
+                    experiment_params = json.load(f)
+            except Exception as e:
+                self.logger.warning(f"Failed to read parameters.json: {e}. Using defaults.")
 
-            with paramiko.SSHClient() as ssh:
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+            # Start container using manager
+            success = self.container_manager.start_wafl_container(
+                node_info=node_info,
+                experiment_params=experiment_params,
+                env_vars="-e LOG_LEVEL=INFO",
+            )
 
-                # Step 1: Cleanup existing container
-                self.logger.debug(f"Container [1/4] - Removing existing container {container_name}")
-                cleanup_cmd = f"docker rm -f {container_name} || true"
-                stdin, stdout, stderr = ssh.exec_command(cleanup_cmd)
-                stdout.channel.recv_exit_status()
-
-                # Step 2: Build docker run command
-                self.logger.debug(f"Container [2/4] - Launching {container_name}")
-
-                # Ports
-                host_ctrl = self.ctrl_port
-                cont_ctrl = self.container_ctrl_port
-                host_p2p = self.host_p2p_port
-                cont_p2p = 10002
-
-                ports = f"-p {host_ctrl}:{cont_ctrl} -p {host_p2p}:{cont_p2p}"
-
-                # Mounts
-                mounts = f"-v {target_path}/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"
-                # Environment variables
-                env_vars = "-e LOG_LEVEL=INFO"
-
-                # Resource limits
-                cpu_limit = node_config.get("cpu_limit")
-                resource_flags = f"--cpus={cpu_limit}" if cpu_limit else ""
-
-                # Image
-                image = "wafl-node:latest"
-
-                # Full docker run command
-                run_cmd = f"docker run -d --name {container_name} {ports} {mounts} {env_vars} {resource_flags} {image}"
-
-                stdin, stdout, stderr = ssh.exec_command(run_cmd)
-                exit_status = stdout.channel.recv_exit_status()
-
-                if exit_status != 0:
-                    error_msg = stderr.read().decode().strip()
-                    raise RuntimeError(f"Docker run failed: {error_msg}")
-
-                container_id = stdout.read().decode().strip()
-                self.logger.debug(f"Container [2/4] - Started successfully (ID: {container_id[:12]})")
-
-                # Step 3: Apply network rules
-                self.logger.debug("Container [3/4] - Checking network conditions")
-
-                # Load network conditions from parameters.json
-                params_path = os.path.join("ctrl", "parameters.json")
-                try:
-                    with open(params_path) as f:
-                        params = json.load(f)
-                        net_cond = params.get("network_condition", {})
-                        enabled = net_cond.get("enabled", True)  # Default to True for backward compatibility
-                        delay = net_cond.get("delay", "50ms")
-                        loss = net_cond.get("loss", "0%")
-                        rate = net_cond.get("rate", "100mbit")
-                except Exception as e:
-                    self.logger.warning(f"Failed to read network conditions from parameters.json: {e}. Using defaults.")
-                    enabled = True
-                    delay = "50ms"
-                    loss = "0%"
-                    rate = "100mbit"
-
-                if enabled:
-                    tc_cmd = f"sudo {target_path}/ctrl/apply_network_rules.sh {container_name} {delay} {loss} {rate}"
-                    stdin, stdout, stderr = ssh.exec_command(tc_cmd)
-                    exit_status = stdout.channel.recv_exit_status()
-
-                    if exit_status != 0:
-                        error_msg = stderr.read().decode().strip()
-                        self.logger.warning(f"⚠️ Network rules application had issues: {error_msg}")
-                        # Don't fail the entire process for network rules
-                    else:
-                        self.logger.debug(f"Container [3/4] - Network rules applied (delay={delay}, loss={loss}, rate={rate})")
-                else:
-                    self.logger.debug("Container [3/4] - Network conditions disabled (enabled=false)")
+            if not success:
+                return False
 
             # Step 4: Wait for container to be ready
             return self._wait_for_container_ready()
 
         except Exception as e:
-            self.logger.error(f"💥 Failed to start Docker container for agent {self.name}: {e}", exc_info=True)
+            self.logger.error(
+                f"💥 Failed to start Docker container for agent {self.name}: {e}",
+                exc_info=True,
+            )
             return False
 
     def _wait_for_container_ready(self) -> bool:
@@ -621,7 +583,10 @@ class WaflAgent:
             return status_code, logs
 
         except Exception as e:
-            self.logger.error(f"💥 Error parsing status response from agent {self.name}: {e}", exc_info=True)
+            self.logger.error(
+                f"💥 Error parsing status response from agent {self.name}: {e}",
+                exc_info=True,
+            )
             self.status = "ERROR"
             return "ERROR_PARSE", [f"Parse error: {e}"]
 
@@ -911,7 +876,10 @@ class ControlServer:
             logging.basicConfig(
                 level=log_level,
                 format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                handlers=[logging.FileHandler(log_file, encoding="utf-8"), logging.StreamHandler()],
+                handlers=[
+                    logging.FileHandler(log_file, encoding="utf-8"),
+                    logging.StreamHandler(),
+                ],
                 force=True,
             )
 
@@ -941,7 +909,10 @@ class ControlServer:
             self.mobility_aware_config = mobility_config
 
             # Load network conditions
-            conditions_file = os.path.join("data", mobility_config.get("network_conditions_file", "network_conditions_mobility.json"))
+            conditions_file = os.path.join(
+                "data",
+                mobility_config.get("network_conditions_file", "network_conditions_mobility.json"),
+            )
             if os.path.exists(conditions_file):
                 with open(conditions_file) as f:
                     self.network_conditions = json.load(f)
@@ -950,7 +921,10 @@ class ControlServer:
                 self.logger.warning(f"⚠️ Network conditions file not found: {conditions_file}")
 
             # Load path loss model
-            model_file = os.path.join("data", mobility_config.get("path_loss_model_file", "sumo/path_loss_model.json"))
+            model_file = os.path.join(
+                "data",
+                mobility_config.get("path_loss_model_file", "sumo/path_loss_model.json"),
+            )
             if os.path.exists(model_file):
                 with open(model_file) as f:
                     self.path_loss_model = json.load(f)
@@ -962,7 +936,13 @@ class ControlServer:
             self.logger.error(f"💥 Failed to load mobility-aware config: {e}")
             self.mobility_aware_config = None
 
-    def run_experiment(self, epochs: Dict[str, int], wafl_phase: Dict[str, Any], contact_pattern: str, ssp_config: Dict[str, Any] = None):
+    def run_experiment(
+        self,
+        epochs: Dict[str, int],
+        wafl_phase: Dict[str, Any],
+        contact_pattern: str,
+        ssp_config: Dict[str, Any] = None,
+    ):
         """
         Execute entire experiment sequence (startup, training loop, shutdown).
 
@@ -1011,7 +991,11 @@ class ControlServer:
                         self.logger.info("✅ Configuration files validated")
 
                         # Verify container applications with logger
-                        container_verifier = verify.ContainerVerifier(config_validator.params, config_validator.exec_config, verbose=False)
+                        container_verifier = verify.ContainerVerifier(
+                            config_validator.params,
+                            config_validator.exec_config,
+                            verbose=False,
+                        )
 
                         containers_valid = container_verifier.verify_all(logger=self.logger)
 
@@ -1080,7 +1064,13 @@ class ControlServer:
             status = "SUCCESS" if experiment_success else "FAILED"
             self.logger.info(f"✅ Experiment complete - ID: {self.experiment_id}, Status: {status}")
 
-    def _run_phase(self, phase_name: str, total_epochs: int, staleness: int, ssp_threshold: float = 1.0):
+    def _run_phase(
+        self,
+        phase_name: str,
+        total_epochs: int,
+        staleness: int,
+        ssp_threshold: float = 1.0,
+    ):
         """
         Run a single training phase (SELF or WAFL) with SSP-based synchronization.
         ssp_threshold: Fraction of agents (0.0-1.0) required to complete an epoch before forcing others to skip.
@@ -1306,8 +1296,14 @@ class ControlServer:
         self.logger.info(f"📡 Applying dynamic network conditions for epoch {epoch}")
 
         # Get path loss model file path
-        model_file = os.path.join("data", self.mobility_aware_config.get("path_loss_model_file", "sumo/path_loss_model.json"))
-        conditions_file = os.path.join("data", self.mobility_aware_config.get("network_conditions_file", "network_conditions_mobility.json"))
+        model_file = os.path.join(
+            "data",
+            self.mobility_aware_config.get("path_loss_model_file", "sumo/path_loss_model.json"),
+        )
+        conditions_file = os.path.join(
+            "data",
+            self.mobility_aware_config.get("network_conditions_file", "network_conditions_mobility.json"),
+        )
         exec_config_file = "ctrl/execution_config.json"
 
         # Apply tc rules for each agent

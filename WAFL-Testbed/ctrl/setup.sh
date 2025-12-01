@@ -123,9 +123,10 @@ for HOST in "${HOSTS[@]}"; do
         sudo apt-get update &&
 
         echo -e '${YELLOW}📥 [2/2] Installing required tools...${NC}' &&
-        sudo apt-get install -y docker.io docker-buildx chrony sysstat dstat iproute2 bridge-utils jq fwupd power-profiles-daemon rsync &&
+        sudo apt-get install -y docker.io docker-buildx chrony sysstat dstat iproute2 bridge-utils jq fwupd power-profiles-daemon rsync iperf3 &&
         sudo systemctl enable --now chrony &&
-        sudo systemctl enable --now docker
+        sudo systemctl enable --now docker &&
+        sudo systemctl enable --now iperf3
     "
 
     sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS"
