@@ -136,6 +136,9 @@ def load_and_transform_data(experiment_path: str) -> Optional[Tuple[Any, Any]]:
     if not all_data:
         print("❌ Error: No valid `learning-data.csv` files were found.", file=sys.stderr)
         return None
+    if not net_data:
+        print("❌ Error: No valid `network-data.csv` files were found.", file=sys.stderr)
+        return None
     return pd.concat(all_data, ignore_index=True), pd.concat(net_data, ignore_index=True)
 
 
@@ -220,7 +223,8 @@ def plot_network_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, e
     # === Plot 2: End ===
 
     # === Plot(s) 3: Device Traffic Charts (Epoch) ===
-    for device_id in range(100, 110):
+    device_id_list = df["device_id"].unique()
+    for device_id in device_id_list:
         plt.figure(figsize=(12, 7))
         sns.set_style("whitegrid")
         ax = plt.gca()
@@ -228,7 +232,7 @@ def plot_network_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, e
         df_dev = df_dev.sort_values("epoch")
         epochs = df_dev["epoch"].to_numpy()
         traffic_values = df_dev[["inbound_megabytes", "outbound_megabytes"]].fillna(0).to_numpy().T
-        colors = colors = [sns.color_palette("icefire", as_cmap=True)(0.15), sns.color_palette("icefire", as_cmap=True)(0.85)]
+        colors = [sns.color_palette("icefire", as_cmap=True)(0.15), sns.color_palette("icefire", as_cmap=True)(0.85)]
         ax.stackplot(epochs, traffic_values, labels=["Inbound", "Outbound"], colors=colors, linewidth=0)
         ax.set_title(f"Epoch-wise P2P Traffic Plot for Device {device_id}\n{experiment_id}", fontsize=16)
         ax.set_xlabel("Epoch", fontsize=16)
@@ -265,7 +269,8 @@ def plot_network_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, e
     # Plot(s) 3: End ===
 
     # === Plot(s) 4: Device Traffic Charts (Cumulative) ===
-    for device_id in range(100, 110):
+    device_id_list = df["device_id"].unique()
+    for device_id in device_id_list:
         plt.figure(figsize=(12, 7))
         sns.set_style("whitegrid")
         ax = plt.gca()
@@ -274,7 +279,7 @@ def plot_network_curves(df: pd.DataFrame, output_dir: str, experiment_id: str, e
         df_dev["outbound_megabytes"] = df_dev["outbound_megabytes"].cumsum()
         epochs = df_dev["epoch"].to_numpy()
         traffic_values = df_dev[["inbound_megabytes", "outbound_megabytes"]].fillna(0).to_numpy().T
-        colors = colors = [sns.color_palette("icefire", as_cmap=True)(0.15), sns.color_palette("icefire", as_cmap=True)(0.85)]
+        colors = [sns.color_palette("icefire", as_cmap=True)(0.15), sns.color_palette("icefire", as_cmap=True)(0.85)]
         ax.stackplot(epochs, traffic_values, labels=["Inbound", "Outbound"], colors=colors, linewidth=0)
         ax.set_title(f"Cumulative P2P Traffic Plot for Device {device_id}\n{experiment_id}", fontsize=16)
         ax.set_xlabel("Epoch", fontsize=16)

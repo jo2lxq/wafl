@@ -317,10 +317,11 @@ class WaflAgent:
             command_create_results = f"cd {target_path} && mkdir -p {os.path.join('results', experiment_id)}"
             command_tcpdump_kill = "sudo -S -p '' pkill -f \"tcpdump\""
             tcpdump_pcap_file = os.path.join("/tmp", "tcpdump_")
-            # Linux Inteface: enp0s31f6 | Buffer Size: 4 MB | File Size: 5 MB
-            # Number of Files: 10 | Port: 10002 (Our P2P port) | SUDO required.
+            p2p_port = self.config["WAFL_DEVICE_P2P_PORT"]
+            # Linux Interface: enp0s31f6 | Buffer Size: 4 MB | File Size: 5 MB
+            # Number of Files: 10 | Port: 10002 (Default P2P) | SUDO required.
             command_tcpdump = (
-                f"sudo -S -p '' bash -lc \"nohup tcpdump -i enp0s31f6 tcp port 10002 "
+                f"sudo -S -p '' bash -lc \"nohup tcpdump -i enp0s31f6 tcp port {p2p_port} "
                 f"-s 0 -C 5 -W 10 -B 4096 -U -w {tcpdump_pcap_file} "
                 f'> /dev/null 2>&1 &"'
             )
