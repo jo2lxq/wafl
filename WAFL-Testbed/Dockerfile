@@ -25,7 +25,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     iputils-ping \
     dstat \
     sysstat \
-    procps
+    procps \
+    iperf3 \
+    stress-ng
 
 # ==========================================
 # Stage 2: Python dependencies

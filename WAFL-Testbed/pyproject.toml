@@ -5,21 +5,20 @@ description = "The WAFL Emulation Testbed project, launched in April 2025, is tr
 readme = "README.md"
 requires-python = "==3.11.4"
 dependencies = [
-    "numpy>=2.3.1",
-    "pre-commit>=4.2.0",
-    "ruff>=0.12.0",
-    "torch>=2.7.1",
-    "paramiko>=2.12.0",
-    "torchvision>=0.22.1",
-    "pandas>=2.3.2",
-    "matplotlib>=3.10.6",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "lz4>=4.3.0",
+    "zfec>=1.5.0",
+    "matplotlib>=3.7.0",
+    "psutil>=5.9.0",
+    "paramiko>=3.0.0",
     "seaborn>=0.13.2",
     "functions>=0.7.0",
     "tqdm>=4.67.1",
-    "psutil>=5.9.0",
-    "zfec>=1.5.0",
-    "lz4>=4.3.3",
     "traci>=1.25.0",
+    "pre-commit>=4.5.0",
 ]
 
 [build-system]

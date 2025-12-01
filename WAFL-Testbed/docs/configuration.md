@@ -18,7 +18,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 {
   "nodes": [
     {
-      "id": 0,
+      "name": 0,
       "physical_ip": "192.168.11.100",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
@@ -26,7 +26,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
       "cpu_limit": "1.0"
     },
     {
-      "id": 1,
+      "name": 1,
       "physical_ip": "192.168.11.101",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 11001,
@@ -34,7 +34,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
       "cpu_limit": "0.5"
     },
     {
-      "id": 2,
+      "name": 2,
       "physical_ip": "192.168.11.102",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 12001,
@@ -52,7 +52,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 
 | パラメータ            | 型      | 必須 | 説明                                 | 例                 |
 | --------------------- | ------- | ---- | ------------------------------------ | ------------------ |
-| `id`                  | integer | ✓    | エージェントの一意 ID (0〜N)         | `0`, `1`, `2`      |
+| `name`                | integer | ✓    | エージェントの一意 ID (0〜N)         | `0`, `1`, `2`      |
 | `physical_ip`         | string  | ✓    | 物理サーバーの IP アドレス           | `"192.168.11.100"` |
 | `container_port_ctrl` | integer | ✓    | コンテナ内の制御ポート               | `10001`            |
 | `host_port_ctrl`      | integer | ✓    | ホスト側の制御ポート（マッピング先） | `10001`, `11001`   |
@@ -68,10 +68,10 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 ```json
 {
   "nodes": [
-    {"id": 0, "physical_ip": "192.168.11.100", "host_port_ctrl": 10001, "host_port_p2p": 10002},
-    {"id": 1, "physical_ip": "192.168.11.100", "host_port_ctrl": 11001, "host_port_p2p": 11002},
-    {"id": 2, "physical_ip": "192.168.11.100", "host_port_ctrl": 12001, "host_port_p2p": 12002},
-    {"id": 3, "physical_ip": "192.168.11.100", "host_port_ctrl": 13001, "host_port_p2p": 13002}
+    {"name": 0, "physical_ip": "192.168.11.100", "host_port_ctrl": 10001, "host_port_p2p": 10002},
+    {"name": 1, "physical_ip": "192.168.11.100", "host_port_ctrl": 11001, "host_port_p2p": 11002},
+    {"name": 2, "physical_ip": "192.168.11.100", "host_port_ctrl": 12001, "host_port_p2p": 12002},
+    {"name": 3, "physical_ip": "192.168.11.100", "host_port_ctrl": 13001, "host_port_p2p": 13002}
   ]
 }
 ```
@@ -332,7 +332,7 @@ Defines physical infrastructure, node topology, and resource limits.
 
 | Parameter             | Type    | Required | Description                   | Example            |
 | --------------------- | ------- | -------- | ----------------------------- | ------------------ |
-| `id`                  | integer | ✓        | Unique agent ID (0〜N)        | `0`, `1`           |
+| `name`                | integer | ✓        | Unique agent ID (0〜N)        | `0`, `1`           |
 | `physical_ip`         | string  | ✓        | Physical server IP address    | `"192.168.11.100"` |
 | `container_port_ctrl` | integer | ✓        | Control port inside container | `10001`            |
 | `host_port_ctrl`      | integer | ✓        | Control port on host (mapped) | `10001`            |

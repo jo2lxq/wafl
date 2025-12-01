@@ -11,15 +11,15 @@
     "coefficiency": 1.0
   },
   "network_condition": {
-    "enabled": false,
-    "delay": "50ms",
-    "loss": "0%",
-    "rate": "100mbit"
+    "enabled": true,
+    "delay": "100ms",
+    "loss": "10%",
+    "rate": "10mbit"
   },
   "mobility_aware": {
     "enabled": false,
-    "contact_pattern_file": "contact_pattern_mobility.json",
-    "network_conditions_file": "network_conditions_mobility.json",
+    "contact_pattern_file": "sumo/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
   "method": {

@@ -11,7 +11,7 @@
 ### 基本ワークフロー
 
 ```
-準備 → デプロイ → 実験実行 → 結果収集 → クリーンアップ
+準備 → デプロイ → 実験実行 → 結果分析 → クリーンアップ
 ```
 
 ---
@@ -21,7 +21,7 @@
 最新のコードと設定ファイルを全実行サーバーに配布する．
 
 ```bash
-mise run deploy
+mise deploy
 ```
 
 #### 実行内容
@@ -59,7 +59,7 @@ mise run deploy
 実験を開始する．
 
 ```bash
-mise run start
+mise start
 ```
 
 #### 自動実行される処理
@@ -122,13 +122,19 @@ mise run start
 
 ---
 
-### 3. 結果収集 (Collect Results)
+### 3. 結果分析 (Analyze Results)
 
-実験終了後，全ノードからログと学習結果を収集する．
+実験終了後，全ノードからログと学習結果を収集し，グラフを生成する．
 
 ```bash
-mise run collect
+mise analyze
 ```
+
+#### 実行内容
+
+1. 各ノードから SSH 経由で結果を収集
+2. 収集したデータを分析
+3. 精度・損失のグラフを生成
 
 #### 収集されるファイル
 
@@ -176,15 +182,15 @@ results/
 #### 4.1 カスタムトポロジーで実験
 
 ```bash
-# 1. トポロジー生成
+# トポロジー生成
 python utils/generate_rgg_topology.py --nodes 5 --epochs 500 --density dense --randomseed 42
 
 # 2. parameters.json で指定
 # "contact_pattern": "rgg_n05_a1000_d10_s42.json"
 
 # 3. 実験実行
-mise run deploy
-mise run start
+mise deploy
+mise start
 ```
 
 #### 4.2 異なる SSP 閾値での比較実験
@@ -279,7 +285,7 @@ Bind for 0.0.0.0:10001 failed: port is already allocated.
 **解決方法**:
 ```bash
 # 1. クリーンアップ実行
-mise run stop
+# Ctrl+C で停止
 
 # 2. 手動で確認
 sudo ss -tulpn | grep 10001
@@ -317,7 +323,7 @@ docker stop {container_id}
 
 #### 問題: ログが収集されない
 
-**症状**: `mise run collect` 実行後，`results/collected/` が空
+**症状**: `mise analyze` 実行後，`results/` が空
 
 **原因**:
 - 実験が正常に実行されていない
@@ -326,7 +332,7 @@ docker stop {container_id}
 **確認方法**:
 ```bash
 # 実行サーバー上でログを直接確認
-ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
+ssh denjo@192.168.11.100 "ls -lh /home/denjo/workspace/ktakahashi/results/*/node_0/metrics_0.jsonl"
 ```
 
 ---
@@ -348,8 +354,7 @@ ssh denjo@192.168.11.100 "ls -lh /home/denjo/wafl-experiment-*/metrics_0.jsonl"
 
 #### 実験後の推奨事項
 
-- 必ず `mise run collect` で結果を収集
-- `Ctrl+C` でクリーンアップ
+- 必ず `mise analyze` で結果を収集・分析
 - 実験 ID をメモ（後で結果を特定するため）
 
 ---
@@ -365,7 +370,7 @@ Prepare → Deploy → Run Experiment → Collect Results → Cleanup
 ### 1. Deploy
 
 ```bash
-mise run deploy
+mise deploy
 ```
 
 Distributes latest code and configuration to all Execution Servers.
@@ -373,7 +378,7 @@ Distributes latest code and configuration to all Execution Servers.
 ### 2. Start Experiment
 
 ```bash
-mise run start
+mise start
 ```
 
 Automatically performs:
@@ -387,7 +392,7 @@ Automatically performs:
 ### 3. Collect Results
 
 ```bash
-mise run collect
+mise analyze
 ```
 
 Collects logs and metrics from all nodes to `results/{experiment_id}/`.

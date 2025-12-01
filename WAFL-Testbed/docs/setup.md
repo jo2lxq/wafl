@@ -138,7 +138,7 @@ bash ctrl/setup.sh
 
 **注意**: 
 - 初回セットアップ時のみ実行すること
-- Docker イメージのビルドと配布は `mise run deploy` で行われるため、このスクリプトでは行われない
+- Docker イメージのビルドと配布は `mise deploy` で行われるため、このスクリプトでは行われない
 - `ctrl/execution_config.json` にノード情報が正しく設定されていることを確認すること
 - `jq` と `sshpass` がローカルにインストールされている必要がある
 
@@ -157,7 +157,7 @@ sudo apt-get install -y jq sshpass
 {
   "nodes": [
     {
-      "id": 0,
+      "name": 0,
       "physical_ip": "192.168.11.100",  // 実際の IP アドレスに変更
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
@@ -165,7 +165,7 @@ sudo apt-get install -y jq sshpass
       "cpu_limit": "1.0"
     },
     {
-      "id": 1,
+      "name": 1,
       "physical_ip": "192.168.11.101",  // 実際の IP アドレスに変更
       "container_port_ctrl": 10001,
       "host_port_ctrl": 11001,
@@ -232,10 +232,10 @@ python utils/generate_nonIID_filters.py --ratio 50
 
 ```bash
 # デプロイ
-mise run deploy
+mise deploy
 
 # 実験開始（Ctrl+C で停止可能）
-mise run start
+mise start
 ```
 
 **期待される出力**:
@@ -244,6 +244,9 @@ mise run start
 📋 Phase 0: Creating agents and deploying configurations
 ✅ All agents created and configured successfully
 🏃 Phase 1: Starting SELF phase (64 epochs)
+✅ Agent 0 completed SELF epoch 00001
+✅ Agent 1 completed SELF epoch 00001
+✅ Agent 2 completed SELF epoch 00001
 ...
 ```
 
@@ -368,7 +371,7 @@ This script automatically:
 2. Installs packages (Docker, Chrony, sysstat, jq, rsync, etc.)
 3. Configures hosts (time sync, Docker permissions, kernel tuning)
 
-**Note**: Docker image build and distribution are handled by `mise run deploy`.
+**Note**: Docker image build and distribution are handled by `mise deploy`.
 
 **Prerequisites**: `jq` and `sshpass` must be installed locally.
 
@@ -390,8 +393,8 @@ python utils/generate_datasets.py
 #### Step 7: Verification Test
 
 ```bash
-mise run deploy
-mise run start
+mise deploy
+mise start
 ```
 
 ### Troubleshooting

@@ -160,7 +160,7 @@ Docker の `--cpus` オプションで CPU 使用率を制限し，異なる性�
 **設定例**:
 ```json
 {
-  "id": 0,
+  "name": 0,
   "cpu_limit": "1.0"  // 1 コア分
 }
 ```
@@ -416,7 +416,7 @@ Uses Docker's `--cpus` option to limit CPU usage, simulating devices with differ
 **Configuration Example**:
 ```json
 {
-  "id": 0,
+  "name": 0,
   "cpu_limit": "1.0"  // 1 core
 }
 ```

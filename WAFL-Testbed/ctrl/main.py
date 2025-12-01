@@ -994,6 +994,53 @@ class ControlServer:
             self.agents = self._create_agents(experiment_parameters)
             self.logger.info("✅ Phase [0/4] - Complete (all agents ready)")
 
+            # Verify container configurations after startup
+            self.logger.info("🔍 Verifying container configurations...")
+
+            try:
+                import verify
+
+                # Load configurations
+                config_validator = verify.ConfigValidator()
+                if config_validator.load_configs():
+                    # Validate config files with logger
+                    params_valid = config_validator.validate_parameters(logger=self.logger)
+                    exec_valid = config_validator.validate_execution_config(logger=self.logger)
+
+                    if params_valid and exec_valid:
+                        self.logger.info("✅ Configuration files validated")
+
+                        # Verify container applications with logger
+                        container_verifier = verify.ContainerVerifier(config_validator.params, config_validator.exec_config, verbose=False)
+
+                        containers_valid = container_verifier.verify_all(logger=self.logger)
+
+                        if containers_valid and len(container_verifier.errors) == 0:
+                            self.logger.info("✅ All container verifications passed")
+                            if container_verifier.warnings:
+                                for warning in container_verifier.warnings:
+                                    self.logger.warning(f"⚠ {warning}")
+                        else:
+                            self.logger.error("💥 Container verification FAILED")
+                            for error in container_verifier.errors:
+                                self.logger.error(f"✗ {error}")
+                            raise RuntimeError("Container verification failed. Please check container configurations.")
+                    else:
+                        for error in config_validator.errors:
+                            self.logger.error(f"✗ {error}")
+                        raise RuntimeError("Configuration validation failed")
+                else:
+                    for error in config_validator.errors:
+                        self.logger.error(f"✗ {error}")
+                    raise RuntimeError("Failed to load configuration files")
+
+            except ImportError as e:
+                self.logger.warning(f"⚠️ Could not import verification module: {e}")
+                self.logger.warning("Skipping container verification...")
+            except Exception as e:
+                self.logger.error(f"💥 Verification error: {e}")
+                raise
+
             # 1. Run SELF phase
             self.logger.info(f"🏃 Phase [1/4] - SELF training ({epochs['self']} epochs)")
             # SELF phase is independent, so staleness is effectively infinite or irrelevant.
@@ -1320,15 +1367,66 @@ if __name__ == "__main__":
 
         print(f"🚀 Starting experiment with {epochs_self} SELF epochs and {epochs_wafl} WAFL epochs")
         print(f"📋 Contact pattern: {experiment_parameters['contact_pattern']}")
-        print(f"📋 WAFL parameters: {experiment_parameters['wafl_phase']}")
+
+        # Log wafl_phase parameters
+        wafl_phase = experiment_parameters["wafl_phase"]
+        print("\n📊 WAFL Phase Parameters:")
+        print(f"   - Aggregation Strategy: {wafl_phase.get('aggregation_strategy', 'FedAvg')}")
+        print(f"   - Batch Size: {wafl_phase.get('batch_size', 32)}")
+        print(f"   - Learning Rate: {wafl_phase.get('learning_rate', 0.001)}")
+        print(f"   - Coefficiency: {wafl_phase.get('coefficiency', 1.0)}")
+
+        # Log network_condition parameters
+        net_cond = experiment_parameters.get("network_condition", {})
+        net_enabled = net_cond.get("enabled", False)
+        print("\n🌐 Network Condition Parameters:")
+        print(f"   - Enabled: {'Yes' if net_enabled else 'No'}")
+        if net_enabled:
+            print(f"   - Delay: {net_cond.get('delay', '50ms')}")
+            print(f"   - Loss: {net_cond.get('loss', '0%')}")
+            print(f"   - Rate: {net_cond.get('rate', '100mbit')}")
+
+        # Log mobility_aware parameters
+        mobility = experiment_parameters.get("mobility_aware", {})
+        mobility_enabled = mobility.get("enabled", False)
+        print("\n📍 Mobility-Aware Parameters:")
+        print(f"   - Enabled: {'Yes' if mobility_enabled else 'No'}")
+        if mobility_enabled:
+            print(f"   - Contact Pattern File: {mobility.get('contact_pattern_file', 'N/A')}")
+            print(f"   - Network Conditions File: {mobility.get('network_conditions_file', 'N/A')}")
+            print(f"   - Path Loss Model File: {mobility.get('path_loss_model_file', 'N/A')}")
+
+        # Log method parameters
+        method = experiment_parameters.get("method", {})
+        print("\n🔧 Method Parameters:")
+
+        # SSP
+        ssp_settings = method.get("ssp", {})
+        ssp_enabled = ssp_settings.get("enabled", False)
+        print(f"   - SSP: {'Enabled' if ssp_enabled else 'Disabled'}")
+        if ssp_enabled:
+            print(f"     • Staleness: {ssp_settings.get('staleness', 0)}")
+            print(f"     • SSP Threshold: {ssp_settings.get('ssp_threshold', 1.0)}")
+
+        # UDP
+        udp_settings = method.get("udp", {})
+        udp_enabled = udp_settings.get("enabled", False)
+        print(f"   - UDP: {'Enabled' if udp_enabled else 'Disabled'}")
+        if udp_enabled:
+            print(f"     • FEC M: {udp_settings.get('fec_m', 9)}")
+
+        # Compression
+        comp_settings = method.get("compression", {})
+        comp_enabled = comp_settings.get("enabled", False)
+        print(f"   - Compression: {'Enabled' if comp_enabled else 'Disabled'}")
+        if comp_enabled:
+            print(f"     • Initial Method: {comp_settings.get('initial_method', 'zlib')}")
 
         # Create ControlServer instance
         controller = ControlServer()
 
         # Run experiment
         # Extract SSP settings
-        ssp_settings = experiment_parameters.get("method", {}).get("ssp", {})
-        ssp_enabled = ssp_settings.get("enabled", True)
         staleness = ssp_settings.get("staleness", 0) if ssp_enabled else 0
         ssp_threshold = ssp_settings.get("ssp_threshold", 1.0) if ssp_enabled else 1.0
 

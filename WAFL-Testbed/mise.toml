@@ -30,6 +30,7 @@ run = [
   "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -avz ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/uv venv && source .venv/bin/activate && ~/.local/bin/uv sync && python -u ctrl/deploy.py\"",
 ]
 
@@ -50,3 +51,7 @@ run = [
   ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/",
   ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
 ]
+
+[tasks.verify]
+description = "Run both verification and benchmarks"
+run = "uv run python ctrl/verify.py --all"

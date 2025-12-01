@@ -17,7 +17,7 @@
 - **Per-Peer Limitation**: HTB + Filter を使った相手ごとのネットワーク制限
 - **4 段階ランク制**: Excellent/Good/Fair/Poor の品質ランク
 - **設定可能な距離減衰モデル**: JSON ファイルでカスタマイズ可能
-- **mise タスク統合**: `mise run sumo` で前計算を手軽に実行
+- **mise タスク統合**: `mise sumo` で前計算を手軽に実行
 
 ### 使用方法
 
@@ -35,28 +35,9 @@ export SUMO_HOME="/usr/share/sumo"
 
 公式ドキュメント: https://sumo.dlr.de/docs/Installing/index.html
 
-#### 2. 実行設定から SUMO ルートを生成
+#### 2. SUMO シナリオの作成
 
-`execution_config.json` からノード情報を読み込み，SUMO ルートファイルを動的生成する．これにより，ノード数の変更が自動的に SUMO シナリオに反映される．
-
-```bash
-# execution_config.json からルート生成（ネットワークファイルも自動生成）
-mise run generate-routes
-```
-
-生成されるファイル:
-- `data/sumo/routes.rou.xml`: 車両ルート定義（ノード数と ID が execution_config.json と一致）
-- `data/sumo/network.net.xml`: 円形道路ネットワーク（自動生成）
-- `data/sumo/routes.sumocfg`: SUMO 設定ファイル
-
-**メリット:**
-- **ID の一致**: execution_config.json の `name: 15` と SUMO の `vehicle id="15"` が一致
-- **スケーラビリティ**: ノード数を変更すると自動的に SUMO シナリオも更新
-- **ミス防止**: ノード数の不整合を回避
-
-#### 3. SUMO シナリオの作成（手動の場合）
-
-手動で SUMO シナリオを作成する場合，モビリティシナリオ（`.sumocfg`，`.rou.xml`，`.net.xml`）を `data/sumo/` に配置する．
+モビリティシナリオ（`.sumocfg`，`.rou.xml`，`.net.xml`）を `data/sumo/` に配置する。
 
 例: 簡単な交差点シナリオ
 
@@ -68,39 +49,24 @@ data/sumo/
 └── routes.rou.xml        # 車両ルート
 ```
 
-#### 3. モビリティトレースの生成
+#### 3. モビリティトレースとネットワーク条件の生成
+
+`mise sumo` コマンドで SUMO シミュレーションを実行し，モビリティトレース、コンタクトパターン、ネットワーク条件、可視化を一括で生成する。
 
 ```bash
-# 環境変数でパス指定（オプション）
-export SUMO_CONFIG=data/sumo/scenario.sumocfg
-export TRACE_OUTPUT=data/sumo/mobility_trace.csv
-
-# SUMO シミュレーション実行 → sumo/mobility_trace.csv 生成
-mise run generate-sumo-trace
+mise sumo
 ```
 
-出力: `data/sumo/mobility_trace.csv`
+#### 実行内容
 
-```csv
-epoch,node_id,x,y
-0,0,100.50,200.30
-0,1,150.20,180.40
-1,0,102.30,201.50
-1,1,148.80,182.10
-...
-```
+1. **SUMO シミュレーション実行**: `prepare_mobility.py` でモビリティトレースを生成
+2. **コンタクトパターン計算**: ノード間距離から通信可能なペアを計算
+3. **ネットワーク条件生成**: 距離に応じた tc 設定を生成
+4. **可視化**: `visualize_sumo_results.py` でグラフとアニメーションを生成
 
-#### 4. コンタクトパターンとネットワーク条件の計算
 
-```bash
-mise run sumo
-```
 
-生成ファイル:
-- `data/contact_pattern_mobility.json`: エポックごとの通信ペアリスト
-- `data/network_conditions_mobility.json`: エポックごとの tc 設定
-
-#### 5. 距離減衰モデルのカスタマイズ
+#### 4. 距離減衰モデルのカスタマイズ
 
 `data/sumo/path_loss_model.json` を作成：
 
@@ -131,7 +97,7 @@ mise run sumo
 - `radio_range`: 無線通信可能な最大距離（メートル）
 - `ranks`: 距離帯ごとのネットワーク品質定義
 
-#### 6. 実験での利用
+#### 5. 実験での利用
 
 `ctrl/parameters.json` で mobility_aware モードを有効化：
 
@@ -150,10 +116,9 @@ mise run sumo
 通常通り実験を実行：
 
 ```bash
-mise run deploy
-mise run start
-mise run collect
-mise run stop
+mise deploy
+mise start
+mise analyze
 ```
 
 ### Per-Peer Limitation の技術詳細
@@ -241,7 +206,7 @@ Instead of static network conditions (constant bandwidth, delay, and packet loss
 - **Per-Peer Limitation**: Per-destination network constraints using HTB + Filter
 - **4-Tier Ranking System**: Excellent/Good/Fair/Poor quality ranks
 - **Configurable Path Loss Model**: Customizable via JSON configuration file
-- **mise Task Integration**: Easy preprocessing execution with `mise run sumo`
+- **mise Task Integration**: Easy preprocessing execution with `mise sumo`
 
 ### Usage
 
@@ -259,28 +224,9 @@ export SUMO_HOME="/usr/share/sumo"
 
 Official documentation: https://sumo.dlr.de/docs/Installing/index.html
 
-#### 2. Generate SUMO Routes from Configuration
+#### 2. Create SUMO Scenario
 
-Dynamically generate SUMO route files from `execution_config.json`. This ensures that changes in node count are automatically reflected in the SUMO scenario.
-
-```bash
-# Generate routes from execution_config.json (network file auto-generated)
-mise run generate-routes
-```
-
-Generated files:
-- `data/sumo/routes.rou.xml`: Vehicle route definitions (node count and IDs match execution_config.json)
-- `data/sumo/network.net.xml`: Circular road network (auto-generated)
-- `data/sumo/routes.sumocfg`: SUMO configuration file
-
-**Benefits:**
-- **ID Consistency**: `name: 15` in execution_config.json matches `vehicle id="15"` in SUMO
-- **Scalability**: Changing node count automatically updates SUMO scenario
-- **Error Prevention**: Avoids node count mismatches
-
-#### 3. Create SUMO Scenario (Manual Method)
-
-For manual SUMO scenario creation, place mobility scenarios (`.sumocfg`, `.rou.xml`, `.net.xml`) in `data/sumo/`.
+Place mobility scenarios (`.sumocfg`, `.rou.xml`, `.net.xml`) in `data/sumo/`.
 
 Example: Simple intersection scenario
 
@@ -292,35 +238,22 @@ data/sumo/
 └── routes.rou.xml        # Vehicle routes
 ```
 
-#### 3. Generate Mobility Trace
+#### 3. Generate Mobility Trace and Network Conditions
+
+Run the `mise sumo` command to execute SUMO simulation and generate mobility traces, contact patterns, network conditions, and visualizations all at once.
 
 ```bash
-# Run SUMO simulation → generate sumo/mobility_trace.csv
-mise run generate-sumo-trace
+mise sumo
 ```
 
-Output: `data/sumo/mobility_trace.csv`
+#### Execution Details
 
-```csv
-epoch,node_id,x,y
-0,0,100.50,200.30
-0,1,150.20,180.40
-1,0,102.30,201.50
-1,1,148.80,182.10
-...
-```
+1. **Run SUMO Simulation**: Generate mobility traces with `prepare_mobility.py`
+2. **Calculate Contact Patterns**: Determine communicable pairs based on inter-node distances
+3. **Generate Network Conditions**: Create tc settings based on distances
+4. **Visualization**: Generate graphs and animations with `visualize_sumo_results.py`
 
-#### 4. Calculate Contact Pattern and Network Conditions
-
-```bash
-mise run sumo
-```
-
-Generated files:
-- `data/contact_pattern_mobility.json`: Communication pair list per epoch
-- `data/network_conditions_mobility.json`: tc settings per epoch
-
-#### 5. Customize Path Loss Model
+#### 4. Customize Path Loss Model
 
 Create `data/sumo/path_loss_model.json`:
 
@@ -351,7 +284,7 @@ Create `data/sumo/path_loss_model.json`:
 - `radio_range`: Maximum wireless communication range (meters)
 - `ranks`: Network quality definitions per distance range
 
-#### 6. Use in Experiments
+#### 5. Use in Experiments
 
 Enable mobility_aware mode in `ctrl/parameters.json`:
 
@@ -370,10 +303,9 @@ Enable mobility_aware mode in `ctrl/parameters.json`:
 Run experiments as usual:
 
 ```bash
-mise run deploy
-mise run start
-mise run collect
-mise run stop
+mise deploy
+mise start
+mise analyze
 ```
 
 ### Technical Details: Per-Peer Limitation

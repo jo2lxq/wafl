@@ -99,6 +99,14 @@ class ModelLearningUtils:
         self.metrics_logger = MetricsLogger(experiment_id, "node")  # node name is not used in filename
 
         self.logger.debug("Initialized Model Learning Utils")
+
+        # Log wafl_phase parameters
+        self.logger.info("📊 WAFL Phase Parameters Applied:")
+        self.logger.info(f"   - Aggregation Strategy: {self.wafl_phase_params.get('aggregation_strategy', 'FedAvg')}")
+        self.logger.info(f"   - Batch Size: {self.wafl_phase_params['batch_size']}")
+        self.logger.info(f"   - Learning Rate: {self.wafl_phase_params['learning_rate']}")
+        self.logger.info(f"   - Coefficiency: {self.wafl_phase_params['coefficiency']}")
+
         self.train_loss = 0
         self.train_accuracy = 0
         self.epoch_number = 0

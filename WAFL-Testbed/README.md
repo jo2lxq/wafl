@@ -107,7 +107,7 @@ ssh-copy-id denjo@192.168.11.101
 {
   "nodes": [
     {
-      "id": 0,
+      "name": 0,
       "physical_ip": "192.168.11.100",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
@@ -144,13 +144,13 @@ ssh-copy-id denjo@192.168.11.101
 python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense
 
 # 全ノードへデプロイ
-mise run deploy
+mise deploy
 
 # 実験開始
-mise run start
+mise start
 
-# 結果収集
-mise run collect
+# 結果分析（実験終了後）
+mise analyze
 
 # 停止
 # Ctrl+C で停止（全エージェントが正常終了します）
@@ -164,9 +164,13 @@ WAFL-Testbed/
 │   ├── architecture.md     # システムアーキテクチャ
 │   ├── configuration.md    # 設定ガイド
 │   ├── setup.md            # セットアップガイド
-│   └── usage.md            # 使用方法
+│   ├── usage.md            # 使用方法
+│   └── mobility_aware.md   # モビリティ対応機能
 ├── ctrl/                   # コントロールサーバー
 │   ├── main.py             # オーケストレーター
+│   ├── deploy.py           # デプロイスクリプト
+│   ├── analyze.py          # 結果分析・グラフ生成
+│   ├── verify.py           # 設定検証・ベンチマーク
 │   ├── execution_config.json  # インフラ設定
 │   └── parameters.json     # 実験パラメータ
 ├── wafl/                   # 実行エージェント
@@ -179,10 +183,12 @@ WAFL-Testbed/
 ├── utils/                  # ユーティリティ
 │   ├── generate_rwp_topology.py     # RWP トポロジー生成
 │   ├── generate_rgg_topology.py     # RGG トポロジー生成
-│   ├── generate_datasets.py         # データセット生成
-│   └── generate_nonIID_filters.py   # Non-IID フィルター
+│   ├── prepare_mobility.py          # SUMO モビリティ前処理
+│   ├── visualize_sumo_results.py    # SUMO 結果可視化
+│   └── generate_datasets.py         # データセット生成
 ├── data/                   # データ・トポロジー
-│   └── contact_pattern/    # 接触パターン JSON
+│   ├── contact_pattern/    # 接触パターン JSON
+│   └── sumo/               # SUMO モビリティデータ
 └── results/                # 実験結果
 ```
 
@@ -258,7 +264,7 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
 
 3.  **SUMO Mobility Trace** - Mobility-Based
     -   Realistic movement patterns extracted from SUMO simulations
-    -   One-command execution: `mise run sumo`
+    -   One-command execution: `mise sumo`
 
 ### Quick Start
 
@@ -310,7 +316,7 @@ ssh-copy-id denjo@192.168.11.101
 {
   "nodes": [
     {
-      "id": 0,
+      "name": 0,
       "physical_ip": "192.168.11.100",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
@@ -347,22 +353,16 @@ ssh-copy-id denjo@192.168.11.101
 python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense
 
 # Deploy to all nodes
-mise run deploy
+mise deploy
 
 # Start experiment
-mise run start
+mise start
 
-# Collect results
-mise run collect
+# Analyze results (after experiment completion)
+mise analyze
 
 # Stop
 # Press Ctrl+C to stop (graceful shutdown of all agents)
-```
-
-### 5. Cleanup
-Stop the experiment by pressing `Ctrl+C`. The control server will handle the graceful shutdown of all agents.
-```bash
-# Press Ctrl+C in the terminal running 'mise start'
 ```
 
 ### Directory Structure
@@ -373,9 +373,13 @@ WAFL-Testbed/
 │   ├── architecture.md     # System architecture
 │   ├── configuration.md    # Configuration guide
 │   ├── setup.md            # Setup guide
-│   └── usage.md            # Usage guide
+│   ├── usage.md            # Usage guide
+│   └── mobility_aware.md   # Mobility-aware features
 ├── ctrl/                   # Control Server
 │   ├── main.py             # Orchestrator
+│   ├── deploy.py           # Deployment script
+│   ├── analyze.py          # Results analysis & graph generation
+│   ├── verify.py           # Configuration verification & benchmarks
 │   ├── execution_config.json  # Infrastructure config
 │   └── parameters.json     # Experiment parameters
 ├── wafl/                   # Execution Agents
@@ -388,10 +392,12 @@ WAFL-Testbed/
 ├── utils/                  # Utilities
 │   ├── generate_rwp_topology.py     # RWP topology generation
 │   ├── generate_rgg_topology.py     # RGG topology generation
-│   ├── generate_datasets.py         # Dataset generation
-│   └── generate_nonIID_filters.py   # Non-IID filter generation
+│   ├── prepare_mobility.py          # SUMO mobility preprocessing
+│   ├── visualize_sumo_results.py    # SUMO results visualization
+│   └── generate_datasets.py         # Dataset generation
 ├── data/                   # Data & Topology
-│   └── contact_pattern/    # Contact pattern JSONs
+│   ├── contact_pattern/    # Contact pattern JSONs
+│   └── sumo/               # SUMO mobility data
 └── results/                # Experiment results
 ```
 
