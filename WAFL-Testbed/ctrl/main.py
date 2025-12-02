@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import time
+from getpass import getpass
 from typing import Any, Dict, List, Tuple
 
 import paramiko
@@ -293,7 +294,7 @@ class WaflAgent:
             self.logger.error(f"💥 Config deployment failed for agent {self.name}: {e}", exc_info=True)
             return False
 
-    def start_remote_process(self, experiment_id: str) -> bool:
+    def start_remote_process(self, experiment_id: str, ssh_password: str) -> bool:
         """
         Start wafl/src/main.py with nohup via SSH on execution server.
 
@@ -312,9 +313,18 @@ class WaflAgent:
 
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
-
-            command_create_results = f"cd {os.path.join(target_path, 'results')} && mkdir -p {experiment_id}"
-
+            # Bug Fix: Create the results directory if it doesn't exist (encountered this twice).
+            command_create_results = f"cd {target_path} && mkdir -p {os.path.join('results', experiment_id)}"
+            command_tcpdump_kill = "sudo -S -p '' pkill -f \"tcpdump\""
+            tcpdump_pcap_file = os.path.join("/tmp", "tcpdump_")
+            p2p_port = self.config["WAFL_DEVICE_P2P_PORT"]
+            # Linux Interface: enp0s31f6 | Buffer Size: 4 MB | File Size: 5 MB
+            # Number of Files: 10 | Port: 10002 (Default P2P) | SUDO required.
+            command_tcpdump = (
+                f"sudo -S -p '' bash -lc \"nohup tcpdump -i enp0s31f6 tcp port {p2p_port} "
+                f"-s 0 -C 5 -W 10 -B 4096 -U -w {tcpdump_pcap_file} "
+                f'> /dev/null 2>&1 &"'
+            )
             venv_path = os.path.join(target_path, ".venv", "bin", "activate")
             python_script = os.path.join(target_path, "src/main.py")
             output_file = os.path.join(target_path, "results", experiment_id, "output.log")
@@ -393,6 +403,28 @@ class WaflAgent:
                 if exit_status != 0:
                     error_msg = stderr.read().decode().strip()
                     self.logger.warning(f"⚠️ Results directory creation warning: {error_msg}")
+
+                # Kill Zombie Tcpdump processes (highly unlikely but possible):
+                stdin, stdout, stderr = ssh.exec_command(command_tcpdump_kill)
+                stdin.write(ssh_password + "\n")
+                stdin.flush()
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise RuntimeError(f"❌ Failed to kill the zombie processes: {error_msg}")
+                else:
+                    self.logger.info("🔪 Tcpdump zombies cleaned up successfully! ")
+
+                # Start tcpdump process on the agent:
+                stdin, stdout, stderr = ssh.exec_command(command_tcpdump)
+                stdin.write(ssh_password + "\n")
+                stdin.flush()
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise RuntimeError(f"❌ Failed to start tcpdump: {error_msg}")
+                else:
+                    self.logger.info("✅ tcpdump started up successfully! ")
 
                 # Start main process
                 stdin, stdout, stderr = ssh.exec_command(command_start)
@@ -565,22 +597,45 @@ class WaflAgent:
         self.logger.info(f"✅ Agent {self.name} started evaluation '{eval_name}'")
         return True
 
-    def send_kill_command(self) -> bool:
+    def send_kill_command(self, args: Dict[str, Any], ssh_password: str) -> bool:
         """
         Send KILL command to terminate process normally.
         """
+        FLAG = True
         self.logger.warning(f"🛑 Sending graceful shutdown command to agent {self.name}")
-
         success, response = self._send_command("KILL\r\n")
         if success and response == "OK":
             self.logger.info(f"✅ Agent {self.name} acknowledged shutdown command")
             self.status = "TERMINATED"
-            return True
+            FLAG = True
         else:
             self.logger.error(f"❌ Graceful shutdown failed for agent {self.name}. Response: {response}")
-            return False
+            FLAG = False
 
-    def force_kill_process(self, args: Dict[str, Any]) -> bool:
+        # Tcpdump pkill block: BEGINS
+        try:
+            ssh_port = 22
+            username = args["USER"]
+            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+            command_tcpdump_kill = "sudo -S -p '' pkill -f \"tcpdump\""
+            with paramiko.SSHClient() as ssh:
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+                stdin, stdout, stderr = ssh.exec_command(command_tcpdump_kill)
+                stdin.write(ssh_password + "\n")
+                stdin.flush()
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    self.logger.warning(f"⚠️ Zombie tcpdump warning: {error_msg}")
+        except Exception as e:
+            self.logger.warning(f"🛑 Error killing tcpdump on agent {self.name} | {e}")
+        # Tcpdump pkill block: ENDS
+
+        return FLAG
+
+    def force_kill_process(self, args: Dict[str, Any], ssh_password: str) -> bool:
         """
         Force kill process via SSH.
 
@@ -599,13 +654,23 @@ class WaflAgent:
             private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
             key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             command_kill = f"kill -9 {self.pid}"
-
+            command_tcpdump_kill = "sudo -S -p '' pkill -f \"tcpdump\""
             with paramiko.SSHClient() as ssh:
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+
+                # Tcpdump pkill block: BEGINS
+                stdin, stdout, stderr = ssh.exec_command(command_tcpdump_kill)
+                stdin.write(ssh_password + "\n")
+                stdin.flush()
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    error_msg = stderr.read().decode().strip()
+                    self.logger.warning(f"⚠️ Zombie tcpdump warning: {error_msg}")
+                # Tcpdump pkill block: ENDS
+
                 stdin, stdout, stderr = ssh.exec_command(command_kill)
                 exit_status = stdout.channel.recv_exit_status()
-
                 if exit_status == 0:
                     self.status = "TERMINATED"
                     self.logger.info(f"✅ Force kill successful for agent {self.name}")
@@ -811,13 +876,14 @@ class ControlServer:
 
             self.agents = self._create_agents(experiment_parameters)
             self.logger.info("✅ All agents created and configured successfully")
-
+            # Get SUDO password.
+            ssh_password = getpass("Please enter the sudo password: ")
             # 1. Start remote processes on all agents
             self.logger.info(f"🎬 Phase 1: Starting {len(self.agents)} remote processes")
             failed_agents = []
 
             for agent in self.agents:
-                if not agent.start_remote_process(self.experiment_id):
+                if not agent.start_remote_process(self.experiment_id, ssh_password):
                     failed_agents.append(agent.name)
 
             if failed_agents:
@@ -879,7 +945,7 @@ class ControlServer:
         finally:
             # 3. Shutdown all agents
             self.logger.info("🛑 Phase 4: Shutting down all agents")
-            self._shutdown_all_agents()
+            self._shutdown_all_agents(ssh_password)
 
             status = "SUCCESS" if experiment_success else "FAILED"
             self.logger.info(f"🏁 Experiment {self.experiment_id} finished with status: {status}")
@@ -950,7 +1016,7 @@ class ControlServer:
 
             time.sleep(poll_interval)
 
-    def _shutdown_all_agents(self):
+    def _shutdown_all_agents(self, ssh_password: str):
         """Terminates all agent processes, trying gracefully first, then forcefully."""
         self.logger.warning(f"🛑 Shutting down {len(self.agents)} agents")
 
@@ -963,7 +1029,7 @@ class ControlServer:
                 self.logger.info(f"⏭️ Skipping agent {agent.name} (never started)")
                 continue
 
-            if agent.send_kill_command():
+            if agent.send_kill_command(self.config, ssh_password):
                 graceful_success.append(agent.name)
             else:
                 force_kill_needed.append(agent)

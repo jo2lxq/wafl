@@ -16,6 +16,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "functions>=0.7.0",
     "tqdm>=4.67.1",
+    "scapy>=2.6.1",
 ]
 
 [tool.ruff]
