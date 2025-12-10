@@ -188,17 +188,10 @@
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
       "host_port_p2p": 10002
-    },
-    {
-      "name": 27,
-      "physical_ip": "192.168.11.127",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
     }
   ],
   "deployment_location": "/home/denjo/workspace/ktakahashi",
   "user": "denjo",
-  "experiment_name": "manhattan-28nodes-base",
+  "experiment_name": "rwp-27nodes-base",
   "log_level": "info"
 }

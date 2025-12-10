@@ -121,6 +121,45 @@ mise start
 mise analyze
 ```
 
+### OSM 実地図モード（Real-World Map Mode）
+
+マンハッタングリッドの代わりに，**OpenStreetMap データを使った実際の道路ネットワーク**上でシミュレーションを行う．
+
+#### OSM データの入手
+
+1. [OpenStreetMap Export](https://www.openstreetmap.org/export) にアクセス
+2. 実験したいエリアを選択（1km × 1km 程度を推奨）
+3. **「エクスポート」** をクリック
+4. ダウンロードしたファイルを `data/osm/map.osm` として保存
+
+```bash
+# ディレクトリ構造
+data/osm/
+└── map.osm    # エクスポートした地図ファイル
+```
+
+#### 実行方法
+
+```bash
+mise sumo-osm
+```
+
+または直接実行：
+
+```bash
+python utils/prepare_mobility.py \
+  --config ctrl/execution_config.json \
+  --osm data/osm/map.osm \
+  --output-dir data/sumo_real/ \
+  --epochs 2112
+```
+
+#### 期待される効果
+
+- **一方通行の影響**: 距離的に近くても迂回が必要になり通信が途切れる
+- **交差点での滞留**: 信号待ちにより車両が密集し Dense 状態が発生
+- **地理的な偏り**: 幹線道路に車両が集中し，路地裏は疎になる
+
 ### Per-Peer Limitation の技術詳細
 
 HTB（Hierarchical Token Bucket）+ Filter を使った実装により，**通信相手ごとに異なるネットワーク制限**を実現する．
@@ -307,6 +346,45 @@ mise deploy
 mise start
 mise analyze
 ```
+
+### OSM Real-World Map Mode
+
+Instead of Manhattan grid, simulate on **real road networks from OpenStreetMap data**.
+
+#### Obtaining OSM Data
+
+1. Access [OpenStreetMap Export](https://www.openstreetmap.org/export)
+2. Select desired area (recommend ~1km × 1km)
+3. Click **"Export"**
+4. Save downloaded file as `data/osm/map.osm`
+
+```bash
+# Directory structure
+data/osm/
+└── map.osm    # Exported map file
+```
+
+#### Execution
+
+```bash
+mise sumo-osm
+```
+
+Or run directly:
+
+```bash
+python utils/prepare_mobility.py \
+  --config ctrl/execution_config.json \
+  --osm data/osm/map.osm \
+  --output-dir data/sumo_real/ \
+  --epochs 2112
+```
+
+#### Expected Effects
+
+- **One-way street impact**: Detours required even for nearby nodes, causing disconnections
+- **Intersection congestion**: Signal waiting creates Dense states with clustered vehicles
+- **Geographic bias**: Vehicles concentrate on main roads, side streets become sparse
 
 ### Technical Details: Per-Peer Limitation
 

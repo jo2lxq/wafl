@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Unified WAFL-Testbed Mobility Preprocessing Pipeline.
 
@@ -17,10 +16,12 @@ import json
 import math
 import os
 import random
+import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 # ==============================================================================
 # SUMO Network and Route Generation
@@ -301,6 +302,228 @@ def generate_sumocfg(output_path: str, network_file: str, route_file: str, durat
 
 
 # ==============================================================================
+# OSM (Real-World Map) Support
+# ==============================================================================
+
+
+def convert_osm_to_network(osm_path: str, output_net_path: str):
+    """Convert OSM file to SUMO network file using netconvert.
+
+    Args:
+        osm_path: Path to input .osm file
+        output_net_path: Path for output .net.xml file
+    """
+    print(f"🌍 Converting OSM map: {osm_path} -> {output_net_path}")
+
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(output_net_path), exist_ok=True)
+
+    # netconvert command with robust options for complex OSM data
+    # These options help avoid assertion errors with complex intersections
+    cmd = [
+        "netconvert",
+        "--osm-files",
+        osm_path,
+        "--output-file",
+        output_net_path,
+        # Geometry options
+        "--geometry.remove",
+        "true",  # Remove micro geometry for performance
+        "--geometry.max-segment-length",
+        "500",  # Limit segment length
+        # Junction handling (critical for complex intersections)
+        "--junctions.join",
+        "true",  # Join complex junctions
+        "--junctions.corner-detail",
+        "0",  # Reduce corner detail (avoids angle calc issues)
+        # Road type filtering (keep only vehicle-accessible roads)
+        "--keep-edges.by-vclass",
+        "passenger",  # Only keep edges accessible by passenger vehicles
+        "--remove-edges.by-type",
+        "highway.cycleway,highway.pedestrian,highway.footway,highway.path,railway.subway,railway.tram,railway.rail,railway.platform",
+        # Traffic features
+        "--tls.guess",
+        "true",  # Guess traffic lights
+        "--tls.join",
+        "true",  # Join close traffic lights
+        "--ramps.guess",
+        "true",  # Guess highway ramps
+        # Turn restrictions
+        "--no-turnarounds",
+        "true",  # Disable U-turns (prevents deadlocks)
+        # Other
+        "--lefthand",
+        "false",  # Right-hand traffic (Japan drives on left, but SUMO default works)
+        "--offset.disable-normalization",
+        "false",  # Normalize coordinates
+        "--xml-validation",
+        "never",  # Skip XML validation (avoids SUMO_HOME warnings)
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        print("✅ OSM conversion successful.")
+        if result.stderr:
+            # Print warnings if any
+            for line in result.stderr.strip().split("\n")[:5]:
+                print(f"   ⚠️  {line}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error during netconvert: {e.stderr}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("❌ Error: 'netconvert' command not found.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Please install SUMO:", file=sys.stderr)
+        print("  Ubuntu/Debian:", file=sys.stderr)
+        print("    sudo add-apt-repository ppa:sumo/stable", file=sys.stderr)
+        print("    sudo apt-get update", file=sys.stderr)
+        print("    sudo apt-get install sumo sumo-tools sumo-doc", file=sys.stderr)
+        sys.exit(1)
+
+
+def get_all_edges(net_xml_path: str) -> List[str]:
+    """Parse .net.xml to get a list of valid edge IDs.
+
+    Excludes internal edges (junction connectors) which cannot be used as
+    trip origins/destinations.
+
+    Args:
+        net_xml_path: Path to SUMO network file (.net.xml)
+
+    Returns:
+        List of valid edge IDs for routing
+    """
+    tree = ET.parse(net_xml_path)
+    root = tree.getroot()
+    edges = []
+
+    for edge in root.findall("edge"):
+        # Skip internal edges (function="internal" are junction connectors)
+        if "function" not in edge.attrib:
+            edge_id = edge.attrib.get("id", "")
+            # Also skip edges starting with ":" (internal junction edges)
+            if edge_id and not edge_id.startswith(":"):
+                edges.append(edge_id)
+
+    return edges
+
+
+def generate_random_routes(
+    config: dict,
+    output_path: str,
+    edge_list: List[str],
+    duration: int,
+    network_file: str,
+    target_epochs: int = None,
+):
+    """Generate random routes for any network topology.
+
+    Uses SUMO's <trip> element which automatically computes shortest paths.
+    Then validates routes using duarouter to filter out invalid trips.
+
+    Args:
+        config: Execution configuration with nodes
+        output_path: Path to write routes file
+        edge_list: List of valid edge IDs from the network
+        duration: Simulation duration in seconds
+        network_file: Path to the network file for duarouter validation
+        target_epochs: Target number of epochs (optional)
+    """
+    nodes = config.get("nodes", [])
+    num_vehicles = len(nodes)
+
+    if len(edge_list) < 2:
+        print(
+            "❌ Error: Network has fewer than 2 edges, cannot generate routes.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Generate raw trips file
+    # Each vehicle gets ONE trip that starts at depart=0 with rerouting enabled
+    # This ensures continuous movement without disappearing
+    trip_file = output_path.replace(".rou.xml", ".trips.xml")
+
+    # Vehicle type with rerouting device enabled for automatic re-routing on arrival
+    xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNameSpaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+
+    <!-- Vehicle type with rerouting enabled for continuous movement -->
+    <vType id="type1" accel="2.6" decel="4.5" sigma="0.5" length="5" minGap="2.5" maxSpeed="13.89" guiShape="passenger">
+        <param key="has.rerouting.device" value="true"/>
+    </vType>
+
+    <!-- Vehicle trips - one per vehicle, rerouting handles continuous movement -->
+"""
+
+    # Each vehicle starts at slightly staggered times and runs forever (until sim ends)
+    for idx, node in enumerate(nodes):
+        veh_id = str(node["name"])
+        # Stagger initial departure to avoid congestion
+        depart_time = idx * 0.5
+
+        # Random origin and destination
+        from_edge = random.choice(edge_list)
+        to_edge = random.choice(edge_list)
+        while to_edge == from_edge:
+            to_edge = random.choice(edge_list)
+
+        # Each vehicle gets one trip - rerouting will handle continuous movement
+        xml_content += f'    <trip id="{veh_id}" type="type1" depart="{depart_time:.1f}" from="{from_edge}" to="{to_edge}"/>\n'
+
+    xml_content += "\n</routes>\n"
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(trip_file, "w") as f:
+        f.write(xml_content)
+
+    print(f"   Generated {num_vehicles} vehicle trips, validating with duarouter...")
+
+    # Use duarouter to validate and compute routes
+    cmd = [
+        "duarouter",
+        "--net-file",
+        network_file,
+        "--route-files",
+        trip_file,
+        "--output-file",
+        output_path,
+        "--ignore-errors",
+        "true",
+        "--repair",
+        "true",
+        "--xml-validation",
+        "never",
+    ]
+
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        print(f"✅ Generated validated routes for real map: {num_vehicles} vehicles")
+    except subprocess.CalledProcessError as e:
+        if os.path.exists(output_path):
+            print(f"✅ Generated routes with some warnings: {num_vehicles} vehicles")
+        else:
+            print(f"❌ Error during duarouter: {e.stderr}", file=sys.stderr)
+            sys.exit(1)
+    except FileNotFoundError:
+        print("❌ Error: 'duarouter' command not found.", file=sys.stderr)
+        print("Please install SUMO tools.", file=sys.stderr)
+        sys.exit(1)
+
+
+# ==============================================================================
 # SUMO Simulation
 # ==============================================================================
 
@@ -380,39 +603,64 @@ def run_sumo_simulation(
         last_positions = {}  # Store last known positions for all vehicles
         all_vehicle_ids = set()  # Track all vehicle IDs that have appeared
 
-        # Phase 1: Run simulation while vehicles are still active
-        while traci.simulation.getMinExpectedNumber() > 0:
+        # Get network edges for rerouting (read from network file)
+        net_file = sumo_config.replace("routes.sumocfg", "network.net.xml")
+        edge_list = get_all_edges(net_file)
+
+        # Run simulation for target_epochs, keeping all vehicles active
+        while epoch < (target_epochs if target_epochs else 10000):
             traci.simulationStep()
 
             vehicle_ids = traci.vehicle.getIDList()
+
+            # Check each vehicle and reroute if near destination
             for veh_id in vehicle_ids:
                 x, y = traci.vehicle.getPosition(veh_id)
                 writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])
                 last_positions[veh_id] = (x, y)
                 all_vehicle_ids.add(veh_id)
 
+                # Check if vehicle is near its destination (within 50m of route end)
+                try:
+                    route = traci.vehicle.getRoute(veh_id)
+                    route_index = traci.vehicle.getRouteIndex(veh_id)
+                    # If vehicle is on last edge or near end, set new destination
+                    if route_index >= len(route) - 1:
+                        # Pick a new random destination edge
+                        new_dest = random.choice(edge_list)
+                        attempts = 0
+                        current_edge = traci.vehicle.getRoadID(veh_id)
+                        while new_dest == current_edge and attempts < 10:
+                            new_dest = random.choice(edge_list)
+                            attempts += 1
+                        traci.vehicle.changeTarget(veh_id, new_dest)
+                except Exception:
+                    # Vehicle may have left or other issue, continue
+                    pass
+
+            # Respawn any vehicles that have left the simulation
+            active_veh_ids = set(vehicle_ids)
+            for veh_id in list(all_vehicle_ids):
+                if veh_id not in active_veh_ids and veh_id in last_positions:
+                    # Vehicle has left, try to respawn at a random edge
+                    try:
+                        from_edge = random.choice(edge_list)
+                        to_edge = random.choice(edge_list)
+                        while to_edge == from_edge:
+                            to_edge = random.choice(edge_list)
+                        route_id = f"route_{veh_id}_{epoch}"
+                        traci.route.add(route_id, [from_edge])
+                        traci.vehicle.add(veh_id, route_id, typeID="type1")
+                        traci.vehicle.changeTarget(veh_id, to_edge)
+                    except Exception:
+                        # Could not respawn, use last position
+                        x, y = last_positions[veh_id]
+                        writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])
+
             if epoch % 100 == 0 and epoch > 0:
                 print(f"  Processed epoch {epoch}...")
 
             epoch += 1
-
-            # Check if we've reached target epochs
-            if target_epochs is not None and epoch >= target_epochs:
-                break
-
-        # Phase 2: If target_epochs is set and not yet reached, continue with last positions
-        if target_epochs is not None and epoch < target_epochs:
-            print(f"  Simulation ended at epoch {epoch}, continuing to {target_epochs} using last positions...")
-            while epoch < target_epochs:
-                for veh_id in sorted(all_vehicle_ids, key=lambda x: int(x)):
-                    if veh_id in last_positions:
-                        x, y = last_positions[veh_id]
-                        writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])
-
-                if epoch % 100 == 0:
-                    print(f"  Processed epoch {epoch}...")
-
-                epoch += 1
 
     traci.close()
 
@@ -426,13 +674,24 @@ def run_sumo_simulation(
 
 
 def load_mobility_trace(trace_file: str) -> Dict[int, Dict[str, Tuple[float, float]]]:
-    """Load mobility trace from CSV."""
+    """Load mobility trace from CSV.
+
+    Normalizes vehicle IDs from trip format (e.g., '0_0', '0_1') to base node IDs ('0').
+    If multiple trips exist for the same node in the same epoch, the last position is used.
+    """
     trace = {}
     with open(trace_file) as f:
         reader = csv.DictReader(f)
         for row in reader:
             epoch = int(row["epoch"])
-            node_id = row["node_id"]
+            raw_node_id = row["node_id"]
+
+            # Normalize node_id: extract base ID from trip format (e.g., "0_0" -> "0")
+            if "_" in raw_node_id:
+                node_id = raw_node_id.split("_")[0]
+            else:
+                node_id = raw_node_id
+
             x = float(row["x"])
             y = float(row["y"])
 
@@ -605,6 +864,12 @@ Example:
         default=None,
         help="Target number of epochs to generate (overrides --duration, continues until target is reached)",
     )
+    parser.add_argument(
+        "--osm",
+        type=str,
+        default=None,
+        help="Path to input .osm file (enables Real-World Map mode instead of Manhattan grid)",
+    )
 
     args = parser.parse_args()
 
@@ -615,6 +880,10 @@ Example:
 
     if not Path(args.pathloss).exists():
         print(f"❌ Error: Path loss model not found: {args.pathloss}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.osm and not Path(args.osm).exists():
+        print(f"❌ Error: OSM file not found: {args.osm}", file=sys.stderr)
         sys.exit(1)
 
     output_dir = Path(args.output_dir)
@@ -646,9 +915,40 @@ Example:
         sim_duration = args.duration
         target_epochs = None
 
-    grid_size, total_edges = generate_manhattan_network(network_file, num_nodes)
-    num_h_edges = grid_size * (grid_size - 1) * 2
-    generate_routes(exec_config, route_file, grid_size, num_h_edges, target_epochs=target_epochs)
+    # Track network mode for summary
+    network_mode = None
+    grid_size = None
+
+    if args.osm:
+        # === Real-World Map Mode (OSM) ===
+        print(f"\n🌍 Mode: Real-World Map ({args.osm})")
+        network_mode = "osm"
+
+        # Convert OSM to SUMO network
+        convert_osm_to_network(args.osm, network_file)
+
+        # Get valid edges from the generated network
+        valid_edges = get_all_edges(network_file)
+        print(f"   Found {len(valid_edges)} valid road segments.")
+
+        # Generate random routes for real map
+        generate_random_routes(
+            exec_config,
+            route_file,
+            valid_edges,
+            sim_duration,
+            network_file=network_file,
+            target_epochs=target_epochs,
+        )
+    else:
+        # === Manhattan Grid Mode (default) ===
+        print("\n🏙️  Mode: Manhattan Grid")
+        network_mode = "manhattan"
+
+        grid_size, total_edges = generate_manhattan_network(network_file, num_nodes)
+        num_h_edges = grid_size * (grid_size - 1) * 2
+        generate_routes(exec_config, route_file, grid_size, num_h_edges, target_epochs=target_epochs)
+
     generate_sumocfg(sumocfg_file, network_file, route_file, sim_duration)
 
     # Step 3: Run SUMO simulation
@@ -682,7 +982,11 @@ Example:
     print("=" * 80)
     print(f"  Nodes: {num_nodes}")
     print(f"  Epochs: {num_epochs}")
-    print(f"  Network: {grid_size}x{grid_size} Manhattan grid")
+    if network_mode == "osm":
+        print("  Network: Real-World Map (OSM)")
+        print(f"  OSM Source: {args.osm}")
+    else:
+        print(f"  Network: {grid_size}x{grid_size} Manhattan grid")
     print(f"  Output directory: {output_dir}")
     print("\n  Generated files:")
     print(f"    - {network_file}")

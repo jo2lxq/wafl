@@ -3,7 +3,7 @@
     "self": 64,
     "wafl": 2048
   },
-  "contact_pattern": "rwp_n28_a1000_r100_p10_s01.json",
+  "contact_pattern": "rwp_n27_a1000_r100_p10_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,

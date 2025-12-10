@@ -64,7 +64,6 @@ FROM python-deps AS final
 # This layer changes frequently, so keep it last
 COPY wafl/ ./wafl/
 COPY data/ ./data/
-COPY ctrl/ ./ctrl/
 
 # Expose ports
 # 10001: Control Port
