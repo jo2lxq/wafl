@@ -99,7 +99,12 @@ def generate_manhattan_network(output_path: str, num_nodes: int):
     # Generate junctions
     xml_content += "    <!-- Junctions (Intersections) -->\n"
     for jid, x, y in junctions:
-        shape_points = [f"{x - 3:.2f},{y + 3:.2f}", f"{x + 3:.2f},{y + 3:.2f}", f"{x + 3:.2f},{y - 3:.2f}", f"{x - 3:.2f},{y - 3:.2f}"]
+        shape_points = [
+            f"{x - 3:.2f},{y + 3:.2f}",
+            f"{x + 3:.2f},{y + 3:.2f}",
+            f"{x + 3:.2f},{y - 3:.2f}",
+            f"{x - 3:.2f},{y - 3:.2f}",
+        ]
         shape = " ".join(shape_points)
         xml_content += f'    <junction id="J{jid}" type="priority" x="{x:.2f}" y="{y:.2f}" incLanes="" intLanes="" shape="{shape}"/>\n'
 
@@ -171,8 +176,22 @@ def generate_manhattan_network(output_path: str, num_nodes: int):
     return grid_size, edge_id
 
 
-def generate_routes(config: dict, output_path: str, grid_size: int, num_h_edges: int):
-    """Generate SUMO route file."""
+def generate_routes(
+    config: dict,
+    output_path: str,
+    grid_size: int,
+    num_h_edges: int,
+    target_epochs: int = None,
+):
+    """Generate SUMO route file.
+
+    Args:
+        config: Execution configuration with nodes
+        output_path: Path to write routes file
+        grid_size: Size of the Manhattan grid
+        num_h_edges: Number of horizontal edges
+        target_epochs: Target number of epochs for simulation (determines route length)
+    """
     nodes = config.get("nodes", [])
     num_vehicles = len(nodes)
 
@@ -201,7 +220,19 @@ def generate_routes(config: dict, output_path: str, grid_size: int, num_h_edges:
             edge_num = num_h_edges + col * (grid_size - 1) * 2 + row * 2 + direction
             return f"E{edge_num}"
 
-        loops = 2
+        # Calculate loops needed based on target epochs
+        # Each loop takes roughly 8-16 edges at ~14 m/s speed with 200m blocks
+        # Estimate: each loop takes about 30-50 simulation steps
+        # Use generous multiplier to ensure simulation runs long enough
+        if target_epochs:
+            # Each loop generates ~16 edges, each edge ~200m at ~14m/s takes ~14 steps
+            # But with traffic and stops, estimate ~40-60 steps per loop
+            # Use conservative estimate: 30 steps per loop
+            estimated_steps_per_loop = 30
+            loops = max(2, (target_epochs // estimated_steps_per_loop) + 5)  # Add buffer
+        else:
+            loops = 2
+
         for _ in range(loops):
             for c in range(start_col, min(start_col + 2, grid_size - 1)):
                 route_edges.append(get_h_edge(start_row, c, 0))
@@ -274,7 +305,12 @@ def generate_sumocfg(output_path: str, network_file: str, route_file: str, durat
 # ==============================================================================
 
 
-def run_sumo_simulation(sumo_config: str, output_file: str, step_duration: float = 1.0):
+def run_sumo_simulation(
+    sumo_config: str,
+    output_file: str,
+    step_duration: float = 1.0,
+    target_epochs: int = None,
+):
     """Run SUMO simulation and generate mobility trace."""
     try:
         import traci
@@ -341,6 +377,10 @@ def run_sumo_simulation(sumo_config: str, output_file: str, step_duration: float
         writer.writerow(["epoch", "node_id", "x", "y"])
 
         epoch = 0
+        last_positions = {}  # Store last known positions for all vehicles
+        all_vehicle_ids = set()  # Track all vehicle IDs that have appeared
+
+        # Phase 1: Run simulation while vehicles are still active
         while traci.simulation.getMinExpectedNumber() > 0:
             traci.simulationStep()
 
@@ -348,11 +388,31 @@ def run_sumo_simulation(sumo_config: str, output_file: str, step_duration: float
             for veh_id in vehicle_ids:
                 x, y = traci.vehicle.getPosition(veh_id)
                 writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])
+                last_positions[veh_id] = (x, y)
+                all_vehicle_ids.add(veh_id)
 
             if epoch % 100 == 0 and epoch > 0:
                 print(f"  Processed epoch {epoch}...")
 
             epoch += 1
+
+            # Check if we've reached target epochs
+            if target_epochs is not None and epoch >= target_epochs:
+                break
+
+        # Phase 2: If target_epochs is set and not yet reached, continue with last positions
+        if target_epochs is not None and epoch < target_epochs:
+            print(f"  Simulation ended at epoch {epoch}, continuing to {target_epochs} using last positions...")
+            while epoch < target_epochs:
+                for veh_id in sorted(all_vehicle_ids, key=lambda x: int(x)):
+                    if veh_id in last_positions:
+                        x, y = last_positions[veh_id]
+                        writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])
+
+                if epoch % 100 == 0:
+                    print(f"  Processed epoch {epoch}...")
+
+                epoch += 1
 
     traci.close()
 
@@ -536,8 +596,14 @@ Example:
     parser.add_argument(
         "--duration",
         type=int,
-        default=1000,
-        help="SUMO simulation duration in seconds (default: 1000)",
+        default=10000,
+        help="SUMO simulation duration in seconds (default: 10000, only used if --epochs not specified)",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Target number of epochs to generate (overrides --duration, continues until target is reached)",
     )
 
     args = parser.parse_args()
@@ -571,15 +637,26 @@ Example:
     route_file = str(output_dir / "routes.rou.xml")
     sumocfg_file = str(output_dir / "routes.sumocfg")
 
+    # Determine target epochs and duration
+    target_epochs = args.epochs
+    if target_epochs:
+        # Set duration to be larger than target epochs to ensure simulation runs long enough
+        sim_duration = target_epochs + 1000  # Add buffer
+    else:
+        sim_duration = args.duration
+        target_epochs = None
+
     grid_size, total_edges = generate_manhattan_network(network_file, num_nodes)
     num_h_edges = grid_size * (grid_size - 1) * 2
-    generate_routes(exec_config, route_file, grid_size, num_h_edges)
-    generate_sumocfg(sumocfg_file, network_file, route_file, args.duration)
+    generate_routes(exec_config, route_file, grid_size, num_h_edges, target_epochs=target_epochs)
+    generate_sumocfg(sumocfg_file, network_file, route_file, sim_duration)
 
     # Step 3: Run SUMO simulation
     print("\n🚗 Step 3: Running SUMO simulation...")
     trace_file = str(output_dir / "mobility_trace.csv")
-    num_epochs = run_sumo_simulation(sumocfg_file, trace_file)
+    if target_epochs:
+        print(f"  Target epochs: {target_epochs}")
+    num_epochs = run_sumo_simulation(sumocfg_file, trace_file, target_epochs=target_epochs)
 
     # Step 4: Generate contact pattern and network conditions
     print("\n🔄 Step 4: Generating contact pattern and network conditions...")

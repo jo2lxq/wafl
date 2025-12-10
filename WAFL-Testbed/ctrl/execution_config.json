@@ -199,6 +199,6 @@
   ],
   "deployment_location": "/home/denjo/workspace/ktakahashi",
   "user": "denjo",
-  "experiment_name": "normal",
+  "experiment_name": "manhattan-28nodes-base",
   "log_level": "info"
 }

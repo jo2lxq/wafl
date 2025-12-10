@@ -5,7 +5,21 @@ uv = "0.7.13"
 [env]
 mise.file = ".env"
 
+[tasks.rsync]
+run = [
+  "rsync -avz ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./Dockerfile ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./.dockerignore ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -avz ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+]
+
 [tasks.setup]
+depends = ["rsync"]
 run = [
   "uv venv",
   ". .venv/bin/activate",
@@ -18,23 +32,15 @@ run = [
 run = [
   "uv run ruff check --fix",
 ]
-depends = ["setup"]
 
 [tasks.deploy]
+depends = ["rsync"]
 run = [
-  "rsync -avz ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./Dockerfile ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./.dockerignore ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -avz ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/uv venv && source .venv/bin/activate && ~/.local/bin/uv sync && python -u ctrl/deploy.py\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/uv venv --clear && source .venv/bin/activate && ~/.local/bin/uv sync && python -u ctrl/deploy.py\"",
 ]
 
 [tasks.start]
+depends = ["deploy"]
 run = [
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/main.py'\"",
 ]
@@ -48,7 +54,7 @@ run = [
 [tasks.sumo]
 description = "Complete mobility preprocessing pipeline (unified script)"
 run = [
-  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/",
+  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/ --epochs 2112",
   ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
 ]
 

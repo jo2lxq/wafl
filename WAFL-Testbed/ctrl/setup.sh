@@ -10,7 +10,6 @@
 #   1. Sudo 権限でパスワード不要設定
 #   2. 必要なパッケージのインストール
 #   3. ホスト設定（Chrony, Docker, Kernel）
-#   4. Docker イメージのビルドと配布
 # ==========================================
 
 set -e  # エラー時に即座に終了
@@ -79,6 +78,49 @@ echo ""
 
 echo -e "${BLUE}🔑 Enter sudo password for remote nodes:${NC}"
 read -s SUDO_PASSWORD
+echo ""
+
+# ==========================================
+# Phase 0: デプロイ先ディレクトリのクリア
+# ==========================================
+echo -e "${CYAN}=========================================${NC}"
+echo -e "${CYAN}Phase 0: Clearing deployment directory${NC}"
+echo -e "${CYAN}=========================================${NC}"
+echo ""
+
+DEPLOYMENT_LOCATION=$(jq -r '.deployment_location' "$CONFIG_FILE")
+DEPLOY_DIR="${DEPLOYMENT_LOCATION}/WAFL-Testbed"
+
+for HOST in "${HOSTS[@]}"; do
+    echo -e "${BLUE}⏳ Cleaning up ${HOST} ...${NC}"
+
+    # Docker cleanup: stop and remove wafl containers, remove wafl-node image, prune
+    DOCKER_CLEANUP="
+        echo -e '${YELLOW}🐳 Stopping and removing wafl containers...${NC}'
+        docker ps -aq --filter 'name=wafl' | xargs -r docker stop 2>/dev/null || true
+        docker ps -aq --filter 'name=wafl' | xargs -r docker rm -f 2>/dev/null || true
+
+        echo -e '${YELLOW}🗑️  Removing wafl-node image...${NC}'
+        docker rmi -f wafl-node:latest 2>/dev/null || true
+
+        echo -e '${YELLOW}🧹 Pruning unused Docker resources...${NC}'
+        docker image prune -f 2>/dev/null || true
+        docker container prune -f 2>/dev/null || true
+
+        echo -e '${YELLOW}📁 Clearing deployment directory...${NC}'
+        rm -rf ${DEPLOY_DIR} && mkdir -p ${DEPLOY_DIR}
+    "
+
+    sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$DOCKER_CLEANUP" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}  ✅ Cleanup completed${NC}"
+    else
+        echo -e "${RED}  ❌ Failed to cleanup${NC}"
+        exit 1
+    fi
+done
+
 echo ""
 
 # ==========================================

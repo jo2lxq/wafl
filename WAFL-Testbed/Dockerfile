@@ -7,7 +7,11 @@ FROM python:3.11-slim AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/root/.cache/uv \
+    UV_HTTP_TIMEOUT=3600 \
+    UV_REQUEST_TIMEOUT=3600 \
+    HTTP_TIMEOUT=3600
 
 # ==========================================
 # Stage 1: System dependencies
@@ -48,8 +52,8 @@ COPY wafl/__init__.py ./wafl/__init__.py
 COPY wafl/src/__init__.py ./wafl/src/__init__.py
 
 # Install dependencies with cache mount for uv
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --frozen --no-dev --compile-bytecode
 
 # ==========================================
 # Stage 3: Final image
