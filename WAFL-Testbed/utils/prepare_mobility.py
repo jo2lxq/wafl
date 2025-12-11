@@ -626,14 +626,19 @@ def run_sumo_simulation(
                     route_index = traci.vehicle.getRouteIndex(veh_id)
                     # If vehicle is on last edge or near end, set new destination
                     if route_index >= len(route) - 1:
-                        # Pick a new random destination edge
-                        new_dest = random.choice(edge_list)
-                        attempts = 0
                         current_edge = traci.vehicle.getRoadID(veh_id)
-                        while new_dest == current_edge and attempts < 10:
+                        # Try multiple destinations until one works
+                        for _ in range(20):  # Try up to 20 different destinations
                             new_dest = random.choice(edge_list)
-                            attempts += 1
-                        traci.vehicle.changeTarget(veh_id, new_dest)
+                            if new_dest == current_edge:
+                                continue
+                            try:
+                                traci.vehicle.changeTarget(veh_id, new_dest)
+                                break
+                            except Exception:
+                                # This destination is unreachable, try another
+                                continue
+                        # If no route found after 20 tries, vehicle will stay on current edge
                 except Exception:
                     # Vehicle may have left or other issue, continue
                     pass
@@ -643,16 +648,22 @@ def run_sumo_simulation(
             for veh_id in list(all_vehicle_ids):
                 if veh_id not in active_veh_ids and veh_id in last_positions:
                     # Vehicle has left, try to respawn at a random edge
-                    try:
-                        from_edge = random.choice(edge_list)
-                        to_edge = random.choice(edge_list)
-                        while to_edge == from_edge:
+                    respawned = False
+                    for _ in range(20):  # Try up to 20 times to respawn
+                        try:
+                            from_edge = random.choice(edge_list)
                             to_edge = random.choice(edge_list)
-                        route_id = f"route_{veh_id}_{epoch}"
-                        traci.route.add(route_id, [from_edge])
-                        traci.vehicle.add(veh_id, route_id, typeID="type1")
-                        traci.vehicle.changeTarget(veh_id, to_edge)
-                    except Exception:
+                            if to_edge == from_edge:
+                                continue
+                            route_id = f"route_{veh_id}_{epoch}"
+                            traci.route.add(route_id, [from_edge])
+                            traci.vehicle.add(veh_id, route_id, typeID="type1")
+                            traci.vehicle.changeTarget(veh_id, to_edge)
+                            respawned = True
+                            break
+                        except Exception:
+                            continue
+                    if not respawned:
                         # Could not respawn, use last position
                         x, y = last_positions[veh_id]
                         writer.writerow([epoch, veh_id, f"{x:.2f}", f"{y:.2f}"])

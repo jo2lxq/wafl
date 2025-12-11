@@ -1,4 +1,8 @@
 {
+  "deployment_location": "/home/denjo/workspace/ktakahashi",
+  "user": "denjo",
+  "experiment_name": "Experiment 1: Synchronous Scalability Verification - SSP (p=0.9)",
+  "log_level": "info",
   "nodes": [
     {
       "name": 0,
@@ -189,9 +193,5 @@
       "host_port_ctrl": 10001,
       "host_port_p2p": 10002
     }
-  ],
-  "deployment_location": "/home/denjo/workspace/ktakahashi",
-  "user": "denjo",
-  "experiment_name": "rwp-27nodes-base",
-  "log_level": "info"
+  ]
 }

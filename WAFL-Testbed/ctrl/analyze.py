@@ -1,20 +1,29 @@
 import argparse
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import matplotlib
 import matplotlib.pyplot as plt
 import pandas as pd
 import paramiko
 import seaborn as sns
+
+# Japanese font configuration for matplotlib
+matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
+matplotlib.rcParams["axes.unicode_minus"] = False
 
 # Configuration
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CTRL_DIR = PROJECT_ROOT / "ctrl"
 CONFIG_FILE = CTRL_DIR / "execution_config.json"
 RESULTS_DIR = PROJECT_ROOT / "results"
+
+# Target accuracy for Time-to-Accuracy plot
+TARGET_ACCURACY = 0.95
 
 
 def load_config():
@@ -115,10 +124,15 @@ def analyze_results(experiment_id):
     analysis_dir = exp_dir / "analysis"
     analysis_dir.mkdir(exist_ok=True)
 
+    # Extract experiment name without timestamp (e.g., "exp1-20251211T144430" -> "exp1")
+    # The timestamp format is "-YYYYMMDDTHHMMSS" at the end
+    timestamp_pattern = r"-\d{8}T\d{6}$"
+    experiment_name = re.sub(timestamp_pattern, "", experiment_id)
+
     # 1. Load Metrics
     metrics_dfs = []
     for node_dir in exp_dir.iterdir():
-        if node_dir.is_dir() and node_dir.name != "analysis":
+        if node_dir.is_dir() and node_dir.name != "analysis" and node_dir.name != "ctrl":
             metrics_file = node_dir / "metrics.csv"
             if metrics_file.exists():
                 try:
@@ -134,92 +148,655 @@ def analyze_results(experiment_id):
 
     df = pd.concat(metrics_dfs)
 
-    # 2. Plot Training/Test Accuracy & Loss
-    sns.set_theme(style="darkgrid")
-
-    # Melt dataframe for easier plotting with seaborn
-    acc_df = df.melt(id_vars=["epoch", "phase", "node"], value_vars=["train_accuracy", "test_accuracy"], var_name="metric", value_name="value")
-    loss_df = df.melt(id_vars=["epoch", "phase", "node"], value_vars=["train_loss", "test_loss"], var_name="metric", value_name="value")
-
-    # --- Helper to add phase switch line ---
-    def add_phase_line(ax, x_col="epoch"):
-        # Find start of WAFL phase
-        wafl_start = df[df["phase"] == "WAFL"][x_col].min()
-        if not pd.isna(wafl_start):
-            ax.axvline(x=wafl_start, color="firebrick", linestyle="--", alpha=0.7)
-            # Place text slightly to the right of the line, at the top
-            y_min, y_max = ax.get_ylim()
-            ax.text(wafl_start, y_max * 0.15, " Phase Switch", color="firebrick", va="bottom")
-
-    # --- Aggregated Plots (Mean + SD) ---
-    # optimization: use errorbar='sd' (standard deviation) instead of bootstrap CI (slow)
-    if not acc_df.empty:
-        plt.figure(figsize=(12, 6))
-        ax = sns.lineplot(data=acc_df, x="epoch", y="value", hue="metric", style="phase", markers=False, dashes=False, errorbar="sd")
-        add_phase_line(ax, "epoch")
-        plt.title(f"Accuracy over Epochs (Mean ± SD) - {experiment_id}")
-        plt.ylabel("Accuracy")
-        plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "accuracy_mean.png")
-        plt.close()
-        print("  ✅ Generated accuracy_mean.png")
-
-    if not loss_df.empty:
-        plt.figure(figsize=(12, 6))
-        ax = sns.lineplot(data=loss_df, x="epoch", y="value", hue="metric", style="phase", markers=False, dashes=False, errorbar="sd")
-        add_phase_line(ax, "epoch")
-        plt.title(f"Loss over Epochs (Mean ± SD) - {experiment_id}")
-        plt.ylabel("Loss")
-        plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "loss_mean.png")
-        plt.close()
-        print("  ✅ Generated loss_mean.png")
-
-    # --- Node-wise Plots (Spaghetti Plots) ---
-    # Useful for identifying outliers or stragglers
-    # optimization: estimator=None avoids expensive aggregation
-    if not df.empty:
-        # Node-wise Test Accuracy
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(data=df, x="epoch", y="test_accuracy", hue="node", alpha=0.3, legend=False, palette="viridis", estimator=None)
-        # Changed mean line color to navy (softer than black)
-        ax = sns.lineplot(data=df, x="epoch", y="test_accuracy", color="navy", linewidth=2, label="Mean", errorbar=None)
-        add_phase_line(ax, "epoch")
-        plt.title(f"Node-wise Test Accuracy - {experiment_id}")
-        plt.ylabel("Test Accuracy")
-        plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "accuracy_nodes.png")
-        plt.close()
-        print("  ✅ Generated accuracy_nodes.png")
-
-        # Node-wise Test Loss
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(data=df, x="epoch", y="test_loss", hue="node", alpha=0.3, legend=False, palette="viridis", estimator=None)
-        # Changed mean line color to navy
-        ax = sns.lineplot(data=df, x="epoch", y="test_loss", color="navy", linewidth=2, label="Mean", errorbar=None)
-        add_phase_line(ax, "epoch")
-        plt.title(f"Node-wise Test Loss - {experiment_id}")
-        plt.ylabel("Test Loss")
-        plt.xlabel("Epoch")
-        plt.savefig(analysis_dir / "loss_nodes.png")
-        plt.close()
-        print("  ✅ Generated loss_nodes.png")
-
-    # 3. Resource Usage Analysis
-    resources_data = []
+    # 2. Load Resources
+    resources_dfs = []
     for node_dir in exp_dir.iterdir():
-        if node_dir.is_dir() and node_dir.name != "analysis":
+        if node_dir.is_dir() and node_dir.name != "analysis" and node_dir.name != "ctrl":
             res_file = node_dir / "resources.csv"
             if res_file.exists():
                 try:
                     rdf = pd.read_csv(res_file)
                     rdf["node"] = node_dir.name
-                    # Normalize timestamp relative to start
-                    if not rdf.empty:
-                        # Timestamp is already relative in new implementation
-                        resources_data.append(rdf)
+                    resources_dfs.append(rdf)
                 except Exception:
                     pass
+
+    resources_df = pd.concat(resources_dfs) if resources_dfs else pd.DataFrame()
+
+    # Set theme
+    sns.set_theme(style="darkgrid")
+
+    # --- Helper to add phase switch line ---
+    def add_phase_line(ax, x_col="epoch", text_position="top"):
+        wafl_start = df[df["phase"] == "WAFL"][x_col].min()
+        if not pd.isna(wafl_start):
+            ax.axvline(x=wafl_start, color="firebrick", linestyle="--", alpha=0.7)
+            y_min, y_max = ax.get_ylim()
+            if text_position == "top":
+                y_pos = y_max * 0.95
+                va = "top"
+            else:
+                y_pos = y_min + (y_max - y_min) * 0.05
+                va = "bottom"
+            ax.text(
+                wafl_start,
+                y_pos,
+                " Phase Switch",
+                color="firebrick",
+                va=va,
+                fontsize=10,
+            )
+
+    # ==========================================================================
+    # 1. Accuracy
+    # ==========================================================================
+    if not df.empty and "test_accuracy" in df.columns:
+        plt.figure(figsize=(12, 6))
+        ax = sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_accuracy",
+            hue="node",
+            alpha=0.3,
+            legend=False,
+            palette="viridis",
+            estimator=None,
+        )
+        sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_accuracy",
+            color="navy",
+            linewidth=2,
+            label="Mean",
+            errorbar=None,
+            ax=ax,
+        )
+        add_phase_line(ax, "epoch", text_position="bottom")
+        plt.title(f"Test Accuracy - {experiment_name}")
+        plt.ylabel("Test Accuracy")
+        plt.xlabel("Epoch")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "accuracy.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated accuracy.png")
+
+    # ==========================================================================
+    # 2. Wall-clock time per epoch
+    # ==========================================================================
+    if not df.empty and "epoch_duration_ms" in df.columns:
+        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+        if not epoch_dur.empty:
+            # Convert to seconds for readability
+            epoch_dur["epoch_duration_s"] = epoch_dur["epoch_duration_ms"] / 1000
+
+            plt.figure(figsize=(12, 6))
+            ax = sns.lineplot(
+                data=epoch_dur,
+                x="epoch",
+                y="epoch_duration_s",
+                hue="node",
+                alpha=0.3,
+                legend=False,
+                palette="viridis",
+                estimator=None,
+            )
+            sns.lineplot(
+                data=epoch_dur,
+                x="epoch",
+                y="epoch_duration_s",
+                color="navy",
+                linewidth=2,
+                label="Mean",
+                errorbar=None,
+                ax=ax,
+            )
+            add_phase_line(ax, "epoch")
+            plt.title(f"Wall-clock Time per Epoch - {experiment_name}")
+            plt.ylabel("Duration [sec]")
+            plt.xlabel("Epoch")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(analysis_dir / "epoch_duration.png", dpi=150)
+            plt.close()
+            print("  ✅ Generated epoch_duration.png")
+
+    # ==========================================================================
+    # 3. Idle Time Ratio
+    # ==========================================================================
+    # Calculate idle time as: max_epoch_duration - node_epoch_duration
+    if not df.empty and "epoch_duration_ms" in df.columns:
+        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+        if not epoch_dur.empty:
+            # For each epoch, calculate max duration and idle time
+            max_dur_per_epoch = epoch_dur.groupby("epoch")["epoch_duration_ms"].max().reset_index()
+            max_dur_per_epoch.columns = ["epoch", "max_duration_ms"]
+            epoch_dur = epoch_dur.merge(max_dur_per_epoch, on="epoch")
+            epoch_dur["idle_time_ms"] = epoch_dur["max_duration_ms"] - epoch_dur["epoch_duration_ms"]
+            epoch_dur["idle_time_ratio"] = epoch_dur["idle_time_ms"] / epoch_dur["max_duration_ms"]
+
+            # Aggregate per epoch
+            idle_agg = epoch_dur.groupby("epoch").agg({"idle_time_ratio": "mean", "idle_time_ms": "sum"}).reset_index()
+
+            plt.figure(figsize=(12, 6))
+            ax = plt.subplot(1, 1, 1)
+            ax.bar(
+                idle_agg["epoch"],
+                idle_agg["idle_time_ratio"] * 100,
+                color="steelblue",
+                alpha=0.7,
+            )
+            ax.set_ylabel("Idle Time Ratio [%]", color="steelblue")
+            ax.set_xlabel("Epoch")
+            ax.tick_params(axis="y", labelcolor="steelblue")
+            ax.set_ylim(0, 100)
+            plt.title(f"Idle Time Ratio (Sync Wait Time) - {experiment_name}")
+            plt.tight_layout()
+            plt.savefig(analysis_dir / "idle_time_ratio.png", dpi=150)
+            plt.close()
+            print("  ✅ Generated idle_time_ratio.png")
+
+    # ==========================================================================
+    # 4. Wasted Computation
+    # ==========================================================================
+    # Always generate this plot (even if wasted_ms is 0)
+    if not df.empty:
+        plt.figure(figsize=(12, 6))
+        if "wasted_ms" in df.columns:
+            ssp_data = df[df["wasted_ms"].notna()].copy()
+            if not ssp_data.empty:
+                wasted_per_epoch = ssp_data.groupby("epoch").agg({"wasted_ms": "sum", "batches_processed": "sum"}).reset_index()
+                wasted_per_epoch["wasted_s"] = wasted_per_epoch["wasted_ms"] / 1000
+
+                fig, ax1 = plt.subplots(figsize=(12, 6))
+                ax1.bar(
+                    wasted_per_epoch["epoch"],
+                    wasted_per_epoch["wasted_s"],
+                    color="coral",
+                    alpha=0.7,
+                    label="Wasted Time",
+                )
+                ax1.set_ylabel("Wasted Time [sec]", color="coral")
+                ax1.tick_params(axis="y", labelcolor="coral")
+                ax1.set_xlabel("Epoch")
+
+                ax2 = ax1.twinx()
+                ax2.plot(
+                    wasted_per_epoch["epoch"],
+                    wasted_per_epoch["batches_processed"],
+                    color="navy",
+                    linewidth=2,
+                    marker="o",
+                    markersize=3,
+                    label="Discarded Batches",
+                )
+                ax2.set_ylabel("Discarded Batches", color="navy")
+                ax2.tick_params(axis="y", labelcolor="navy")
+
+                plt.title(f"Wasted Computation (SSP) - {experiment_name}")
+                fig.tight_layout()
+                plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
+                plt.close()
+                print("  ✅ Generated wasted_computation.png")
+            else:
+                # No wasted data, create empty plot
+                plt.text(
+                    0.5,
+                    0.5,
+                    "No wasted computation data available",
+                    ha="center",
+                    va="center",
+                    fontsize=14,
+                )
+                plt.title(f"Wasted Computation (SSP) - {experiment_name}")
+                plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
+                plt.close()
+                print("  ✅ Generated wasted_computation.png (no data)")
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                "wasted_ms column not found in metrics",
+                ha="center",
+                va="center",
+                fontsize=14,
+            )
+            plt.title(f"Wasted Computation (SSP) - {experiment_name}")
+            plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
+            plt.close()
+            print("  ✅ Generated wasted_computation.png (no column)")
+
+    # ==========================================================================
+    # 5. Survival Rate
+    # ==========================================================================
+    # Always generate this plot
+    plt.figure(figsize=(12, 6))
+    if not df.empty and "survival_rate" in df.columns:
+        udp_data = df[df["survival_rate"].notna()].copy()
+        if not udp_data.empty:
+            ax = sns.lineplot(
+                data=udp_data,
+                x="epoch",
+                y="survival_rate",
+                hue="node",
+                alpha=0.3,
+                legend=False,
+                palette="viridis",
+                estimator=None,
+            )
+            sns.lineplot(
+                data=udp_data,
+                x="epoch",
+                y="survival_rate",
+                color="navy",
+                linewidth=2,
+                label="Mean",
+                errorbar=None,
+                ax=ax,
+            )
+            ax.set_ylim(0, 1.05)
+            add_phase_line(ax, "epoch")
+            plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
+            plt.ylabel("Survival Rate")
+            plt.xlabel("Epoch")
+            plt.legend()
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                "No survival rate data available",
+                ha="center",
+                va="center",
+                fontsize=14,
+            )
+            plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "survival_rate column not found in metrics",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "survival_rate.png", dpi=150)
+    plt.close()
+    print("  ✅ Generated survival_rate.png")
+
+    # ==========================================================================
+    # 6. Goodput
+    # ==========================================================================
+    # Always generate this plot
+    plt.figure(figsize=(12, 6))
+    if not df.empty and "bytes_received" in df.columns and "epoch_duration_ms" in df.columns:
+        goodput_data = df[(df["bytes_received"].notna()) & (df["epoch_duration_ms"].notna())].copy()
+        if not goodput_data.empty:
+            goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
+            goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
+
+            ax = plt.subplot(1, 1, 1)
+            ax.plot(
+                goodput_agg["epoch"],
+                goodput_agg["goodput_mbps"],
+                color="green",
+                linewidth=2,
+                marker="o",
+                markersize=3,
+            )
+            ax.fill_between(
+                goodput_agg["epoch"],
+                goodput_agg["goodput_mbps"],
+                alpha=0.3,
+                color="green",
+            )
+            ax.set_ylabel("Goodput [Mbps]")
+            ax.set_xlabel("Epoch")
+            plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                "No goodput data available",
+                ha="center",
+                va="center",
+                fontsize=14,
+            )
+            plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "bytes_received or epoch_duration_ms not found",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "goodput.png", dpi=150)
+    plt.close()
+    print("  ✅ Generated goodput.png")
+
+    # ==========================================================================
+    # 7. Traffic Volume
+    # ==========================================================================
+    # Always generate this plot
+    plt.figure(figsize=(12, 6))
+    if not df.empty and "bytes_sent" in df.columns:
+        traffic_data = df[df["bytes_sent"].notna()].copy()
+        if not traffic_data.empty:
+            # Aggregate total traffic per epoch
+            traffic_agg = traffic_data.groupby("epoch").agg({"bytes_sent": "sum"}).reset_index()
+            traffic_agg["sent_mb"] = traffic_agg["bytes_sent"] / (1024 * 1024)
+
+            ax = plt.subplot(1, 1, 1)
+            ax.bar(traffic_agg["epoch"], traffic_agg["sent_mb"], color="teal", alpha=0.7)
+            ax.set_ylabel("Sent Data [MB]")
+            ax.set_xlabel("Epoch")
+            plt.title(f"Traffic Volume - {experiment_name}")
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                "No traffic data available",
+                ha="center",
+                va="center",
+                fontsize=14,
+            )
+            plt.title(f"Traffic Volume - {experiment_name}")
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "bytes_sent column not found in metrics",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        plt.title(f"Traffic Volume - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "traffic_volume.png", dpi=150)
+    plt.close()
+    print("  ✅ Generated traffic_volume.png")
+
+    # ==========================================================================
+    # 8. Total Transfer Time (T_comm + T_comp)
+    # ==========================================================================
+    # Always generate this plot
+    plt.figure(figsize=(12, 6))
+    if not df.empty and "compression_time_ms" in df.columns and "epoch_duration_ms" in df.columns:
+        transfer_data = df[(df["compression_time_ms"].notna()) & (df["epoch_duration_ms"].notna())].copy()
+        if not transfer_data.empty:
+            transfer_data["total_transfer_s"] = transfer_data["epoch_duration_ms"] / 1000
+            transfer_data["compression_s"] = transfer_data["compression_time_ms"] / 1000
+
+            transfer_agg = transfer_data.groupby("epoch").agg({"total_transfer_s": "mean", "compression_s": "mean"}).reset_index()
+
+            ax = plt.subplot(1, 1, 1)
+            ax.bar(
+                transfer_agg["epoch"],
+                transfer_agg["total_transfer_s"],
+                color="steelblue",
+                alpha=0.7,
+                label="Total Transfer Time",
+            )
+            ax.bar(
+                transfer_agg["epoch"],
+                transfer_agg["compression_s"],
+                color="coral",
+                alpha=0.9,
+                label="Compression Time (T_comp)",
+            )
+            ax.set_ylabel("Time [sec]")
+            ax.set_xlabel("Epoch")
+            ax.legend()
+            plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
+        else:
+            plt.text(
+                0.5,
+                0.5,
+                "No transfer time data available",
+                ha="center",
+                va="center",
+                fontsize=14,
+            )
+            plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "compression_time_ms or epoch_duration_ms not found",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "total_transfer_time.png", dpi=150)
+    plt.close()
+    print("  ✅ Generated total_transfer_time.png")
+
+    # ==========================================================================
+    # 9. CPU Usage
+    # ==========================================================================
+    plt.figure(figsize=(12, 6))
+    if not resources_df.empty and "cpu_percent" in resources_df.columns:
+        ax = sns.lineplot(
+            data=resources_df,
+            x="timestamp",
+            y="cpu_percent",
+            hue="node",
+            alpha=0.3,
+            legend=False,
+            palette="viridis",
+            estimator=None,
+        )
+        mean_cpu = resources_df.groupby("timestamp")["cpu_percent"].mean().reset_index()
+        sns.lineplot(
+            data=mean_cpu,
+            x="timestamp",
+            y="cpu_percent",
+            color="navy",
+            linewidth=2,
+            label="Mean",
+            ax=ax,
+        )
+        ax.set_ylim(0, 100)
+        plt.title(f"CPU Usage - {experiment_name}")
+        plt.ylabel("CPU Usage [%]")
+        plt.xlabel("Elapsed Time [sec]")
+        plt.legend()
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "No CPU usage data available",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        plt.title(f"CPU Usage - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "cpu_usage.png", dpi=150)
+    plt.close()
+    print("  ✅ Generated cpu_usage.png")
+
+    # ==========================================================================
+    # 10. Target Accuracy Reached Time (Time-to-Accuracy)
+    # ==========================================================================
+    if not df.empty and "test_accuracy" in df.columns and "timestamp" in df.columns:
+        acc_data = df[df["test_accuracy"].notna()].copy()
+        if not acc_data.empty:
+            plt.figure(figsize=(12, 6))
+            ax = sns.lineplot(
+                data=acc_data,
+                x="timestamp",
+                y="test_accuracy",
+                hue="node",
+                alpha=0.3,
+                legend=False,
+                palette="viridis",
+                estimator=None,
+            )
+            mean_acc = acc_data.groupby("timestamp")["test_accuracy"].mean().reset_index()
+            sns.lineplot(
+                data=mean_acc,
+                x="timestamp",
+                y="test_accuracy",
+                color="navy",
+                linewidth=2,
+                label="Mean",
+                ax=ax,
+            )
+
+            # Target line
+            ax.axhline(
+                y=TARGET_ACCURACY,
+                color="green",
+                linestyle="--",
+                linewidth=2,
+                label=f"Target ({TARGET_ACCURACY:.0%})",
+            )
+
+            # Find time to target
+            nodes_reached = acc_data[acc_data["test_accuracy"] >= TARGET_ACCURACY]
+            if not nodes_reached.empty:
+                first_reach = nodes_reached["timestamp"].min()
+                ax.axvline(
+                    x=first_reach,
+                    color="red",
+                    linestyle=":",
+                    linewidth=2,
+                    label=f"First reach: {first_reach:.1f}s",
+                )
+
+            plt.title(f"Time-to-Accuracy (Target: {TARGET_ACCURACY:.0%}) - {experiment_name}")
+            plt.ylabel("Test Accuracy")
+            plt.xlabel("Elapsed Time [sec]")
+            plt.legend(loc="lower right")
+            plt.tight_layout()
+            plt.savefig(analysis_dir / "time_to_accuracy.png", dpi=150)
+            plt.close()
+            print("  ✅ Generated time_to_accuracy.png")
+
+    # ==========================================================================
+    # Mean accuracy/loss plots
+    # ==========================================================================
+    acc_df = df.melt(
+        id_vars=["epoch", "phase", "node"],
+        value_vars=["train_accuracy", "test_accuracy"],
+        var_name="metric",
+        value_name="value",
+    )
+    loss_df = df.melt(
+        id_vars=["epoch", "phase", "node"],
+        value_vars=["train_loss", "test_loss"],
+        var_name="metric",
+        value_name="value",
+    )
+
+    if not acc_df.empty:
+        plt.figure(figsize=(12, 6))
+        ax = sns.lineplot(
+            data=acc_df,
+            x="epoch",
+            y="value",
+            hue="metric",
+            markers=False,
+            dashes=False,
+            errorbar="sd",
+        )
+        add_phase_line(ax, "epoch", text_position="bottom")
+        plt.title(f"Accuracy over Epochs (Mean +/- SD) - {experiment_name}")
+        plt.ylabel("Accuracy")
+        plt.xlabel("Epoch")
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "accuracy_mean.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated accuracy_mean.png")
+
+    if not loss_df.empty:
+        plt.figure(figsize=(12, 6))
+        ax = sns.lineplot(
+            data=loss_df,
+            x="epoch",
+            y="value",
+            hue="metric",
+            markers=False,
+            dashes=False,
+            errorbar="sd",
+        )
+        add_phase_line(ax, "epoch")
+        plt.title(f"Loss over Epochs (Mean +/- SD) - {experiment_name}")
+        plt.ylabel("Loss")
+        plt.xlabel("Epoch")
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "loss_mean.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated loss_mean.png")
+
+    # Node-wise plots
+    if not df.empty:
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_accuracy",
+            hue="node",
+            alpha=0.3,
+            legend=False,
+            palette="viridis",
+            estimator=None,
+        )
+        ax = sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_accuracy",
+            color="navy",
+            linewidth=2,
+            label="Mean",
+            errorbar=None,
+        )
+        add_phase_line(ax, "epoch", text_position="bottom")
+        plt.title(f"Node-wise Test Accuracy - {experiment_name}")
+        plt.ylabel("Test Accuracy")
+        plt.xlabel("Epoch")
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "accuracy_nodes.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated accuracy_nodes.png")
+
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_loss",
+            hue="node",
+            alpha=0.3,
+            legend=False,
+            palette="viridis",
+            estimator=None,
+        )
+        ax = sns.lineplot(
+            data=df,
+            x="epoch",
+            y="test_loss",
+            color="navy",
+            linewidth=2,
+            label="Mean",
+            errorbar=None,
+        )
+        add_phase_line(ax, "epoch")
+        plt.title(f"Node-wise Test Loss - {experiment_name}")
+        plt.ylabel("Test Loss")
+        plt.xlabel("Epoch")
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "loss_nodes.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated loss_nodes.png")
 
     print(f"✨ Analysis complete. Results in: {analysis_dir}")
 

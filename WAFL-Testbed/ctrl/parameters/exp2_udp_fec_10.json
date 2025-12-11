@@ -1,0 +1,35 @@
+{
+  "description": "実験2: 動的通信品質下での耐障害性評価 - UDP + FEC (M=9, 冗長率10%)",
+  "epochs": {
+    "self": 64,
+    "wafl": 512
+  },
+  "contact_pattern": "sumo/contact_pattern_mobility.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": false
+  },
+  "mobility_aware": {
+    "enabled": true,
+    "contact_pattern_file": "sumo/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo/network_conditions_mobility.json",
+    "path_loss_model_file": "sumo/path_loss_model.json"
+  },
+  "method": {
+    "ssp": {
+      "enabled": false
+    },
+    "udp": {
+      "enabled": true,
+      "fec_m": 9
+    },
+    "compression": {
+      "enabled": false
+    }
+  }
+}

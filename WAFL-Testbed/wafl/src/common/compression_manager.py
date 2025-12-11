@@ -12,11 +12,23 @@ except ImportError:
 class CompressionManager:
     """
     Manages adaptive compression of model data.
-    Supports: None, LZ4, Float16, Zlib.
+    Supports: None, LZ4, Zlib, and Adaptive (auto-selects best method).
     """
 
     def __init__(self, initial_method: str = "zlib"):
-        self.method = initial_method
+        """Initialize compression manager.
+
+        Args:
+            initial_method: Initial compression method. Options:
+                - "none": No compression
+                - "lz4": LZ4 fast compression
+                - "zlib": Zlib high compression
+                - "adaptive": Automatically select best method based on bandwidth
+        """
+        self.adaptive_enabled = initial_method == "adaptive"
+        # If adaptive, start with zlib as default, will be updated based on bandwidth
+        self.method = "zlib" if self.adaptive_enabled else initial_method
+        self.initial_method = initial_method
         self.logger = logging.getLogger("CompressionManager")
         self.last_adjustment = time.time()
 
@@ -24,10 +36,18 @@ class CompressionManager:
         self.bandwidth_est = 10.0 * 1024 * 1024  # Start with 10 MB/s estimate
         self.history = []
 
-        self.methods = ["none", "lz4", "float16", "zlib"]
+        # Track bytes for metrics
+        self.total_bytes_original = 0
+        self.total_bytes_compressed = 0
+        self.total_compression_time_ms = 0
+
+        self.methods = ["none", "lz4", "zlib"]
         if lz4 is None:
             self.methods.remove("lz4")
             self.logger.warning("LZ4 not installed, disabling LZ4 compression.")
+
+        mode_str = "Adaptive" if self.adaptive_enabled else self.method
+        self.logger.info(f"CompressionManager initialized: mode={mode_str}")
 
     def compress(self, data: bytes) -> bytes:
         """
@@ -69,6 +89,11 @@ class CompressionManager:
                     "timestamp": time.time(),
                 }
             )
+
+            # Update cumulative stats for reporting
+            self.total_bytes_original += original_size
+            self.total_bytes_compressed += compressed_size
+            self.total_compression_time_ms += comp_time * 1000
 
             # Keep history limited to last 100 entries
             if len(self.history) > 100:
@@ -119,6 +144,8 @@ class CompressionManager:
         """
         Updates compression strategy based on:
         T_est = T_comp + (Size_comp * R) / BW
+
+        Only applies when adaptive mode is enabled.
         """
         if transfer_time <= 0:
             return
@@ -127,6 +154,10 @@ class CompressionManager:
         current_bw = data_size / transfer_time
         alpha = 0.3
         self.bandwidth_est = (alpha * current_bw) + ((1 - alpha) * self.bandwidth_est)
+
+        # Only adjust method if adaptive mode is enabled
+        if not self.adaptive_enabled:
+            return
 
         current_time = time.time()
         if current_time - self.last_adjustment < 10.0:  # Adapt every 10s
@@ -167,3 +198,35 @@ class CompressionManager:
         if best_method != self.method:
             self.logger.info(f"🔄 Switching compression: {self.method} -> {best_method} (BW: {self.bandwidth_est / 1024 / 1024:.2f} MB/s)")
             self.method = best_method
+
+    def get_stats(self) -> dict:
+        """Get compression statistics for logging.
+
+        Returns:
+            Dictionary with compression stats for MetricsLogger
+        """
+        return {
+            "method": self.method if not self.adaptive_enabled else f"adaptive-{self.method}",
+            "total_bytes_original": self.total_bytes_original,
+            "total_bytes_compressed": self.total_bytes_compressed,
+            "total_compression_time_ms": self.total_compression_time_ms,
+            "compression_ratio": (self.total_bytes_compressed / self.total_bytes_original if self.total_bytes_original > 0 else 1.0),
+            "bandwidth_est_mbps": self.bandwidth_est / (1024 * 1024),
+        }
+
+    def get_last_compression_stats(self) -> dict:
+        """Get stats from the last compression operation.
+
+        Returns:
+            Dictionary with last compression stats or empty dict if no history
+        """
+        if not self.history:
+            return {}
+        last = self.history[-1]
+        return {
+            "method": last["method"],
+            "original_size": last["original_size"],
+            "compressed_size": last["compressed_size"],
+            "compression_time_ms": last["compression_time"] * 1000,
+            "compression_ratio": last["compression_ratio"],
+        }

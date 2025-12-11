@@ -221,30 +221,46 @@ class ConfigValidator:
         # Validate network_condition
         if "network_condition" in self.params:
             net = self.params["network_condition"]
-            required = ["enabled", "delay", "loss", "rate"]
-            missing = [k for k in required if k not in net]
+            enabled = net.get("enabled", False)
 
-            if missing:
-                self.errors.append(f"network_condition missing keys: {', '.join(missing)}")
-                log_error(f"network_condition missing: {', '.join(missing)}")
-                all_valid = False
+            if enabled:
+                # Only require detailed settings when enabled
+                required = ["delay", "loss", "rate"]
+                missing = [k for k in required if k not in net]
+
+                if missing:
+                    self.errors.append(f"network_condition missing keys: {', '.join(missing)}")
+                    log_error(f"network_condition missing: {', '.join(missing)}")
+                    all_valid = False
+                else:
+                    log_success(f"network_condition: enabled, delay={net['delay']}, loss={net['loss']}, rate={net['rate']}")
             else:
-                enabled = "enabled" if net["enabled"] else "disabled"
-                log_success(f"network_condition: {enabled}, delay={net['delay']}, loss={net['loss']}, rate={net['rate']}")
+                log_success("network_condition: disabled")
         else:
-            self.errors.append("network_condition section not found")
-            log_error("network_condition section not found")
-            all_valid = False
+            # network_condition section is optional when not used
+            log_success("network_condition: not configured (disabled)")
 
         # Validate mobility_aware
         if "mobility_aware" in self.params:
             mob = self.params["mobility_aware"]
-            enabled = "enabled" if mob.get("enabled", False) else "disabled"
-            log_success(f"mobility_aware: {enabled}")
+            enabled = mob.get("enabled", False)
+
+            if enabled:
+                # Only require detailed settings when enabled
+                required = ["contact_pattern_file", "network_conditions_file"]
+                missing = [k for k in required if k not in mob]
+
+                if missing:
+                    self.errors.append(f"mobility_aware missing keys when enabled: {', '.join(missing)}")
+                    log_error(f"mobility_aware missing: {', '.join(missing)}")
+                    all_valid = False
+                else:
+                    log_success("mobility_aware: enabled")
+            else:
+                log_success("mobility_aware: disabled")
         else:
-            self.errors.append("mobility_aware section not found")
-            log_error("mobility_aware section not found")
-            all_valid = False
+            # mobility_aware section is optional when not used
+            log_success("mobility_aware: not configured (disabled)")
 
         # Validate method
         if "method" in self.params:

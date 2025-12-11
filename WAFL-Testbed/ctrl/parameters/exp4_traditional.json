@@ -1,0 +1,36 @@
+{
+  "description": "実験4: 統合シナリオ - Traditional (Strict Sync + TCP + No Compression)",
+  "epochs": {
+    "self": 64,
+    "wafl": 1024
+  },
+  "contact_pattern": "sumo_real/contact_pattern_mobility.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": false
+  },
+  "mobility_aware": {
+    "enabled": true,
+    "contact_pattern_file": "sumo_real/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo_real/network_conditions_mobility.json",
+    "path_loss_model_file": "sumo/path_loss_model.json"
+  },
+  "method": {
+    "ssp": {
+      "enabled": true,
+      "staleness": 5,
+      "ssp_threshold": 1.0
+    },
+    "udp": {
+      "enabled": false
+    },
+    "compression": {
+      "enabled": false
+    }
+  }
+}

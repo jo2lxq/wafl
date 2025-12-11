@@ -1,0 +1,34 @@
+{
+  "description": "実験3: 通信と計算のトレードオフ最適化 - 非圧縮",
+  "epochs": {
+    "self": 64,
+    "wafl": 512
+  },
+  "contact_pattern": "sumo_real/contact_pattern_mobility.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": false
+  },
+  "mobility_aware": {
+    "enabled": true,
+    "contact_pattern_file": "sumo_real/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo_real/network_conditions_mobility.json",
+    "path_loss_model_file": "sumo/path_loss_model.json"
+  },
+  "method": {
+    "ssp": {
+      "enabled": false
+    },
+    "udp": {
+      "enabled": false
+    },
+    "compression": {
+      "enabled": false
+    }
+  }
+}

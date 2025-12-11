@@ -69,8 +69,18 @@ class ModelLearningUtils:
         self.model_sharing = model_sharing
         self.ctrl_tcp = ctrl_tcp
         self.wafl_phase_params = wafl_phase_params
-        self.train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2)
-        self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=self.wafl_phase_params["batch_size"], shuffle=False, num_workers=2)
+        self.train_loader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.wafl_phase_params["batch_size"],
+            shuffle=False,
+            num_workers=2,
+        )
+        self.test_loader = torch.utils.data.DataLoader(
+            test_dataset,
+            batch_size=self.wafl_phase_params["batch_size"],
+            shuffle=False,
+            num_workers=2,
+        )
         self.logger = logging.getLogger("ModelLearningUtils")
         self.model_instance_path = model_instance_path
         with open(contact_pattern_path, "r") as f:
@@ -220,11 +230,13 @@ class ModelLearningUtils:
             self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
 
             # Log metrics to CSV
+            epoch_duration_ms = (time.time() - self.epoch_start_time) * 1000 if self.epoch_start_time else 0.0
             metrics = {
                 "train_loss": self.train_loss,
                 "train_accuracy": self.train_accuracy,
                 "test_loss": test_loss,
                 "test_accuracy": test_accuracy,
+                "epoch_duration_ms": epoch_duration_ms,
             }
             self.ctrl_tcp.metrics_logger.log_epoch(phase_name, self.epoch_number + 1, metrics)
 
@@ -615,7 +627,7 @@ class ModelSharingUtils:
         Uses Exponential Backoff Mechanism for waiting between retries.
         """
         FETCHED = False
-        WAIT_TIME = 2.0
+        WAIT_TIME = 1.0
         GROWTH_FACTOR = 1.5
         while not FETCHED and self.fLISTENER_ACTIVE:
             FETCHED, model_data = self._fetch_model(peer_IP, other_options)
@@ -683,7 +695,11 @@ class CTRL_TCP:
         # Start Resource Monitor
         self.monitor_thread = threading.Thread(
             target=self._monitor_resources,
-            args=(f"./results/{self.experiment_id}/resources.csv", 1.0, self.start_timestamp),
+            args=(
+                f"./results/{self.experiment_id}/resources.csv",
+                1.0,
+                self.start_timestamp,
+            ),
             daemon=True,
             name="ResourceMonitor",
         )
@@ -830,7 +846,14 @@ class CTRL_TCP:
 
                 with open(output_file, "a", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, cpu_percent, memory.percent, memory.used / (1024 * 1024)])
+                    writer.writerow(
+                        [
+                            timestamp,
+                            cpu_percent,
+                            memory.percent,
+                            memory.used / (1024 * 1024),
+                        ]
+                    )
 
                 time.sleep(interval)
             except Exception as e:
@@ -1023,7 +1046,11 @@ class CTRL_TCP:
                         self.logger.info(f"📊 SSP Metrics: wasted_ms={wasted_metrics['wasted_ms']:.2f}, wasted_norm={wasted_metrics['wasted_norm']:.6f}, batches={wasted_metrics['batches_processed']}")
                     else:
                         # Fallback logging if metrics not available
-                        self.metrics_logger.log("ssp_force_next", epoch=self.current_epoch_number, phase=self.current_epoch_type)
+                        self.metrics_logger.log(
+                            "ssp_force_next",
+                            epoch=self.current_epoch_number,
+                            phase=self.current_epoch_type,
+                        )
 
                 conn.sendall("OK\r\n".encode("utf-8"))
                 return True
@@ -1086,7 +1113,10 @@ class CTRL_TCP:
                 conn.sendall("ERROR\r\n".encode("utf-8"))
                 return False
         except Exception as e:
-            self.logger.error(f"Error during command processing for '{command_str}': {e}", exc_info=True)
+            self.logger.error(
+                f"Error during command processing for '{command_str}': {e}",
+                exc_info=True,
+            )
             conn.sendall("ERROR\r\n".encode("utf-8"))
             return False
 

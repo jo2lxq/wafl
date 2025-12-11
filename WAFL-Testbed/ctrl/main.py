@@ -950,7 +950,7 @@ class ControlServer:
             epochs: Dictionary with 'self' and 'wafl' epoch counts
             wafl_phase: WAFL phase parameters
             contact_pattern: Contact pattern file name
-            ssp_config: SSP configuration with 'staleness' and 'ssp_threshold' keys
+            ssp_config: SSP configuration with 'enabled', 'staleness', and 'ssp_threshold' keys
 
         Note:
             Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
@@ -960,7 +960,7 @@ class ControlServer:
 
         # Set default SSP config if not provided
         if ssp_config is None:
-            ssp_config = {"staleness": 0, "ssp_threshold": 1.0}
+            ssp_config = {"enabled": False, "staleness": 0, "ssp_threshold": 1.0}
 
         try:
             # 0. Create agents with unified configuration deployment
@@ -1025,29 +1025,46 @@ class ControlServer:
                 self.logger.error(f"💥 Verification error: {e}")
                 raise
 
-            # 1. Run SELF phase
+            # 1. Run SELF phase (always BSP - nodes train independently)
             self.logger.info(f"🏃 Phase [1/4] - SELF training ({epochs['self']} epochs)")
-            # SELF phase is independent, so staleness is effectively infinite or irrelevant.
-            # We use a large staleness to allow free running.
-            self._run_phase("SELF", epochs["self"], staleness=999999)
+            # SELF phase uses BSP mode - each node completes independently
+            # Set staleness=999999 to allow free running, but ssp_enabled=False for BSP behavior
+            self._run_phase(
+                "SELF",
+                epochs["self"],
+                staleness=999999,
+                ssp_threshold=1.0,
+                ssp_enabled=False,
+            )
             self.logger.info("✅ Phase [1/4] - Complete (SELF training finished)")
 
             # 2. Run WAFL phase
             self.logger.info(f"🤝 Phase [2/4] - WAFL training ({epochs['wafl']} epochs)")
 
-            # Log WAFL strategy details
+            # Extract SSP configuration
+            ssp_enabled = ssp_config.get("enabled", False)
             staleness = ssp_config.get("staleness", 0)
             ssp_threshold = ssp_config.get("ssp_threshold", 1.0)
             aggregation = wafl_phase.get("aggregation_strategy", "FedAvg")
 
+            # Log WAFL strategy details
             self.logger.info("📊 WAFL Strategy Configuration:")
             self.logger.info(f"   - Aggregation: {aggregation}")
-            self.logger.info(f"   - Synchronization: SSP (Staleness={staleness}, Threshold={ssp_threshold:.1%})")
+            if ssp_enabled:
+                self.logger.info(f"   - Synchronization: SSP (Staleness={staleness}, Threshold={ssp_threshold:.1%})")
+            else:
+                self.logger.info("   - Synchronization: BSP (Strict Sync - all nodes synchronized per epoch)")
             self.logger.info(f"   - Batch Size: {wafl_phase.get('batch_size', 32)}")
             self.logger.info(f"   - Learning Rate: {wafl_phase.get('learning_rate', 0.001)}")
             self.logger.info(f"   - Coefficiency: {wafl_phase.get('coefficiency', 1.0)}")
 
-            self._run_phase("WAFL", epochs["wafl"], staleness=staleness, ssp_threshold=ssp_threshold)
+            self._run_phase(
+                "WAFL",
+                epochs["wafl"],
+                staleness=staleness,
+                ssp_threshold=ssp_threshold,
+                ssp_enabled=ssp_enabled,
+            )
 
             self.logger.info("✅ Phase [2/4] - Complete (WAFL training finished)")
             experiment_success = True
@@ -1070,15 +1087,29 @@ class ControlServer:
         total_epochs: int,
         staleness: int,
         ssp_threshold: float = 1.0,
+        ssp_enabled: bool = False,
     ):
         """
-        Run a single training phase (SELF or WAFL) with SSP-based synchronization.
-        ssp_threshold: Fraction of agents (0.0-1.0) required to complete an epoch before forcing others to skip.
+        Run a single training phase (SELF or WAFL) with configurable synchronization.
+
+        Synchronization Modes:
+        - SSP Disabled (ssp_enabled=False): Bulk Synchronous Parallel (BSP)
+          All nodes must complete the current epoch before any node can proceed to the next.
+        - SSP Enabled (ssp_enabled=True): Stale Synchronous Parallel (SSP)
+          Nodes can proceed up to 'staleness' epochs ahead of the slowest node.
+          When 'ssp_threshold' fraction of nodes complete, slow nodes are force-skipped.
+
+        Args:
+            phase_name: "SELF" or "WAFL"
+            total_epochs: Total number of epochs to run
+            staleness: Maximum allowed epoch difference between fastest and slowest nodes (SSP only)
+            ssp_threshold: Fraction of agents (0.0-1.0) required before forcing slow agents to skip (SSP only)
+            ssp_enabled: Whether SSP mode is enabled
         """
-        if phase_name == "WAFL":
-            self.logger.debug(f"Starting WAFL phase with staleness={staleness}, threshold={ssp_threshold:.1%}")
+        if ssp_enabled:
+            self.logger.info(f"🔄 {phase_name} Phase: SSP Mode (staleness={staleness}, threshold={ssp_threshold:.1%})")
         else:
-            self.logger.debug(f"Starting {phase_name} phase with {total_epochs} epochs")
+            self.logger.info(f"🔄 {phase_name} Phase: BSP Mode (strict epoch synchronization)")
 
         # Initialize agent status
         agent_status = {agent.name: "IDLE" for agent in self.agents}
@@ -1089,101 +1120,96 @@ class ControlServer:
         last_epoch_logged = -1
 
         while True:
-            # Check if all agents have completed all epochs
+            # Check epoch progress
             min_epoch = min(epochs_completed.values())
+            max_epoch = max(epochs_completed.values())
+            epoch_spread = max_epoch - min_epoch
 
-            # Log epoch progress for WAFL with strategy context
-            if phase_name == "WAFL" and min_epoch > last_epoch_logged:
-                max_epoch = max(epochs_completed.values())
-                epoch_spread = max_epoch - min_epoch
-                if epoch_spread > staleness:
-                    self.logger.info(f"⚠️  WAFL Epoch {min_epoch}: Spread={epoch_spread} (exceeds staleness={staleness})")
+            # Log epoch progress
+            if min_epoch > last_epoch_logged:
+                if ssp_enabled:
+                    if epoch_spread > staleness:
+                        self.logger.warning(f"⚠️  {phase_name} Epoch {min_epoch}: Spread={epoch_spread} (exceeds staleness={staleness})")
+                    else:
+                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: Spread={epoch_spread}, within staleness bounds")
                 else:
-                    self.logger.debug(f"WAFL Epoch {min_epoch}: Spread={epoch_spread}, agents in sync")
+                    self.logger.debug(f"{phase_name} Epoch {min_epoch}: All nodes synchronized (BSP)")
                 last_epoch_logged = min_epoch
 
             if min_epoch >= total_epochs:
                 break
 
-            # SSP Reset Check
-            if ssp_threshold < 1.0:
-                # Check if enough agents have completed max_epoch (or any epoch > min_epoch)
-                # Actually, we usually check if enough agents completed epoch E to force everyone to E+1?
-                # Or if enough completed E, force everyone to finish E?
-                # The plan says: "When completed nodes reach N * p ... FORCE_NEXT_EPOCH ... Uncompleted nodes discard ... and proceed to next epoch"
-                # So if N*p agents finish epoch E, we force everyone else to finish E (skip) and be ready for E+1.
-
-                # Count completions for each epoch
+            # ========== SSP Mode: Threshold-based force skip ==========
+            if ssp_enabled and ssp_threshold < 1.0:
+                # Count completions for each epoch level
                 epoch_counts = {}
                 for e in epochs_completed.values():
                     epoch_counts[e] = epoch_counts.get(e, 0) + 1
 
-                # Check if any epoch E has enough completions
-                # We are interested in the highest epoch that has reached threshold
-                # But we only care about epochs > min_epoch?
-                # If min_epoch is 5, and 90% are at 6, we force the 10% at 5 to skip to 6.
-
+                # Find the highest epoch where threshold is met
                 target_epoch = -1
                 for e in sorted(epoch_counts.keys(), reverse=True):
                     if e > min_epoch:
-                        count = 0
-                        # Count agents who have completed e OR HIGHER
-                        for ae in epochs_completed.values():
-                            if ae >= e:
-                                count += 1
+                        # Count agents who have completed epoch e OR HIGHER
+                        count = sum(1 for ae in epochs_completed.values() if ae >= e)
 
                         if count >= len(self.agents) * ssp_threshold:
                             target_epoch = e
                             break
 
                 if target_epoch != -1:
-                    # SSP Threshold enforcement
-                    if ssp_threshold < 1.0:
-                        max_epoch = max(epochs_completed.values())
-                        slow_agents = [name for name, e in epochs_completed.items() if e < max_epoch - staleness]
-                        if slow_agents and len(slow_agents) / len(self.agents) > (1 - ssp_threshold):
-                            self.logger.info(f"⚡ SSP Threshold: {len(slow_agents)}/{len(self.agents)} agents slow, skipping to epoch {target_epoch}")
-                            self.logger.debug(f"   Slow agents: {slow_agents}")
-                    # Force everyone < target_epoch to skip to target_epoch
-                    self.logger.info(f"⚡ SSP Threshold reached for epoch {target_epoch}. Forcing slow agents to skip.")
-                    for agent in self.agents:
-                        if epochs_completed[agent.name] < target_epoch:
-                            self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
-                            # Send FORCE_NEXT command
-                            # We might need to send it multiple times if they are far behind?
-                            # Or FORCE_NEXT just stops current.
-                            # We need to update our tracking.
+                    # Identify slow agents
+                    slow_agents = [name for name, e in epochs_completed.items() if e < target_epoch]
 
-                            # If agent is RUNNING, stop it.
-                            if agent_status[agent.name] == "RUNNING":
-                                success, response = agent._send_command("FORCE_NEXT\r\n")
-                                # We assume it stops and reports something?
-                                # Actually, we just assume it stops.
-                                agent_status[agent.name] = "IDLE"
+                    if slow_agents:
+                        self.logger.info(f"⚡ SSP Threshold ({ssp_threshold:.0%}) reached for epoch {target_epoch}. Forcing {len(slow_agents)} slow agents to skip.")
+                        self.logger.debug(f"   Slow agents: {slow_agents}")
 
-                            # Update local state to pretend it finished
-                            epochs_completed[agent.name] = target_epoch
+                        # Force slow agents to skip to target_epoch
+                        for agent in self.agents:
+                            if epochs_completed[agent.name] < target_epoch:
+                                self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
+
+                                # If agent is RUNNING, send FORCE_NEXT to stop it
+                                if agent_status[agent.name] == "RUNNING":
+                                    success, response = agent._send_command("FORCE_NEXT\r\n")
+                                    if success:
+                                        self.logger.debug(f"   FORCE_NEXT sent to {agent.name}, response: {response}")
+                                    agent_status[agent.name] = "IDLE"
+
+                                # Update local tracking to target_epoch
+                                epochs_completed[agent.name] = target_epoch
 
             # Apply dynamic network conditions if mobility-aware mode is enabled
             if self.mobility_aware_config and phase_name == "WAFL":
                 self._apply_dynamic_network_conditions(min_epoch)
 
-            # Schedule agents
+            # ========== Schedule agents based on synchronization mode ==========
             for agent in self.agents:
                 current_epoch = epochs_completed[agent.name]
 
-                if current_epoch < total_epochs:
-                    # SSP Constraint
-                    if (current_epoch + 1) - min_epoch <= staleness + 1:
-                        if agent_status[agent.name] == "IDLE":
-                            next_epoch = current_epoch + 1
-                            success = agent.begin_epoch(phase_name, next_epoch)
-                            if success:
-                                agent_status[agent.name] = "RUNNING"
-                            else:
-                                self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent.name}, retrying...")
+                if current_epoch < total_epochs and agent_status[agent.name] == "IDLE":
+                    next_epoch = current_epoch + 1
 
-            # Poll status
+                    if ssp_enabled:
+                        # SSP Mode: Allow agents to proceed if within staleness bound
+                        # Agent can start next_epoch if: next_epoch - min_epoch <= staleness + 1
+                        # This means the agent won't get more than 'staleness' epochs ahead
+                        can_proceed = (next_epoch - min_epoch) <= (staleness + 1)
+                    else:
+                        # BSP Mode: All agents must be at the same epoch before proceeding
+                        # Agent can only start next_epoch if all agents have completed current_epoch
+                        # i.e., min_epoch >= current_epoch
+                        can_proceed = min_epoch >= current_epoch
+
+                    if can_proceed:
+                        success = agent.begin_epoch(phase_name, next_epoch)
+                        if success:
+                            agent_status[agent.name] = "RUNNING"
+                        else:
+                            self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent.name}, retrying...")
+
+            # ========== Poll agent status ==========
             for agent in self.agents:
                 if agent_status[agent.name] == "RUNNING":
                     status, logs = agent.get_status()
@@ -1208,13 +1234,16 @@ class ControlServer:
                         except Exception as e:
                             self.logger.error(f"Error parsing status {status}: {e}")
 
-            # Progress logging
+            # Progress logging every 30 seconds
             elapsed_time = time.time() - start_time
             if elapsed_time - last_progress_log >= 30:
-                self.logger.info(f"📊 {phase_name} Progress: Min Epoch {min_epoch}/{total_epochs}")
+                if ssp_enabled:
+                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (spread={epoch_spread}, staleness bound={staleness})")
+                else:
+                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync)")
                 last_progress_log = elapsed_time
 
-            time.sleep(1)
+            time.sleep(0.5)
 
     def _shutdown_all_agents(self):
         """Shutdown all agents gracefully by stopping Docker containers in parallel."""
@@ -1422,7 +1451,7 @@ if __name__ == "__main__":
         controller = ControlServer()
 
         # Run experiment
-        # Extract SSP settings
+        # Extract SSP settings - include 'enabled' flag for proper BSP/SSP mode selection
         staleness = ssp_settings.get("staleness", 0) if ssp_enabled else 0
         ssp_threshold = ssp_settings.get("ssp_threshold", 1.0) if ssp_enabled else 1.0
 
@@ -1430,7 +1459,11 @@ if __name__ == "__main__":
             epochs={"self": epochs_self, "wafl": epochs_wafl},
             wafl_phase=experiment_parameters["wafl_phase"],
             contact_pattern=experiment_parameters["contact_pattern"],
-            ssp_config={"staleness": staleness, "ssp_threshold": ssp_threshold},
+            ssp_config={
+                "enabled": ssp_enabled,
+                "staleness": staleness,
+                "ssp_threshold": ssp_threshold,
+            },
         )
 
     except KeyboardInterrupt:
