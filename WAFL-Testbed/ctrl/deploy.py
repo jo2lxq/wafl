@@ -137,6 +137,7 @@ def deploy_to_node(node, deployment_location, user):
         "uv.lock",
         "wafl",
         "data",
+        "utils",
     ]
 
     # Collect existing source paths

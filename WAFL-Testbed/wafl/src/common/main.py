@@ -237,7 +237,13 @@ class ModelLearningUtils:
                 "test_loss": test_loss,
                 "test_accuracy": test_accuracy,
                 "epoch_duration_ms": epoch_duration_ms,
+                # SSP metrics (no waste if epoch completed normally)
+                "batches_processed": self.batches_processed,
             }
+            # Add communication and compression metrics
+            comm_metrics = self.model_sharing.get_epoch_metrics()
+            metrics.update(comm_metrics)
+
             self.ctrl_tcp.metrics_logger.log_epoch(phase_name, self.epoch_number + 1, metrics)
 
             self.epoch_number += 1
@@ -276,34 +282,14 @@ class ModelLearningUtils:
                     local_model[key] += model_difference * self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
             self.net.load_state_dict(local_model)
 
-            SELF_LEARN_FLAG = True
+            # Always call self_learn to continue training, regardless of neighbor count
             if n_nbr:
-                # Call self_learn with WAFL_LEARN=True to correct logging
-                SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
+                self.logger.info(f"📡 Exchanged models with {n_nbr} neighbors")
             else:
-                self.logger.info("No model exchange with other agents in this WAFL epoch.")
-                test_loss, test_accuracy = self._evaluate_model()
+                self.logger.info("No neighbors available for model exchange in this epoch")
 
-                self.logger.info(f"📉 Training Loss (no exchange): {self.train_loss:.6f}")
-                self.logger.info(f"📈 Training Accuracy (no exchange): {self.train_accuracy:.4f}")
-                self.logger.info(f"📉 Test Loss (no exchange): {test_loss:.4f}")
-                self.logger.info(f"📈 Test Accuracy (no exchange): {test_accuracy:.4f}")
-
-                # Log metrics to CSV
-                metrics = {
-                    "train_loss": self.train_loss,
-                    "train_accuracy": self.train_accuracy,
-                    "test_loss": test_loss,
-                    "test_accuracy": test_accuracy,
-                }
-                self.ctrl_tcp.metrics_logger.log_epoch("WAFL", self.epoch_number + 1, metrics)
-
-                self.epoch_number += 1
-                torch.save(
-                    self.net.state_dict(),
-                    self.model_instance_path,
-                )
-                self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
+            # Call self_learn with WAFL_LEARN=True to continue training
+            SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
 
             if not SELF_LEARN_FLAG:
                 raise Exception("SELF-LEARNING ERROR")
@@ -407,6 +393,14 @@ class ModelSharingUtils:
         self.received_models = {}  # {ip: data}
         self.received_models_lock = threading.Lock()
 
+        # TCP traffic statistics (for when UDP is disabled)
+        self.tcp_stats = {
+            "bytes_sent": 0,
+            "bytes_received": 0,
+            "models_sent": 0,
+            "models_received": 0,
+        }
+
         self.listener_thread = threading.Thread(target=self._socket_listener_thread, daemon=False, name="P2P_Listener")
         self.listener_thread.start()
 
@@ -500,6 +494,9 @@ class ModelSharingUtils:
                             break
                         data.append(packet)
                     data = b"".join(data)
+                    # Record TCP bytes received
+                    self.tcp_stats["bytes_received"] += len(data)
+                    self.tcp_stats["models_received"] += 1
 
             data = self._deserialize_model(data)
             if data == b"ERROR" or data is None:
@@ -556,6 +553,9 @@ class ModelSharingUtils:
                     raise Exception("UDP DISPATCH ERROR")
             else:
                 conn.sendall(model_data)
+                # Record TCP bytes sent
+                self.tcp_stats["bytes_sent"] += len(model_data)
+                self.tcp_stats["models_sent"] += 1
 
             self.logger.debug("✅ Successfully sent the model data to the peer.")
             return True
@@ -638,6 +638,95 @@ class ModelSharingUtils:
             WAIT_TIME **= GROWTH_FACTOR
         # Handling KILL command from Control Server.
         return "Fetch Operation Terminated Abruptly."
+
+    def get_epoch_metrics(self) -> dict:
+        """
+        Get communication and compression metrics for the current epoch.
+        Returns a dictionary with UDP/FEC and compression stats.
+        """
+        metrics = {}
+
+        # UDP/FEC metrics
+        if self.udp_sharing is not None:
+            udp_stats = self.udp_sharing.stats
+            metrics.update(
+                {
+                    "survival_rate": self.udp_sharing.get_survival_rate(),
+                    "sent_models": udp_stats.get("sent_models", 0),
+                    "sent_failed": udp_stats.get("sent_failed", 0),
+                    "received_models": udp_stats.get("received_models", 0),
+                    "fec_recovery_success": udp_stats.get("fec_recovery_success", 0),
+                    "fec_recovery_fail": udp_stats.get("fec_recovery_fail", 0),
+                    "bytes_sent": udp_stats.get("bytes_sent", 0),
+                    "bytes_received": udp_stats.get("bytes_received", 0),
+                }
+            )
+        else:
+            # TCP only - use tcp_stats
+            metrics.update(
+                {
+                    "survival_rate": 1.0,  # TCP is reliable
+                    "sent_models": self.tcp_stats.get("models_sent", 0),
+                    "sent_failed": 0,  # TCP doesn't track failures the same way
+                    "received_models": self.tcp_stats.get("models_received", 0),
+                    "fec_recovery_success": 0,
+                    "fec_recovery_fail": 0,
+                    "bytes_sent": self.tcp_stats.get("bytes_sent", 0),
+                    "bytes_received": self.tcp_stats.get("bytes_received", 0),
+                }
+            )
+
+        # Compression metrics
+        if self.compression_manager is not None:
+            comp_stats = self.compression_manager.get_last_compression_stats()
+            metrics.update(
+                {
+                    "compression_method": self.compression_manager.method,
+                    "compression_ratio": comp_stats.get("ratio", 1.0),
+                    "compression_time_ms": comp_stats.get("time_ms", 0),
+                    "original_size": comp_stats.get("original_size", 0),
+                    "compressed_size": comp_stats.get("compressed_size", 0),
+                }
+            )
+        else:
+            # No compression - default values
+            metrics.update(
+                {
+                    "compression_method": "none",
+                    "compression_ratio": 1.0,
+                    "compression_time_ms": 0,
+                    "original_size": 0,
+                    "compressed_size": 0,
+                }
+            )
+
+        # Reset epoch-level statistics after collecting
+        self._reset_epoch_stats()
+
+        return metrics
+
+    def _reset_epoch_stats(self):
+        """Reset epoch-level statistics for the next epoch."""
+        # Reset TCP stats
+        self.tcp_stats = {
+            "bytes_sent": 0,
+            "bytes_received": 0,
+            "models_sent": 0,
+            "models_received": 0,
+        }
+        # Reset UDP stats if enabled
+        if self.udp_sharing is not None:
+            self.udp_sharing.stats = {
+                "sent_models": 0,
+                "sent_failed": 0,
+                "received_models": 0,
+                "fec_recovery_success": 0,
+                "fec_recovery_fail": 0,
+                "total_chunks_received": 0,
+                "failed_chunks": 0,
+                "bytes_sent": 0,
+                "bytes_received": 0,
+            }
 
 
 class CTRL_TCP:

@@ -1,5 +1,5 @@
 {
-  "description": "実験2: 動的通信品質下での耐障害性評価 - Baseline (TCP)",
+  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - Baseline (TCP)",
   "epochs": {
     "self": 64,
     "wafl": 512

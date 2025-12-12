@@ -166,13 +166,12 @@ python utils/generate_rgg_topology.py --nodes 28 --epochs 5000 --density sparse
 
 #### 3.1 SSP (Semi-Synchronous Protocol)
 
-**目的**: 遅延ノードを切り捨てて学習速度を優先
+**目的**: 遅延ノードを切り捨てて学習速度を優先（1エポック以上の遅れは発生しない）
 
 ```json
 {
   "ssp": {
     "enabled": true,
-    "staleness": 5,
     "ssp_threshold": 0.9
   }
 }
@@ -181,12 +180,13 @@ python utils/generate_rgg_topology.py --nodes 28 --epochs 5000 --density sparse
 | パラメータ      | 説明                     | 範囲           | 推奨値    |
 | --------------- | ------------------------ | -------------- | --------- |
 | `enabled`       | SSP 有効化               | `true`/`false` | -         |
-| `staleness`     | 許容する最大エポック差   | 0〜999         | 5〜10     |
 | `ssp_threshold` | 強制進行の閾値（完了率） | 0.0〜1.0       | 0.8〜0.95 |
+
 
 **動作**:
 - 完了ノード数が `ノード総数 × ssp_threshold` に達したら，未完了ノードに `FORCE_NEXT` を送信
-- 未完了ノードは現在の計算を破棄して次エポックへ進む
+- 未完了ノードは現在の計算を破棄して同じエポックにスキップ
+- これにより、1エポック以上遅れるノードは存在しない
 - 破棄された計算量（`wasted_ms`, `wasted_norm`）がログに記録される
 
 **実験例**:
@@ -347,7 +347,8 @@ Defines experiment settings, hyperparameters, network conditions, and algorithms
 
 **SSP (Semi-Synchronous Protocol)**:
 - `ssp_threshold`: Completion rate threshold (0.0〜1.0)
-- `staleness`: Maximum allowed epoch difference
+- `staleness`: Deprecated (kept for backward compatibility, not used)
+- When threshold is reached, slow nodes are force-skipped to ensure no node is more than 1 epoch behind
 
 **UDP + FEC**:
 - `fec_m`: FEC parameter (M data chunks per parity packet)

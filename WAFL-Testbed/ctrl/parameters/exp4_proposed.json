@@ -1,5 +1,5 @@
 {
-  "description": "実験4: 統合シナリオ - Proposed Full (SSP 0.9 + UDP/FEC + Adaptive Compression)",
+  "experiment_name": "Experiment 4: Integrated Scenario - Proposed Full (SSP 0.9 + UDP/FEC + Adaptive Compression)",
   "epochs": {
     "self": 64,
     "wafl": 1024

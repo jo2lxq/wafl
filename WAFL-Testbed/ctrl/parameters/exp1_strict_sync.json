@@ -1,10 +1,10 @@
 {
-  "description": "実験1: 同期スケーラビリティ検証 - Baseline (Strict Sync, p=1.0)",
+  "experiment_name": "Experiment 1: Synchronous Scalability Verification - Baseline (Strict Sync, p=1.0)",
   "epochs": {
     "self": 64,
     "wafl": 512
   },
-  "contact_pattern": "rgg_n28_a1000_d10_s01.json",
+  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -20,7 +20,6 @@
   "method": {
     "ssp": {
       "enabled": true,
-      "staleness": 5,
       "ssp_threshold": 1.0
     },
     "udp": {

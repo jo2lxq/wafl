@@ -300,81 +300,86 @@ def analyze_results(experiment_id):
     # ==========================================================================
     # 4. Wasted Computation
     # ==========================================================================
-    # Always generate this plot (even if wasted_ms is 0)
-    if not df.empty:
-        plt.figure(figsize=(12, 6))
-        if "wasted_ms" in df.columns:
-            ssp_data = df[df["wasted_ms"].notna()].copy()
-            if not ssp_data.empty:
-                wasted_per_epoch = ssp_data.groupby("epoch").agg({"wasted_ms": "sum", "batches_processed": "sum"}).reset_index()
-                wasted_per_epoch["wasted_s"] = wasted_per_epoch["wasted_ms"] / 1000
+    # Only show wasted computation when SSP force-skips actually occurred
+    has_wasted_data = False
+    if not df.empty and "wasted_ms" in df.columns:
+        # Filter only epochs where force-skip occurred (wasted_ms > 0)
+        ssp_data = df[(df["wasted_ms"].notna()) & (df["wasted_ms"] > 0)].copy()
+        if not ssp_data.empty:
+            has_wasted_data = True
+            wasted_per_epoch = ssp_data.groupby("epoch").agg({"wasted_ms": "sum", "batches_processed": "sum"}).reset_index()
+            wasted_per_epoch["wasted_s"] = wasted_per_epoch["wasted_ms"] / 1000
 
-                fig, ax1 = plt.subplots(figsize=(12, 6))
-                ax1.bar(
-                    wasted_per_epoch["epoch"],
-                    wasted_per_epoch["wasted_s"],
-                    color="coral",
-                    alpha=0.7,
-                    label="Wasted Time",
-                )
-                ax1.set_ylabel("Wasted Time [sec]", color="coral")
-                ax1.tick_params(axis="y", labelcolor="coral")
-                ax1.set_xlabel("Epoch")
-
-                ax2 = ax1.twinx()
-                ax2.plot(
-                    wasted_per_epoch["epoch"],
-                    wasted_per_epoch["batches_processed"],
-                    color="navy",
-                    linewidth=2,
-                    marker="o",
-                    markersize=3,
-                    label="Discarded Batches",
-                )
-                ax2.set_ylabel("Discarded Batches", color="navy")
-                ax2.tick_params(axis="y", labelcolor="navy")
-
-                plt.title(f"Wasted Computation (SSP) - {experiment_name}")
-                fig.tight_layout()
-                plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
-                plt.close()
-                print("  ✅ Generated wasted_computation.png")
-            else:
-                # No wasted data, create empty plot
-                plt.text(
-                    0.5,
-                    0.5,
-                    "No wasted computation data available",
-                    ha="center",
-                    va="center",
-                    fontsize=14,
-                )
-                plt.title(f"Wasted Computation (SSP) - {experiment_name}")
-                plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
-                plt.close()
-                print("  ✅ Generated wasted_computation.png (no data)")
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                "wasted_ms column not found in metrics",
-                ha="center",
-                va="center",
-                fontsize=14,
+            fig, ax1 = plt.subplots(figsize=(12, 6))
+            ax1.bar(
+                wasted_per_epoch["epoch"],
+                wasted_per_epoch["wasted_s"],
+                color="coral",
+                alpha=0.7,
+                label="Wasted Time",
             )
-            plt.title(f"Wasted Computation (SSP) - {experiment_name}")
+            ax1.set_ylabel("Wasted Time [sec]", color="coral")
+            ax1.tick_params(axis="y", labelcolor="coral")
+            ax1.set_xlabel("Epoch")
+
+            ax2 = ax1.twinx()
+            ax2.plot(
+                wasted_per_epoch["epoch"],
+                wasted_per_epoch["batches_processed"],
+                color="navy",
+                linewidth=2,
+                marker="o",
+                markersize=3,
+                label="Incomplete Batches",
+            )
+            ax2.set_ylabel("Incomplete Batches (before force-skip)", color="navy")
+            ax2.tick_params(axis="y", labelcolor="navy")
+
+            plt.title(f"Wasted Computation (SSP Force-Skip) - {experiment_name}")
+            fig.tight_layout()
             plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
             plt.close()
-            print("  ✅ Generated wasted_computation.png (no column)")
+            print("  ✅ Generated wasted_computation.png")
+
+    if not has_wasted_data:
+        # No wasted data available, create placeholder plot
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.text(
+            0.5,
+            0.5,
+            "No wasted computation data\n(SSP not enabled or no force-skips occurred)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            transform=ax.transAxes,
+        )
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+        plt.title(f"Wasted Computation (SSP) - {experiment_name}")
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
+        plt.close()
+        print("  ✅ Generated wasted_computation.png (no SSP data)")
 
     # ==========================================================================
     # 5. Survival Rate
     # ==========================================================================
     # Always generate this plot
     plt.figure(figsize=(12, 6))
+    has_meaningful_survival_data = False
     if not df.empty and "survival_rate" in df.columns:
         udp_data = df[df["survival_rate"].notna()].copy()
-        if not udp_data.empty:
+        # Check if UDP was actually used (bytes_sent or bytes_received > 0)
+        # or if survival_rate varies (indicating UDP with packet loss)
+        udp_used = False
+        if "bytes_sent" in df.columns and "bytes_received" in df.columns:
+            udp_used = (df["bytes_sent"].sum() > 0) or (df["bytes_received"].sum() > 0)
+
+        has_variation = udp_data["survival_rate"].std() > 0.001 if not udp_data.empty else False
+
+        if not udp_data.empty and (has_variation or udp_used):
+            has_meaningful_survival_data = True
             ax = sns.lineplot(
                 data=udp_data,
                 x="epoch",
@@ -397,29 +402,28 @@ def analyze_results(experiment_id):
             )
             ax.set_ylim(0, 1.05)
             add_phase_line(ax, "epoch")
-            plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
+
+            # Add informative subtitle if all values are 1.0
+            if not has_variation:
+                plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}\n(100% survival - no packet loss or FEC recovery successful)")
+            else:
+                plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
             plt.ylabel("Survival Rate")
             plt.xlabel("Epoch")
             plt.legend()
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                "No survival rate data available",
-                ha="center",
-                va="center",
-                fontsize=14,
-            )
-            plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
-    else:
-        plt.text(
+
+    if not has_meaningful_survival_data:
+        ax = plt.gca()
+        ax.text(
             0.5,
             0.5,
-            "survival_rate column not found in metrics",
+            "UDP/FEC not enabled\n(survival_rate = 1.0 by default)",
             ha="center",
             va="center",
             fontsize=14,
+            transform=ax.transAxes,
         )
+        ax.axis("off")
         plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "survival_rate.png", dpi=150)
@@ -431,9 +435,12 @@ def analyze_results(experiment_id):
     # ==========================================================================
     # Always generate this plot
     plt.figure(figsize=(12, 6))
+    has_meaningful_goodput_data = False
     if not df.empty and "bytes_received" in df.columns and "epoch_duration_ms" in df.columns:
         goodput_data = df[(df["bytes_received"].notna()) & (df["epoch_duration_ms"].notna())].copy()
-        if not goodput_data.empty:
+        # Check if there's actual data (not all zeros)
+        if not goodput_data.empty and goodput_data["bytes_received"].sum() > 0:
+            has_meaningful_goodput_data = True
             goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
             goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
 
@@ -455,25 +462,19 @@ def analyze_results(experiment_id):
             ax.set_ylabel("Goodput [Mbps]")
             ax.set_xlabel("Epoch")
             plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                "No goodput data available",
-                ha="center",
-                va="center",
-                fontsize=14,
-            )
-            plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
-    else:
-        plt.text(
+
+    if not has_meaningful_goodput_data:
+        ax = plt.gca()
+        ax.text(
             0.5,
             0.5,
-            "bytes_received or epoch_duration_ms not found",
+            "No data transfer recorded\n(UDP not enabled or no model sharing)",
             ha="center",
             va="center",
             fontsize=14,
+            transform=ax.transAxes,
         )
+        ax.axis("off")
         plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "goodput.png", dpi=150)
@@ -485,9 +486,12 @@ def analyze_results(experiment_id):
     # ==========================================================================
     # Always generate this plot
     plt.figure(figsize=(12, 6))
+    has_meaningful_traffic_data = False
     if not df.empty and "bytes_sent" in df.columns:
         traffic_data = df[df["bytes_sent"].notna()].copy()
-        if not traffic_data.empty:
+        # Check if there's actual data (not all zeros)
+        if not traffic_data.empty and traffic_data["bytes_sent"].sum() > 0:
+            has_meaningful_traffic_data = True
             # Aggregate total traffic per epoch
             traffic_agg = traffic_data.groupby("epoch").agg({"bytes_sent": "sum"}).reset_index()
             traffic_agg["sent_mb"] = traffic_agg["bytes_sent"] / (1024 * 1024)
@@ -497,25 +501,19 @@ def analyze_results(experiment_id):
             ax.set_ylabel("Sent Data [MB]")
             ax.set_xlabel("Epoch")
             plt.title(f"Traffic Volume - {experiment_name}")
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                "No traffic data available",
-                ha="center",
-                va="center",
-                fontsize=14,
-            )
-            plt.title(f"Traffic Volume - {experiment_name}")
-    else:
-        plt.text(
+
+    if not has_meaningful_traffic_data:
+        ax = plt.gca()
+        ax.text(
             0.5,
             0.5,
-            "bytes_sent column not found in metrics",
+            "No data transfer recorded\n(UDP not enabled or no model sharing)",
             ha="center",
             va="center",
             fontsize=14,
+            transform=ax.transAxes,
         )
+        ax.axis("off")
         plt.title(f"Traffic Volume - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "traffic_volume.png", dpi=150)
@@ -527,9 +525,12 @@ def analyze_results(experiment_id):
     # ==========================================================================
     # Always generate this plot
     plt.figure(figsize=(12, 6))
+    has_meaningful_compression_data = False
     if not df.empty and "compression_time_ms" in df.columns and "epoch_duration_ms" in df.columns:
         transfer_data = df[(df["compression_time_ms"].notna()) & (df["epoch_duration_ms"].notna())].copy()
-        if not transfer_data.empty:
+        # Check if there's actual compression data (not all zeros)
+        if not transfer_data.empty and transfer_data["compression_time_ms"].sum() > 0:
+            has_meaningful_compression_data = True
             transfer_data["total_transfer_s"] = transfer_data["epoch_duration_ms"] / 1000
             transfer_data["compression_s"] = transfer_data["compression_time_ms"] / 1000
 
@@ -541,7 +542,7 @@ def analyze_results(experiment_id):
                 transfer_agg["total_transfer_s"],
                 color="steelblue",
                 alpha=0.7,
-                label="Total Transfer Time",
+                label="Epoch Duration",
             )
             ax.bar(
                 transfer_agg["epoch"],
@@ -554,25 +555,19 @@ def analyze_results(experiment_id):
             ax.set_xlabel("Epoch")
             ax.legend()
             plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
-        else:
-            plt.text(
-                0.5,
-                0.5,
-                "No transfer time data available",
-                ha="center",
-                va="center",
-                fontsize=14,
-            )
-            plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
-    else:
-        plt.text(
+
+    if not has_meaningful_compression_data:
+        ax = plt.gca()
+        ax.text(
             0.5,
             0.5,
-            "compression_time_ms or epoch_duration_ms not found",
+            "Compression not enabled\n(compression_time_ms = 0)",
             ha="center",
             va="center",
             fontsize=14,
+            transform=ax.transAxes,
         )
+        ax.axis("off")
         plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "total_transfer_time.png", dpi=150)
@@ -631,25 +626,34 @@ def analyze_results(experiment_id):
         acc_data = df[df["test_accuracy"].notna()].copy()
         if not acc_data.empty:
             plt.figure(figsize=(12, 6))
-            ax = sns.lineplot(
-                data=acc_data,
-                x="timestamp",
-                y="test_accuracy",
-                hue="node",
+
+            # Calculate statistics per epoch
+            epoch_stats = acc_data.groupby("epoch").agg({"timestamp": "mean", "test_accuracy": ["mean", "std", "min", "max"]})
+            epoch_stats.columns = ["timestamp", "mean", "std", "min", "max"]
+            epoch_stats = epoch_stats.reset_index()
+            epoch_stats["std"] = epoch_stats["std"].fillna(0)
+
+            ax = plt.gca()
+
+            # Plot confidence band (mean ± std)
+            ax.fill_between(
+                epoch_stats["timestamp"],
+                epoch_stats["mean"] - epoch_stats["std"],
+                epoch_stats["mean"] + epoch_stats["std"],
                 alpha=0.3,
-                legend=False,
-                palette="viridis",
-                estimator=None,
+                color="steelblue",
+                label="Mean ± SD",
             )
-            mean_acc = acc_data.groupby("timestamp")["test_accuracy"].mean().reset_index()
-            sns.lineplot(
-                data=mean_acc,
-                x="timestamp",
-                y="test_accuracy",
+
+            # Plot mean line
+            ax.plot(
+                epoch_stats["timestamp"],
+                epoch_stats["mean"],
                 color="navy",
-                linewidth=2,
+                linewidth=2.5,
                 label="Mean",
-                ax=ax,
+                marker="o",
+                markersize=3,
             )
 
             # Target line
@@ -661,21 +665,22 @@ def analyze_results(experiment_id):
                 label=f"Target ({TARGET_ACCURACY:.0%})",
             )
 
-            # Find time to target
-            nodes_reached = acc_data[acc_data["test_accuracy"] >= TARGET_ACCURACY]
-            if not nodes_reached.empty:
-                first_reach = nodes_reached["timestamp"].min()
+            # Find time to target (first epoch where mean exceeds target)
+            reached_epochs = epoch_stats[epoch_stats["mean"] >= TARGET_ACCURACY]
+            if not reached_epochs.empty:
+                first_reach = reached_epochs["timestamp"].iloc[0]
                 ax.axvline(
                     x=first_reach,
                     color="red",
                     linestyle=":",
                     linewidth=2,
-                    label=f"First reach: {first_reach:.1f}s",
+                    label=f"Target reached: {first_reach:.1f}s",
                 )
 
             plt.title(f"Time-to-Accuracy (Target: {TARGET_ACCURACY:.0%}) - {experiment_name}")
             plt.ylabel("Test Accuracy")
             plt.xlabel("Elapsed Time [sec]")
+            plt.ylim(0, 1.05)
             plt.legend(loc="lower right")
             plt.tight_layout()
             plt.savefig(analysis_dir / "time_to_accuracy.png", dpi=150)

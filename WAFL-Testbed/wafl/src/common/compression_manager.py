@@ -221,12 +221,16 @@ class CompressionManager:
             Dictionary with last compression stats or empty dict if no history
         """
         if not self.history:
-            return {}
+            return {
+                "ratio": 1.0,
+                "time_ms": 0,
+                "original_size": 0,
+                "compressed_size": 0,
+            }
         last = self.history[-1]
         return {
-            "method": last["method"],
+            "ratio": last["compression_ratio"],
+            "time_ms": last["compression_time"] * 1000,
             "original_size": last["original_size"],
             "compressed_size": last["compressed_size"],
-            "compression_time_ms": last["compression_time"] * 1000,
-            "compression_ratio": last["compression_ratio"],
         }

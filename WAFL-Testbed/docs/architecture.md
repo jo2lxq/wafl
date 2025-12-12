@@ -240,7 +240,7 @@ sequenceDiagram
 
 1. **完了率チェック**: 完了ノード数が `len(agents) × ssp_threshold` に達したか確認
 2. **強制進行**: 閾値達成時，未完了ノードに `FORCE_NEXT` コマンドを送信
-3. **計算破棄**: 未完了ノードは現在の学習を中断し，次エポックへ進む
+3. **計算破棄**: 未完了ノードは現在の学習を中断し，同じエポックにスキップ（1エポック以上遅れるノードは存在しない）
 4. **メトリクス記録**: 破棄された計算量（`wasted_ms`, `wasted_norm`）を記録
 
 #### コード例 (ctrl/main.py)
@@ -446,7 +446,7 @@ Uses Docker's `--cpus` option to limit CPU usage, simulating devices with differ
 
 1. **Completion Rate Check**: Verify if completed nodes ≥ `len(agents) × ssp_threshold`
 2. **Force Progress**: Send `FORCE_NEXT` command to incomplete nodes when threshold reached
-3. **Computation Discard**: Incomplete nodes interrupt current learning and proceed to next epoch
+3. **Computation Discard**: Incomplete nodes interrupt current learning and skip to the same epoch (no node is ever more than 1 epoch behind)
 4. **Metrics Logging**: Record discarded computation (`wasted_ms`, `wasted_norm`)
 
 #### Code Example (ctrl/main.py)

@@ -63,6 +63,7 @@ FROM python-deps AS final
 # Copy the rest of the application
 # This layer changes frequently, so keep it last
 COPY wafl/ ./wafl/
+COPY utils/ ./utils/
 COPY data/ ./data/
 
 # Expose ports

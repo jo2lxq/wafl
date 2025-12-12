@@ -97,17 +97,58 @@ class MetricsLogger:
         Args:
             phase: Training phase (SELF or WAFL)
             epoch: Epoch number
-            metrics: Dictionary of metrics (e.g., {'train_loss': 0.5, 'train_accuracy': 0.8})
+            metrics: Dictionary of metrics. All possible fields:
+                Core training:
+                    - train_loss, train_accuracy, test_loss, test_accuracy
+                Timing:
+                    - epoch_duration_ms
+                SSP:
+                    - wasted_ms, wasted_norm, batches_processed, was_force_stopped
+                UDP/FEC:
+                    - survival_rate, sent_models, sent_failed, received_models,
+                      fec_recovery_success, fec_recovery_fail, bytes_sent, bytes_received
+                Compression:
+                    - compression_method, compression_ratio, compression_time_ms,
+                      original_size, compressed_size
+
+                Missing fields will be recorded as 0 for numeric, "" for string.
         """
         # Calculate relative time from experiment start
         relative_time = time.time() - self.start_time
 
+        # Build entry with defaults for all columns
         entry = {
             "timestamp": relative_time,
             "phase": phase,
             "epoch": epoch,
+            # Core training (provided or empty)
+            "train_loss": metrics.get("train_loss", ""),
+            "train_accuracy": metrics.get("train_accuracy", ""),
+            "test_loss": metrics.get("test_loss", ""),
+            "test_accuracy": metrics.get("test_accuracy", ""),
+            # Timing
+            "epoch_duration_ms": metrics.get("epoch_duration_ms", ""),
+            # SSP metrics - default to 0 so graphs can show "no waste"
+            "wasted_ms": metrics.get("wasted_ms", 0),
+            "wasted_norm": metrics.get("wasted_norm", 0),
+            "batches_processed": metrics.get("batches_processed", 0),
+            "was_force_stopped": metrics.get("was_force_stopped", 0),
+            # UDP/FEC metrics - default to 0 for numeric
+            "survival_rate": metrics.get("survival_rate", 1.0),  # Default 100% if no UDP
+            "sent_models": metrics.get("sent_models", 0),
+            "sent_failed": metrics.get("sent_failed", 0),
+            "received_models": metrics.get("received_models", 0),
+            "fec_recovery_success": metrics.get("fec_recovery_success", 0),
+            "fec_recovery_fail": metrics.get("fec_recovery_fail", 0),
+            "bytes_sent": metrics.get("bytes_sent", 0),
+            "bytes_received": metrics.get("bytes_received", 0),
+            # Compression metrics
+            "compression_method": metrics.get("compression_method", "none"),
+            "compression_ratio": metrics.get("compression_ratio", 1.0),
+            "compression_time_ms": metrics.get("compression_time_ms", 0),
+            "original_size": metrics.get("original_size", 0),
+            "compressed_size": metrics.get("compressed_size", 0),
         }
-        entry.update(metrics)
         self._write_row(entry)
 
     def log_ssp_metrics(

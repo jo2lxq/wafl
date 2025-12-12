@@ -1,5 +1,5 @@
 {
-  "description": "実験4: 統合シナリオ - Traditional (Strict Sync + TCP + No Compression)",
+  "experiment_name": "Experiment 4: Integrated Scenario - Traditional (Strict Sync + TCP + No Compression)",
   "epochs": {
     "self": 64,
     "wafl": 1024

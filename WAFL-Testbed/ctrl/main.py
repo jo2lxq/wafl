@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Tuple
 
 import paramiko
@@ -178,7 +179,7 @@ class WaflAgent:
                 contact_pattern = experiment_parameters.get("contact_pattern")
                 if contact_pattern is None:
                     raise ValueError("contact_pattern cannot be None")
-                contact_pattern_path = os.path.join("data", "contact_pattern", contact_pattern)
+                contact_pattern_path = os.path.join("data", contact_pattern)
 
                 if not os.path.exists(contact_pattern_path):
                     raise FileNotFoundError(f"Contact pattern file not found: {contact_pattern_path}")
@@ -800,8 +801,6 @@ class ControlServer:
                 # Parallel agent creation
                 self.logger.info(f"Creating {len(nodes)} agents in parallel...")
 
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-
                 def create_single_agent(node):
                     """Create a single agent with error handling."""
                     try:
@@ -1028,11 +1027,11 @@ class ControlServer:
             # 1. Run SELF phase (always BSP - nodes train independently)
             self.logger.info(f"🏃 Phase [1/4] - SELF training ({epochs['self']} epochs)")
             # SELF phase uses BSP mode - each node completes independently
-            # Set staleness=999999 to allow free running, but ssp_enabled=False for BSP behavior
+            # staleness parameter is deprecated but kept for API compatibility
             self._run_phase(
                 "SELF",
                 epochs["self"],
-                staleness=999999,
+                staleness=0,  # Deprecated, not used
                 ssp_threshold=1.0,
                 ssp_enabled=False,
             )
@@ -1051,7 +1050,7 @@ class ControlServer:
             self.logger.info("📊 WAFL Strategy Configuration:")
             self.logger.info(f"   - Aggregation: {aggregation}")
             if ssp_enabled:
-                self.logger.info(f"   - Synchronization: SSP (Staleness={staleness}, Threshold={ssp_threshold:.1%})")
+                self.logger.info(f"   - Synchronization: SSP (Threshold={ssp_threshold:.1%})")
             else:
                 self.logger.info("   - Synchronization: BSP (Strict Sync - all nodes synchronized per epoch)")
             self.logger.info(f"   - Batch Size: {wafl_phase.get('batch_size', 32)}")
@@ -1085,7 +1084,7 @@ class ControlServer:
         self,
         phase_name: str,
         total_epochs: int,
-        staleness: int,
+        staleness: int,  # Deprecated: kept for API compatibility, but not used
         ssp_threshold: float = 1.0,
         ssp_enabled: bool = False,
     ):
@@ -1093,21 +1092,21 @@ class ControlServer:
         Run a single training phase (SELF or WAFL) with configurable synchronization.
 
         Synchronization Modes:
-        - SSP Disabled (ssp_enabled=False): Bulk Synchronous Parallel (BSP)
+        - BSP (ssp_enabled=False): Bulk Synchronous Parallel
           All nodes must complete the current epoch before any node can proceed to the next.
-        - SSP Enabled (ssp_enabled=True): Stale Synchronous Parallel (SSP)
-          Nodes can proceed up to 'staleness' epochs ahead of the slowest node.
-          When 'ssp_threshold' fraction of nodes complete, slow nodes are force-skipped.
+        - SSP (ssp_enabled=True): Semi-Synchronous Parallel
+          When 'ssp_threshold' fraction of nodes complete an epoch, slow nodes are force-skipped.
+          This ensures no node is ever more than 1 epoch behind.
 
         Args:
             phase_name: "SELF" or "WAFL"
             total_epochs: Total number of epochs to run
-            staleness: Maximum allowed epoch difference between fastest and slowest nodes (SSP only)
+            staleness: Deprecated, kept for API compatibility (not used)
             ssp_threshold: Fraction of agents (0.0-1.0) required before forcing slow agents to skip (SSP only)
             ssp_enabled: Whether SSP mode is enabled
         """
         if ssp_enabled:
-            self.logger.info(f"🔄 {phase_name} Phase: SSP Mode (staleness={staleness}, threshold={ssp_threshold:.1%})")
+            self.logger.info(f"🔄 {phase_name} Phase: SSP Mode (threshold={ssp_threshold:.1%})")
         else:
             self.logger.info(f"🔄 {phase_name} Phase: BSP Mode (strict epoch synchronization)")
 
@@ -1123,122 +1122,141 @@ class ControlServer:
             # Check epoch progress
             min_epoch = min(epochs_completed.values())
             max_epoch = max(epochs_completed.values())
-            epoch_spread = max_epoch - min_epoch
 
             # Log epoch progress
             if min_epoch > last_epoch_logged:
                 if ssp_enabled:
-                    if epoch_spread > staleness:
-                        self.logger.warning(f"⚠️  {phase_name} Epoch {min_epoch}: Spread={epoch_spread} (exceeds staleness={staleness})")
-                    else:
-                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: Spread={epoch_spread}, within staleness bounds")
+                    self.logger.debug(f"{phase_name} Epoch {min_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
                 else:
                     self.logger.debug(f"{phase_name} Epoch {min_epoch}: All nodes synchronized (BSP)")
                 last_epoch_logged = min_epoch
-
             if min_epoch >= total_epochs:
                 break
 
             # ========== SSP Mode: Threshold-based force skip ==========
+            # When ssp_threshold fraction of nodes complete an epoch, force remaining nodes
+            # to skip to that epoch. This ensures no node is more than 1 epoch behind.
             if ssp_enabled and ssp_threshold < 1.0:
-                # Count completions for each epoch level
-                epoch_counts = {}
-                for e in epochs_completed.values():
-                    epoch_counts[e] = epoch_counts.get(e, 0) + 1
-
                 # Find the highest epoch where threshold is met
+                # Count agents who have completed each epoch level or higher
                 target_epoch = -1
-                for e in sorted(epoch_counts.keys(), reverse=True):
-                    if e > min_epoch:
-                        # Count agents who have completed epoch e OR HIGHER
-                        count = sum(1 for ae in epochs_completed.values() if ae >= e)
+                for check_epoch in range(max_epoch, min_epoch, -1):
+                    # Count agents who have completed check_epoch OR HIGHER
+                    count = sum(1 for ae in epochs_completed.values() if ae >= check_epoch)
 
-                        if count >= len(self.agents) * ssp_threshold:
-                            target_epoch = e
-                            break
+                    if count >= len(self.agents) * ssp_threshold:
+                        target_epoch = check_epoch
+                        break
 
-                if target_epoch != -1:
-                    # Identify slow agents
+                if target_epoch != -1 and target_epoch > min_epoch:
+                    # Identify slow agents (those who haven't completed target_epoch)
                     slow_agents = [name for name, e in epochs_completed.items() if e < target_epoch]
 
                     if slow_agents:
                         self.logger.info(f"⚡ SSP Threshold ({ssp_threshold:.0%}) reached for epoch {target_epoch}. Forcing {len(slow_agents)} slow agents to skip.")
                         self.logger.debug(f"   Slow agents: {slow_agents}")
 
-                        # Force slow agents to skip to target_epoch
-                        for agent in self.agents:
-                            if epochs_completed[agent.name] < target_epoch:
-                                self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
+                        # Force slow agents to skip to target_epoch (PARALLEL)
+                        def force_skip_agent(agent):
+                            """Send FORCE_NEXT to a slow agent."""
+                            if epochs_completed[agent.name] >= target_epoch:
+                                return (agent.name, False, None)
 
-                                # If agent is RUNNING, send FORCE_NEXT to stop it
-                                if agent_status[agent.name] == "RUNNING":
-                                    success, response = agent._send_command("FORCE_NEXT\r\n")
-                                    if success:
-                                        self.logger.debug(f"   FORCE_NEXT sent to {agent.name}, response: {response}")
-                                    agent_status[agent.name] = "IDLE"
+                            self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
 
-                                # Update local tracking to target_epoch
-                                epochs_completed[agent.name] = target_epoch
+                            result = None
+                            if agent_status[agent.name] == "RUNNING":
+                                success, response = agent._send_command("FORCE_NEXT\r\n")
+                                result = (agent.name, True, success)
+                            else:
+                                result = (agent.name, True, None)
+                            return result
+
+                        slow_agent_objs = [a for a in self.agents if epochs_completed[a.name] < target_epoch]
+
+                        with ThreadPoolExecutor(max_workers=len(slow_agent_objs)) as executor:
+                            futures = {executor.submit(force_skip_agent, agent): agent for agent in slow_agent_objs}
+                            for future in as_completed(futures):
+                                agent_name, was_slow, cmd_success = future.result()
+                                if was_slow:
+                                    if cmd_success:
+                                        self.logger.debug(f"   FORCE_NEXT sent to {agent_name}")
+                                    agent_status[agent_name] = "IDLE"
+                                    epochs_completed[agent_name] = target_epoch
 
             # Apply dynamic network conditions if mobility-aware mode is enabled
             if self.mobility_aware_config and phase_name == "WAFL":
                 self._apply_dynamic_network_conditions(min_epoch)
 
-            # ========== Schedule agents based on synchronization mode ==========
-            for agent in self.agents:
+            # ========== Schedule agents based on synchronization mode (PARALLEL) ==========
+            def begin_epoch_for_agent(agent):
+                """Start epoch for an agent if conditions are met."""
                 current_epoch = epochs_completed[agent.name]
-
                 if current_epoch < total_epochs and agent_status[agent.name] == "IDLE":
                     next_epoch = current_epoch + 1
-
-                    if ssp_enabled:
-                        # SSP Mode: Allow agents to proceed if within staleness bound
-                        # Agent can start next_epoch if: next_epoch - min_epoch <= staleness + 1
-                        # This means the agent won't get more than 'staleness' epochs ahead
-                        can_proceed = (next_epoch - min_epoch) <= (staleness + 1)
-                    else:
-                        # BSP Mode: All agents must be at the same epoch before proceeding
-                        # Agent can only start next_epoch if all agents have completed current_epoch
-                        # i.e., min_epoch >= current_epoch
-                        can_proceed = min_epoch >= current_epoch
-
+                    can_proceed = min_epoch >= current_epoch
                     if can_proceed:
                         success = agent.begin_epoch(phase_name, next_epoch)
-                        if success:
-                            agent_status[agent.name] = "RUNNING"
-                        else:
-                            self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent.name}, retrying...")
+                        return (agent.name, success, next_epoch)
+                return (agent.name, None, None)  # No action needed
 
-            # ========== Poll agent status ==========
-            for agent in self.agents:
-                if agent_status[agent.name] == "RUNNING":
-                    status, logs = agent.get_status()
+            # Filter agents that might need to start
+            agents_to_schedule = [a for a in self.agents if epochs_completed[a.name] < total_epochs and agent_status[a.name] == "IDLE"]
 
-                    if logs:
-                        for log_line in logs:
-                            if log_line.strip():
-                                self.logger.debug(f"[{agent.name}] {log_line}")
+            if agents_to_schedule:
+                with ThreadPoolExecutor(max_workers=len(agents_to_schedule)) as executor:
+                    futures = {executor.submit(begin_epoch_for_agent, agent): agent for agent in agents_to_schedule}
+                    for future in as_completed(futures):
+                        agent_name, success, next_epoch = future.result()
+                        if success is not None:
+                            if success:
+                                agent_status[agent_name] = "RUNNING"
+                            else:
+                                self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent_name}, retrying...")
 
-                    if "ERROR" in status:
-                        self.logger.error(f"❌ Agent {agent.name} encountered error: {status}")
-                        agent_status[agent.name] = "ERROR"
-                    elif status.startswith("DONE"):
-                        try:
-                            parts = status.split("-")
-                            if len(parts) >= 3:
-                                done_epoch = int(parts[2])
-                                if done_epoch > epochs_completed[agent.name]:
-                                    epochs_completed[agent.name] = done_epoch
-                                    agent_status[agent.name] = "IDLE"
-                                    self.logger.info(f"✅ Agent {agent.name} completed {phase_name} epoch {done_epoch}")
-                        except Exception as e:
-                            self.logger.error(f"Error parsing status {status}: {e}")
+            # ========== Poll agent status (PARALLEL) ==========
+            def poll_agent_status(agent):
+                """Poll status for a single agent."""
+                if agent_status[agent.name] != "RUNNING":
+                    return (agent.name, None, None, [])
+                status, logs = agent.get_status()
+                return (agent.name, status, logs, [])
+
+            running_agents = [a for a in self.agents if agent_status[a.name] == "RUNNING"]
+
+            if running_agents:
+                with ThreadPoolExecutor(max_workers=len(running_agents)) as executor:
+                    futures = {executor.submit(poll_agent_status, agent): agent for agent in running_agents}
+                    for future in as_completed(futures):
+                        agent_name, status, logs, _ = future.result()
+                        if status is None:
+                            continue
+
+                        if logs:
+                            for log_line in logs:
+                                if log_line.strip():
+                                    self.logger.debug(f"[{agent_name}] {log_line}")
+
+                        if "ERROR" in status:
+                            self.logger.error(f"❌ Agent {agent_name} encountered error: {status}")
+                            agent_status[agent_name] = "ERROR"
+                        elif status.startswith("DONE"):
+                            try:
+                                parts = status.split("-")
+                                if len(parts) >= 3:
+                                    done_epoch = int(parts[2])
+                                    if done_epoch > epochs_completed[agent_name]:
+                                        epochs_completed[agent_name] = done_epoch
+                                        agent_status[agent_name] = "IDLE"
+                                        self.logger.info(f"✅ Agent {agent_name} completed {phase_name} epoch {done_epoch}")
+                            except Exception as e:
+                                self.logger.error(f"Error parsing status {status}: {e}")
 
             # Progress logging every 30 seconds
             elapsed_time = time.time() - start_time
             if elapsed_time - last_progress_log >= 30:
                 if ssp_enabled:
-                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (spread={epoch_spread}, staleness bound={staleness})")
+                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%})")
                 else:
                     self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync)")
                 last_progress_log = elapsed_time
@@ -1252,8 +1270,6 @@ class ControlServer:
             return
 
         self.logger.warning(f"🛑 Shutting down {len(self.agents)} agents")
-
-        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         def shutdown_single_agent(agent):
             """Shutdown a single agent."""
@@ -1334,32 +1350,47 @@ class ControlServer:
             self.mobility_aware_config.get("network_conditions_file", "network_conditions_mobility.json"),
         )
         exec_config_file = "ctrl/execution_config.json"
+        deployment_base = self.config.get("DEPLOYMENT_LOCATION", "/home/denjo")
+        project_path = f"{deployment_base}/WAFL-Testbed"
+        username = self.config.get("USER", "denjo")
 
-        # Apply tc rules for each agent
-        for agent in self.agents:
+        def apply_tc_for_agent(agent):
+            """Apply tc rules for a single agent."""
             container_name = f"wafl-node-{agent.agent_index}"
             node_id = str(agent.agent_index)
-
-            # Run apply_dynamic_tc.py via SSH with execution-config for IP mapping
-            cmd = f"cd {self.config.get('deployment_location', '/home/denjo')} && python3 utils/apply_dynamic_tc.py --container {container_name} --epoch {epoch} --node-id {node_id} --conditions {conditions_file} --pathloss {model_file} --execution-config {exec_config_file}"
+            cmd = f"cd {project_path} && python3 utils/apply_dynamic_tc.py --container {container_name} --epoch {epoch} --node-id {node_id} --conditions {conditions_file} --pathloss {model_file} --execution-config {exec_config_file}"
 
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(agent.ip, username=self.config.get("user", "denjo"))
+                ssh.connect(agent.ip, username=username)
 
                 stdin, stdout, stderr = ssh.exec_command(cmd)
                 exit_status = stdout.channel.recv_exit_status()
 
                 if exit_status == 0:
-                    self.logger.debug(f"✅ Applied tc rules for agent {agent.name} (epoch {epoch})")
+                    result = (True, agent.name, None)
                 else:
                     error_msg = stderr.read().decode().strip()
-                    self.logger.warning(f"⚠️ Failed to apply tc rules for agent {agent.name}: {error_msg}")
+                    result = (False, agent.name, error_msg)
 
                 ssh.close()
+                return result
             except Exception as e:
-                self.logger.error(f"💥 Error applying tc for agent {agent.name}: {e}")
+                return (False, agent.name, str(e))
+
+        # Apply tc rules in parallel for all agents
+        with ThreadPoolExecutor(max_workers=len(self.agents)) as executor:
+            futures = {executor.submit(apply_tc_for_agent, agent): agent for agent in self.agents}
+            for future in as_completed(futures):
+                success, name, error = future.result()
+                if success:
+                    self.logger.debug(f"✅ Applied tc rules for agent {name} (epoch {epoch})")
+                else:
+                    if error:
+                        self.logger.warning(f"⚠️ Failed to apply tc rules for agent {name}: {error}")
+                    else:
+                        self.logger.error(f"💥 Error applying tc for agent {name}")
 
 
 if __name__ == "__main__":
@@ -1430,7 +1461,6 @@ if __name__ == "__main__":
         ssp_enabled = ssp_settings.get("enabled", False)
         print(f"   - SSP: {'Enabled' if ssp_enabled else 'Disabled'}")
         if ssp_enabled:
-            print(f"     • Staleness: {ssp_settings.get('staleness', 0)}")
             print(f"     • SSP Threshold: {ssp_settings.get('ssp_threshold', 1.0)}")
 
         # UDP
