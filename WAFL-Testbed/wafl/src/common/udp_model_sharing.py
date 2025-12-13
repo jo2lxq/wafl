@@ -49,26 +49,6 @@ class UDPModelSharing:
         Sends serialized model data via UDP with FEC.
         """
         try:
-            # Pad data to be multiple of k
-            pad_len = (self.k - (len(model_data) % self.k)) % self.k
-            padded_data = model_data + b"\0" * pad_len
-
-            # Encode
-            blocks = self.encoder.encode(padded_data)
-
-            # Prepare packets
-            # packets = []
-            # num_blocks = len(blocks)
-
-            # We need to split blocks into chunks if they are too large,
-            # but zfec blocks are usually (len / k).
-            # If len is large, block size is large.
-            # We need to fragment the blocks or fragment the data BEFORE encoding?
-            # zfec encodes the whole buffer into k blocks of size len/k.
-            # If len/k > MTU, we have a problem.
-            # So we should chunk the data first, then encode each chunk?
-            # Or just use zfec on chunks.
-
             # Strategy: Split data into chunks of size (PAYLOAD_SIZE * k).
             # Each chunk is encoded into m packets of size PAYLOAD_SIZE.
 
@@ -82,13 +62,17 @@ class UDPModelSharing:
                 end = min(start + chunk_size, len(model_data))
                 chunk = model_data[start:end]
 
-                # Pad chunk
-                chunk_pad = (self.k - (len(chunk) % self.k)) % self.k
-                chunk_padded = chunk + b"\0" * chunk_pad
+                # Pad chunk to be exactly divisible by k
+                block_size = math.ceil(len(chunk) / self.k)
+                chunk_padded = chunk + b"\0" * (block_size * self.k - len(chunk))
 
-                blocks = self.encoder.encode(chunk_padded)
+                # Split into k blocks for zfec encoder
+                blocks_in = [chunk_padded[i * block_size : (i + 1) * block_size] for i in range(self.k)]
 
-                for block_idx, block in enumerate(blocks):
+                # Encode with zfec - this returns m blocks (k data + (m-k) redundancy)
+                blocks_out = self.encoder.encode(blocks_in)
+
+                for block_idx, block in enumerate(blocks_out):
                     # Header: chunk_id (4), total_chunks (4), block_idx (4), original_len (4)
                     # We need to know original length to strip padding.
                     header = struct.pack("!IIII", chunk_idx, total_chunks, block_idx, len(chunk))
@@ -110,19 +94,21 @@ class UDPModelSharing:
             return False
 
     def get_survival_rate(self) -> float:
-        """Calculate model survival rate (successful receptions / total reception attempts).
+        """Calculate packet survival rate.
 
-        This measures how well FEC helps recover from packet loss.
-        A rate of 1.0 means all models were successfully received/recovered.
+        This measures the ratio of chunks that were received WITHOUT needing FEC recovery.
+        A rate < 1.0 indicates packet loss that required FEC to recover.
         """
-        # Reception-based survival rate
-        total_receive_attempts = self.stats["received_models"] + self.stats["fec_recovery_fail"]
-        if total_receive_attempts == 0:
-            # No reception attempts - check if any sends occurred
-            if self.stats["sent_models"] > 0:
-                return 1.0  # Sent but not received yet (likely still in transit)
-            return 1.0  # No activity
-        return self.stats["received_models"] / total_receive_attempts
+        total_chunks = self.stats.get("total_chunks_received", 0)
+        fec_recovered = self.stats.get("fec_recovery_success", 0)
+
+        if total_chunks == 0:
+            return 1.0  # No data yet
+
+        # Survival rate = chunks received perfectly / total chunks
+        # If FEC was needed, it means some packets were lost
+        perfect_chunks = total_chunks - fec_recovered
+        return perfect_chunks / total_chunks if total_chunks > 0 else 1.0
 
     def start_listener(self, callback):
         """
@@ -251,6 +237,7 @@ class UDPModelSharing:
 
             self.stats["received_models"] += 1
             self.stats["bytes_received"] += len(full_data)
+            self.stats["total_chunks_received"] += len(sorted_chunk_indices)
 
             if chunks_recovered_with_fec > 0:
                 self.stats["fec_recovery_success"] += chunks_recovered_with_fec

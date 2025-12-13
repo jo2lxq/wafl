@@ -14,7 +14,15 @@ def monitor(output_file, interval=1.0):
     with open(output_file, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["timestamp", "cpu_percent", "memory_percent", "net_sent_bytes", "net_recv_bytes"])
+            writer.writerow(
+                [
+                    "timestamp",
+                    "cpu_percent",
+                    "memory_percent",
+                    "net_sent_bytes",
+                    "net_recv_bytes",
+                ]
+            )
 
     print(f"Monitoring resources to {output_file} (interval={interval}s)...")
 
@@ -22,12 +30,18 @@ def monitor(output_file, interval=1.0):
     last_sent = net_io_start.bytes_sent
     last_recv = net_io_start.bytes_recv
 
+    # Get current process for container-specific CPU measurement
+    current_process = psutil.Process()
+    # Initial call to cpu_percent to start measurement
+    current_process.cpu_percent(interval=None)
+
     try:
         while True:
             time.sleep(interval)
 
             timestamp = time.time()
-            cpu = psutil.cpu_percent(interval=None)
+            # Use process-level CPU to measure only this container's workload
+            cpu = current_process.cpu_percent(interval=None)
             mem = psutil.virtual_memory().percent
 
             net_io = psutil.net_io_counters()

@@ -36,10 +36,16 @@ class CompressionManager:
         self.bandwidth_est = 10.0 * 1024 * 1024  # Start with 10 MB/s estimate
         self.history = []
 
-        # Track bytes for metrics
+        # Track bytes for metrics (cumulative over lifetime)
         self.total_bytes_original = 0
         self.total_bytes_compressed = 0
         self.total_compression_time_ms = 0
+
+        # Track bytes for epoch-level metrics (reset each epoch)
+        self.epoch_bytes_original = 0
+        self.epoch_bytes_compressed = 0
+        self.epoch_compression_time_ms = 0
+        self.epoch_compression_count = 0
 
         self.methods = ["none", "lz4", "zlib"]
         if lz4 is None:
@@ -94,6 +100,12 @@ class CompressionManager:
             self.total_bytes_original += original_size
             self.total_bytes_compressed += compressed_size
             self.total_compression_time_ms += comp_time * 1000
+
+            # Update epoch-level stats
+            self.epoch_bytes_original += original_size
+            self.epoch_bytes_compressed += compressed_size
+            self.epoch_compression_time_ms += comp_time * 1000
+            self.epoch_compression_count += 1
 
             # Keep history limited to last 100 entries
             if len(self.history) > 100:
@@ -234,3 +246,25 @@ class CompressionManager:
             "original_size": last["original_size"],
             "compressed_size": last["compressed_size"],
         }
+
+    def get_epoch_stats(self) -> dict:
+        """Get compression stats for the current epoch.
+
+        Returns:
+            Dictionary with epoch-level compression stats
+        """
+        ratio = self.epoch_bytes_compressed / self.epoch_bytes_original if self.epoch_bytes_original > 0 else 1.0
+        return {
+            "ratio": ratio,
+            "time_ms": self.epoch_compression_time_ms,
+            "original_size": self.epoch_bytes_original,
+            "compressed_size": self.epoch_bytes_compressed,
+            "compression_count": self.epoch_compression_count,
+        }
+
+    def reset_epoch_stats(self):
+        """Reset epoch-level statistics for the next epoch."""
+        self.epoch_bytes_original = 0
+        self.epoch_bytes_compressed = 0
+        self.epoch_compression_time_ms = 0
+        self.epoch_compression_count = 0

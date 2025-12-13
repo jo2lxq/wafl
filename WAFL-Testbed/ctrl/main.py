@@ -60,7 +60,7 @@ class WaflAgent:
         self.config = config
         self.experiment_id = experiment_id
         self.start_timestamp = start_timestamp
-        self.node_config = node_config or {}  # Store full node configuration for container management
+        self.node_config = node_config or {}
 
         # Initialize ContainerManager
         self.container_manager = ContainerManager(
@@ -196,6 +196,21 @@ class WaflAgent:
                     }
                 )
 
+                # 3. Parameters file (for method settings like UDP and compression)
+                parameters_path = os.path.join("ctrl", "parameters.json")
+                if os.path.exists(parameters_path):
+                    with open(parameters_path, "r", encoding="utf-8") as f:
+                        parameters_data = json.load(f)
+                    parameters_json = json.dumps(parameters_data, indent=2, ensure_ascii=False)
+                    files_to_deploy.append(
+                        {
+                            "content": parameters_json,
+                            "filename": "parameters.json",
+                            "description": "parameters file",
+                            "target_dir": "ctrl",
+                        }
+                    )
+
                 # Deploy all files via SFTP
                 with ssh.open_sftp() as sftp:
                     import io
@@ -205,6 +220,13 @@ class WaflAgent:
                         sftp.stat(config_dir)
                     except FileNotFoundError:
                         sftp.mkdir(config_dir)
+
+                    # Create ctrl directory for parameters.json
+                    ctrl_dir = os.path.join(target_path, "ctrl")
+                    try:
+                        sftp.stat(ctrl_dir)
+                    except FileNotFoundError:
+                        sftp.mkdir(ctrl_dir)
 
                     # Create dataset directories
                     dataset_dir = os.path.join(target_path, "dataset")
@@ -224,7 +246,12 @@ class WaflAgent:
                     # Deploy config files
                     for file_info in files_to_deploy:
                         try:
-                            file_path = os.path.join(config_dir, file_info["filename"])
+                            # Use custom target directory if specified, otherwise use config_dir
+                            target_directory = file_info.get("target_dir")
+                            if target_directory:
+                                file_path = os.path.join(target_path, target_directory, file_info["filename"])
+                            else:
+                                file_path = os.path.join(config_dir, file_info["filename"])
                             file_obj = io.BytesIO(file_info["content"].encode("utf-8"))
 
                             self.logger.debug(f"📤 Deploying {file_info['filename']} to {file_path} ({len(file_info['content'])} bytes)")

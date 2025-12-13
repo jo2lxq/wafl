@@ -1,7 +1,7 @@
 {
   "deployment_location": "/home/denjo/workspace/ktakahashi",
   "user": "denjo",
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - UDP + FEC (M=4, Redundancy 20%)",
+  "experiment_name": "_debug",
   "log_level": "debug",
   "nodes": [
     {

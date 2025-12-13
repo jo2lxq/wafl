@@ -3,7 +3,10 @@ import json
 import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (  # Used in collect_results
+    ThreadPoolExecutor,
+    as_completed,
+)
 from pathlib import Path
 
 import matplotlib
@@ -11,6 +14,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import paramiko
 import seaborn as sns
+
+# Use non-interactive backend for parallel processing
+matplotlib.use("Agg")
 
 # Japanese font configuration for matplotlib
 matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
@@ -23,7 +29,59 @@ CONFIG_FILE = CTRL_DIR / "execution_config.json"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
 # Target accuracy for Time-to-Accuracy plot
-TARGET_ACCURACY = 0.95
+TARGET_ACCURACY = 0.9
+
+# =============================================================================
+# Color Palette - Balanced contrast, readable and pleasant colors
+# =============================================================================
+# Primary palette for multi-node plots (moderate saturation, good distinction)
+NODE_PALETTE = [
+    "#5b9bd5",  # Soft Blue
+    "#ed7d31",  # Soft Orange
+    "#70ad47",  # Soft Green
+    "#9e7cc3",  # Soft Purple
+    "#ffc000",  # Soft Gold
+    "#44a5a1",  # Soft Teal
+    "#c45b9a",  # Soft Pink
+    "#4ecdc4",  # Soft Cyan
+    "#95c471",  # Light Green
+    "#e89b5c",  # Light Orange
+    "#8e7cc3",  # Light Purple
+    "#a5826d",  # Light Brown
+    "#8097a4",  # Blue Grey
+    "#d4a539",  # Mustard
+    "#5ba89f",  # Teal
+    "#e67c73",  # Coral
+    "#6aa84f",  # Green
+    "#6fa8dc",  # Light Blue
+    "#a64d79",  # Mauve
+    "#b4c74a",  # Lime
+    "#d9a128",  # Amber
+    "#4a86c7",  # Medium Blue
+    "#cc6666",  # Soft Red
+    "#76a398",  # Sage
+    "#9373b0",  # Medium Purple
+    "#d98757",  # Terracotta
+    "#6b7db3",  # Soft Indigo
+    "#5aA99A",  # Medium Teal
+]
+
+# Single-purpose colors (balanced contrast, readable)
+COLORS = {
+    "mean_line": "#2c3e50",  # Dark Slate - clearly visible but not harsh
+    "phase_line": "#c0392b",  # Muted Red - for phase switch
+    "target_line": "#27ae60",  # Soft Green - for target accuracy
+    "accuracy_fill": "#5b9bd5",  # Soft Blue - for accuracy charts
+    "loss_fill": "#e67c73",  # Soft Coral - for loss charts
+    "bar_primary": "#6b7db3",  # Soft Indigo - primary bar color
+    "bar_secondary": "#e89b5c",  # Soft Orange - secondary bar
+    "bar_tertiary": "#5aA99A",  # Medium Teal - tertiary bar
+    "goodput": "#70ad47",  # Soft Green - for goodput
+    "traffic": "#44a5a1",  # Soft Teal - for traffic
+    "idle": "#9e9ec8",  # Soft Lavender - for idle time
+    "wasted_bar": "#e89b5c",  # Soft Orange - wasted computation
+    "wasted_line": "#2c3e50",  # Dark Slate - batches line
+}
 
 
 def load_config():
@@ -52,6 +110,29 @@ def get_latest_experiment_id():
 
     # Return the one with the latest timestamp string (lexicographical sort works for ISO-like format)
     return max(dirs, key=extract_timestamp).name
+
+
+def get_experiments_without_analysis():
+    """Find all experiment directories that don't have an 'analysis' subdirectory."""
+    if not RESULTS_DIR.exists():
+        return []
+
+    experiments = []
+    for d in RESULTS_DIR.iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            analysis_dir = d / "analysis"
+            if not analysis_dir.exists():
+                experiments.append(d.name)
+
+    # Sort by timestamp (newest first)
+    def extract_timestamp(name):
+        try:
+            return name.split("-")[-1]
+        except IndexError:
+            return ""
+
+    experiments.sort(key=extract_timestamp, reverse=True)
+    return experiments
 
 
 def collect_results(experiment_id, config):
@@ -116,20 +197,9 @@ def collect_results(experiment_id, config):
     return success_count > 0
 
 
-def analyze_results(experiment_id):
-    """Analyze collected results and generate plots."""
-    print(f"📊 Analyzing results for: {experiment_id}")
-
-    exp_dir = RESULTS_DIR / experiment_id
-    analysis_dir = exp_dir / "analysis"
-    analysis_dir.mkdir(exist_ok=True)
-
-    # Extract experiment name without timestamp (e.g., "exp1-20251211T144430" -> "exp1")
-    # The timestamp format is "-YYYYMMDDTHHMMSS" at the end
-    timestamp_pattern = r"-\d{8}T\d{6}$"
-    experiment_name = re.sub(timestamp_pattern, "", experiment_id)
-
-    # 1. Load Metrics
+def _load_metrics_and_resources(exp_dir):
+    """Load metrics and resources dataframes from experiment directory."""
+    # Load Metrics
     metrics_dfs = []
     for node_dir in exp_dir.iterdir():
         if node_dir.is_dir() and node_dir.name != "analysis" and node_dir.name != "ctrl":
@@ -142,13 +212,19 @@ def analyze_results(experiment_id):
                 except Exception:
                     pass
 
-    if not metrics_dfs:
-        print("⚠️  No metrics data found.")
-        return
+    df = pd.concat(metrics_dfs) if metrics_dfs else pd.DataFrame()
 
-    df = pd.concat(metrics_dfs)
+    # Handle SSP FORCE_NEXT rows - these have was_force_stopped=1 and may create duplicate epochs
+    # Keep SSP rows for wasted computation analysis, but for other plots, prioritize completed epochs
+    if not df.empty and "was_force_stopped" in df.columns:
+        # Create a marker for SSP-interrupted epochs (these have wasted_ms > 0 or was_force_stopped = 1)
+        df["is_ssp_interrupted"] = df["was_force_stopped"].fillna(0).astype(int) == 1
 
-    # 2. Load Resources
+        # For epoch-based plots, we need to handle duplicates
+        # Sort by timestamp to get proper ordering, then for duplicates, keep the complete epoch
+        df = df.sort_values(["node", "timestamp"]).reset_index(drop=True)
+
+    # Load Resources
     resources_dfs = []
     for node_dir in exp_dir.iterdir():
         if node_dir.is_dir() and node_dir.name != "analysis" and node_dir.name != "ctrl":
@@ -163,147 +239,149 @@ def analyze_results(experiment_id):
 
     resources_df = pd.concat(resources_dfs) if resources_dfs else pd.DataFrame()
 
-    # Set theme
-    sns.set_theme(style="darkgrid")
+    return df, resources_df
 
-    # --- Helper to add phase switch line ---
-    def add_phase_line(ax, x_col="epoch", text_position="top"):
-        wafl_start = df[df["phase"] == "WAFL"][x_col].min()
-        if not pd.isna(wafl_start):
-            ax.axvline(x=wafl_start, color="firebrick", linestyle="--", alpha=0.7)
-            y_min, y_max = ax.get_ylim()
-            if text_position == "top":
-                y_pos = y_max * 0.95
-                va = "top"
-            else:
-                y_pos = y_min + (y_max - y_min) * 0.05
-                va = "bottom"
-            ax.text(
-                wafl_start,
-                y_pos,
-                " Phase Switch",
-                color="firebrick",
-                va=va,
-                fontsize=10,
-            )
 
-    # ==========================================================================
-    # 1. Accuracy
-    # ==========================================================================
-    if not df.empty and "test_accuracy" in df.columns:
-        plt.figure(figsize=(12, 6))
-        ax = sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_accuracy",
-            hue="node",
-            alpha=0.3,
-            legend=False,
-            palette="viridis",
-            estimator=None,
-        )
-        sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_accuracy",
-            color="navy",
-            linewidth=2,
-            label="Mean",
-            errorbar=None,
-            ax=ax,
-        )
-        add_phase_line(ax, "epoch", text_position="bottom")
-        plt.title(f"Test Accuracy - {experiment_name}")
-        plt.ylabel("Test Accuracy")
-        plt.xlabel("Epoch")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(analysis_dir / "accuracy.png", dpi=150)
-        plt.close()
-        print("  ✅ Generated accuracy.png")
+# =============================================================================
+# Individual Plot Generation Functions (for parallel execution)
+# =============================================================================
 
-    # ==========================================================================
-    # 2. Wall-clock time per epoch
-    # ==========================================================================
-    if not df.empty and "epoch_duration_ms" in df.columns:
-        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
-        if not epoch_dur.empty:
-            # Convert to seconds for readability
-            epoch_dur["epoch_duration_s"] = epoch_dur["epoch_duration_ms"] / 1000
 
-            plt.figure(figsize=(12, 6))
-            ax = sns.lineplot(
-                data=epoch_dur,
-                x="epoch",
-                y="epoch_duration_s",
-                hue="node",
-                alpha=0.3,
-                legend=False,
-                palette="viridis",
-                estimator=None,
-            )
-            sns.lineplot(
-                data=epoch_dur,
-                x="epoch",
-                y="epoch_duration_s",
-                color="navy",
-                linewidth=2,
-                label="Mean",
-                errorbar=None,
-                ax=ax,
-            )
-            add_phase_line(ax, "epoch")
-            plt.title(f"Wall-clock Time per Epoch - {experiment_name}")
-            plt.ylabel("Duration [sec]")
-            plt.xlabel("Epoch")
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(analysis_dir / "epoch_duration.png", dpi=150)
-            plt.close()
-            print("  ✅ Generated epoch_duration.png")
+def _generate_accuracy_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate test accuracy plot."""
+    if df.empty or "test_accuracy" not in df.columns:
+        return None
 
-    # ==========================================================================
-    # 3. Idle Time Ratio
-    # ==========================================================================
-    # Calculate idle time as: max_epoch_duration - node_epoch_duration
-    if not df.empty and "epoch_duration_ms" in df.columns:
-        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
-        if not epoch_dur.empty:
-            # For each epoch, calculate max duration and idle time
-            max_dur_per_epoch = epoch_dur.groupby("epoch")["epoch_duration_ms"].max().reset_index()
-            max_dur_per_epoch.columns = ["epoch", "max_duration_ms"]
-            epoch_dur = epoch_dur.merge(max_dur_per_epoch, on="epoch")
-            epoch_dur["idle_time_ms"] = epoch_dur["max_duration_ms"] - epoch_dur["epoch_duration_ms"]
-            epoch_dur["idle_time_ratio"] = epoch_dur["idle_time_ms"] / epoch_dur["max_duration_ms"]
+    # Filter out SSP interrupted rows (they don't have valid test_accuracy) and NaN values
+    plot_df = df[df["test_accuracy"].notna()].copy()
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+    if plot_df.empty:
+        return None
 
-            # Aggregate per epoch
-            idle_agg = epoch_dur.groupby("epoch").agg({"idle_time_ratio": "mean", "idle_time_ms": "sum"}).reset_index()
+    plt.figure(figsize=(12, 6))
+    num_nodes = plot_df["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
 
-            plt.figure(figsize=(12, 6))
-            ax = plt.subplot(1, 1, 1)
-            ax.bar(
-                idle_agg["epoch"],
-                idle_agg["idle_time_ratio"] * 100,
-                color="steelblue",
-                alpha=0.7,
-            )
-            ax.set_ylabel("Idle Time Ratio [%]", color="steelblue")
-            ax.set_xlabel("Epoch")
-            ax.tick_params(axis="y", labelcolor="steelblue")
-            ax.set_ylim(0, 100)
-            plt.title(f"Idle Time Ratio (Sync Wait Time) - {experiment_name}")
-            plt.tight_layout()
-            plt.savefig(analysis_dir / "idle_time_ratio.png", dpi=150)
-            plt.close()
-            print("  ✅ Generated idle_time_ratio.png")
+    ax = sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_accuracy",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        estimator=None,
+        linewidth=1.2,
+    )
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_accuracy",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean",
+        errorbar=None,
+        ax=ax,
+    )
+    add_phase_line_func(ax, plot_df, "epoch", text_position="bottom")
+    plt.title(f"Test Accuracy - {experiment_name}")
+    plt.ylabel("Test Accuracy")
+    plt.xlabel("Epoch")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "accuracy.png", dpi=150)
+    plt.close()
+    return "accuracy.png"
 
-    # ==========================================================================
-    # 4. Wasted Computation
-    # ==========================================================================
-    # Only show wasted computation when SSP force-skips actually occurred
+
+def _generate_epoch_duration_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate wall-clock time per epoch plot."""
+    if df.empty or "epoch_duration_ms" not in df.columns:
+        return None
+
+    epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+    if epoch_dur.empty:
+        return None
+
+    epoch_dur["epoch_duration_s"] = epoch_dur["epoch_duration_ms"] / 1000
+    num_nodes = epoch_dur["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+    plt.figure(figsize=(12, 6))
+    ax = sns.lineplot(
+        data=epoch_dur,
+        x="epoch",
+        y="epoch_duration_s",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        estimator=None,
+        linewidth=1.2,
+    )
+    sns.lineplot(
+        data=epoch_dur,
+        x="epoch",
+        y="epoch_duration_s",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean",
+        errorbar=None,
+        ax=ax,
+    )
+    add_phase_line_func(ax, df, "epoch")
+    plt.title(f"Wall-clock Time per Epoch - {experiment_name}")
+    plt.ylabel("Duration [sec]")
+    plt.xlabel("Epoch")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "epoch_duration.png", dpi=150)
+    plt.close()
+    return "epoch_duration.png"
+
+
+def _generate_idle_time_plot(df, experiment_name, analysis_dir):
+    """Generate idle time ratio plot."""
+    if df.empty or "epoch_duration_ms" not in df.columns:
+        return None
+
+    epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+    if epoch_dur.empty:
+        return None
+
+    max_dur_per_epoch = epoch_dur.groupby("epoch")["epoch_duration_ms"].max().reset_index()
+    max_dur_per_epoch.columns = ["epoch", "max_duration_ms"]
+    epoch_dur = epoch_dur.merge(max_dur_per_epoch, on="epoch")
+    epoch_dur["idle_time_ms"] = epoch_dur["max_duration_ms"] - epoch_dur["epoch_duration_ms"]
+    epoch_dur["idle_time_ratio"] = epoch_dur["idle_time_ms"] / epoch_dur["max_duration_ms"]
+    idle_agg = epoch_dur.groupby("epoch").agg({"idle_time_ratio": "mean", "idle_time_ms": "sum"}).reset_index()
+
+    plt.figure(figsize=(12, 6))
+    ax = plt.subplot(1, 1, 1)
+    ax.bar(
+        idle_agg["epoch"],
+        idle_agg["idle_time_ratio"] * 100,
+        color=COLORS["idle"],
+        alpha=0.8,
+        edgecolor=COLORS["idle"],
+        linewidth=0.5,
+    )
+    ax.set_ylabel("Idle Time Ratio [%]", color=COLORS["mean_line"])
+    ax.set_xlabel("Epoch")
+    ax.tick_params(axis="y", labelcolor=COLORS["mean_line"])
+    ax.set_ylim(0, 100)
+    plt.title(f"Idle Time Ratio (Sync Wait Time) - {experiment_name}")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "idle_time_ratio.png", dpi=150)
+    plt.close()
+    return "idle_time_ratio.png"
+
+
+def _generate_wasted_computation_plot(df, experiment_name, analysis_dir):
+    """Generate wasted computation plot."""
     has_wasted_data = False
     if not df.empty and "wasted_ms" in df.columns:
-        # Filter only epochs where force-skip occurred (wasted_ms > 0)
         ssp_data = df[(df["wasted_ms"].notna()) & (df["wasted_ms"] > 0)].copy()
         if not ssp_data.empty:
             has_wasted_data = True
@@ -314,35 +392,36 @@ def analyze_results(experiment_id):
             ax1.bar(
                 wasted_per_epoch["epoch"],
                 wasted_per_epoch["wasted_s"],
-                color="coral",
-                alpha=0.7,
+                color=COLORS["wasted_bar"],
+                alpha=0.8,
                 label="Wasted Time",
+                edgecolor=COLORS["wasted_bar"],
+                linewidth=0.5,
             )
-            ax1.set_ylabel("Wasted Time [sec]", color="coral")
-            ax1.tick_params(axis="y", labelcolor="coral")
+            ax1.set_ylabel("Wasted Time [sec]", color=COLORS["wasted_bar"])
+            ax1.tick_params(axis="y", labelcolor=COLORS["wasted_bar"])
             ax1.set_xlabel("Epoch")
 
             ax2 = ax1.twinx()
             ax2.plot(
                 wasted_per_epoch["epoch"],
                 wasted_per_epoch["batches_processed"],
-                color="navy",
-                linewidth=2,
+                color=COLORS["wasted_line"],
+                linewidth=2.5,
                 marker="o",
-                markersize=3,
+                markersize=4,
                 label="Incomplete Batches",
             )
-            ax2.set_ylabel("Incomplete Batches (before force-skip)", color="navy")
-            ax2.tick_params(axis="y", labelcolor="navy")
+            ax2.set_ylabel("Incomplete Batches (before force-skip)", color=COLORS["wasted_line"])
+            ax2.tick_params(axis="y", labelcolor=COLORS["wasted_line"])
 
             plt.title(f"Wasted Computation (SSP Force-Skip) - {experiment_name}")
             fig.tight_layout()
             plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
             plt.close()
-            print("  ✅ Generated wasted_computation.png")
+            return "wasted_computation.png"
 
     if not has_wasted_data:
-        # No wasted data available, create placeholder plot
         fig, ax = plt.subplots(figsize=(12, 6))
         ax.text(
             0.5,
@@ -351,6 +430,7 @@ def analyze_results(experiment_id):
             ha="center",
             va="center",
             fontsize=14,
+            color="#666666",
             transform=ax.transAxes,
         )
         ax.set_xlim(0, 1)
@@ -360,18 +440,16 @@ def analyze_results(experiment_id):
         plt.tight_layout()
         plt.savefig(analysis_dir / "wasted_computation.png", dpi=150)
         plt.close()
-        print("  ✅ Generated wasted_computation.png (no SSP data)")
+        return "wasted_computation.png (no SSP data)"
 
-    # ==========================================================================
-    # 5. Survival Rate
-    # ==========================================================================
-    # Always generate this plot
+
+def _generate_survival_rate_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate survival rate plot."""
     plt.figure(figsize=(12, 6))
     has_meaningful_survival_data = False
+
     if not df.empty and "survival_rate" in df.columns:
         udp_data = df[df["survival_rate"].notna()].copy()
-        # Check if UDP was actually used (bytes_sent or bytes_received > 0)
-        # or if survival_rate varies (indicating UDP with packet loss)
         udp_used = False
         if "bytes_sent" in df.columns and "bytes_received" in df.columns:
             udp_used = (df["bytes_sent"].sum() > 0) or (df["bytes_received"].sum() > 0)
@@ -380,30 +458,33 @@ def analyze_results(experiment_id):
 
         if not udp_data.empty and (has_variation or udp_used):
             has_meaningful_survival_data = True
+            num_nodes = udp_data["node"].nunique()
+            palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
             ax = sns.lineplot(
                 data=udp_data,
                 x="epoch",
                 y="survival_rate",
                 hue="node",
-                alpha=0.3,
+                alpha=0.4,
                 legend=False,
-                palette="viridis",
+                palette=palette,
                 estimator=None,
+                linewidth=1.2,
             )
             sns.lineplot(
                 data=udp_data,
                 x="epoch",
                 y="survival_rate",
-                color="navy",
-                linewidth=2,
+                color=COLORS["mean_line"],
+                linewidth=2.5,
                 label="Mean",
                 errorbar=None,
                 ax=ax,
             )
             ax.set_ylim(0, 1.05)
-            add_phase_line(ax, "epoch")
+            add_phase_line_func(ax, df, "epoch")
 
-            # Add informative subtitle if all values are 1.0
             if not has_variation:
                 plt.title(f"Survival Rate (UDP/FEC) - {experiment_name}\n(100% survival - no packet loss or FEC recovery successful)")
             else:
@@ -421,6 +502,7 @@ def analyze_results(experiment_id):
             ha="center",
             va="center",
             fontsize=14,
+            color="#666666",
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -428,40 +510,56 @@ def analyze_results(experiment_id):
     plt.tight_layout()
     plt.savefig(analysis_dir / "survival_rate.png", dpi=150)
     plt.close()
-    print("  ✅ Generated survival_rate.png")
+    return "survival_rate.png"
 
-    # ==========================================================================
-    # 6. Goodput
-    # ==========================================================================
-    # Always generate this plot
+
+def _generate_goodput_plot(df, experiment_name, analysis_dir):
+    """Generate goodput plot showing both sent and received throughput."""
     plt.figure(figsize=(12, 6))
     has_meaningful_goodput_data = False
-    if not df.empty and "bytes_received" in df.columns and "epoch_duration_ms" in df.columns:
-        goodput_data = df[(df["bytes_received"].notna()) & (df["epoch_duration_ms"].notna())].copy()
-        # Check if there's actual data (not all zeros)
-        if not goodput_data.empty and goodput_data["bytes_received"].sum() > 0:
+
+    if not df.empty and "bytes_received" in df.columns and "bytes_sent" in df.columns and "epoch_duration_ms" in df.columns:
+        goodput_data = df[(df["bytes_received"].notna()) & (df["bytes_sent"].notna()) & (df["epoch_duration_ms"].notna())].copy()
+        if not goodput_data.empty and (goodput_data["bytes_received"].sum() > 0 or goodput_data["bytes_sent"].sum() > 0):
             has_meaningful_goodput_data = True
+            # Calculate throughput in Mbps
             goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
-            goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
+            goodput_data["sent_mbps"] = (goodput_data["bytes_sent"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
+
+            goodput_agg = goodput_data.groupby("epoch").agg({"goodput_mbps": "mean", "sent_mbps": "mean"}).reset_index()
 
             ax = plt.subplot(1, 1, 1)
+            # Plot sent throughput (total)
+            ax.plot(
+                goodput_agg["epoch"],
+                goodput_agg["sent_mbps"],
+                color=COLORS["bar_secondary"],
+                linewidth=2,
+                marker="s",
+                markersize=3,
+                label="Sent Throughput",
+                alpha=0.7,
+            )
+            # Plot received (goodput)
             ax.plot(
                 goodput_agg["epoch"],
                 goodput_agg["goodput_mbps"],
-                color="green",
-                linewidth=2,
+                color=COLORS["goodput"],
+                linewidth=2.5,
                 marker="o",
-                markersize=3,
+                markersize=4,
+                label="Goodput (Received)",
             )
             ax.fill_between(
                 goodput_agg["epoch"],
                 goodput_agg["goodput_mbps"],
                 alpha=0.3,
-                color="green",
+                color=COLORS["goodput"],
             )
-            ax.set_ylabel("Goodput [Mbps]")
+            ax.set_ylabel("Throughput [Mbps]")
             ax.set_xlabel("Epoch")
-            plt.title(f"Goodput (Effective Throughput) - {experiment_name}")
+            ax.legend()
+            plt.title(f"Throughput (Sent vs Goodput) - {experiment_name}")
 
     if not has_meaningful_goodput_data:
         ax = plt.gca()
@@ -472,6 +570,7 @@ def analyze_results(experiment_id):
             ha="center",
             va="center",
             fontsize=14,
+            color="#666666",
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -479,25 +578,30 @@ def analyze_results(experiment_id):
     plt.tight_layout()
     plt.savefig(analysis_dir / "goodput.png", dpi=150)
     plt.close()
-    print("  ✅ Generated goodput.png")
+    return "goodput.png"
 
-    # ==========================================================================
-    # 7. Traffic Volume
-    # ==========================================================================
-    # Always generate this plot
+
+def _generate_traffic_volume_plot(df, experiment_name, analysis_dir):
+    """Generate traffic volume plot."""
     plt.figure(figsize=(12, 6))
     has_meaningful_traffic_data = False
+
     if not df.empty and "bytes_sent" in df.columns:
         traffic_data = df[df["bytes_sent"].notna()].copy()
-        # Check if there's actual data (not all zeros)
         if not traffic_data.empty and traffic_data["bytes_sent"].sum() > 0:
             has_meaningful_traffic_data = True
-            # Aggregate total traffic per epoch
             traffic_agg = traffic_data.groupby("epoch").agg({"bytes_sent": "sum"}).reset_index()
             traffic_agg["sent_mb"] = traffic_agg["bytes_sent"] / (1024 * 1024)
 
             ax = plt.subplot(1, 1, 1)
-            ax.bar(traffic_agg["epoch"], traffic_agg["sent_mb"], color="teal", alpha=0.7)
+            ax.bar(
+                traffic_agg["epoch"],
+                traffic_agg["sent_mb"],
+                color=COLORS["traffic"],
+                alpha=0.8,
+                edgecolor=COLORS["traffic"],
+                linewidth=0.5,
+            )
             ax.set_ylabel("Sent Data [MB]")
             ax.set_xlabel("Epoch")
             plt.title(f"Traffic Volume - {experiment_name}")
@@ -511,6 +615,7 @@ def analyze_results(experiment_id):
             ha="center",
             va="center",
             fontsize=14,
+            color="#666666",
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -518,84 +623,102 @@ def analyze_results(experiment_id):
     plt.tight_layout()
     plt.savefig(analysis_dir / "traffic_volume.png", dpi=150)
     plt.close()
-    print("  ✅ Generated traffic_volume.png")
+    return "traffic_volume.png"
 
-    # ==========================================================================
-    # 8. Total Transfer Time (T_comm + T_comp)
-    # ==========================================================================
-    # Always generate this plot
-    plt.figure(figsize=(12, 6))
-    has_meaningful_compression_data = False
+
+def _generate_transfer_time_plot(df, experiment_name, analysis_dir):
+    """Generate total transfer time plot with compression time visibility."""
+
     if not df.empty and "compression_time_ms" in df.columns and "epoch_duration_ms" in df.columns:
         transfer_data = df[(df["compression_time_ms"].notna()) & (df["epoch_duration_ms"].notna())].copy()
-        # Check if there's actual compression data (not all zeros)
         if not transfer_data.empty and transfer_data["compression_time_ms"].sum() > 0:
-            has_meaningful_compression_data = True
-            transfer_data["total_transfer_s"] = transfer_data["epoch_duration_ms"] / 1000
-            transfer_data["compression_s"] = transfer_data["compression_time_ms"] / 1000
+            transfer_data["epoch_duration_s"] = transfer_data["epoch_duration_ms"] / 1000
+            transfer_data["compression_ms"] = transfer_data["compression_time_ms"]
 
-            transfer_agg = transfer_data.groupby("epoch").agg({"total_transfer_s": "mean", "compression_s": "mean"}).reset_index()
+            transfer_agg = transfer_data.groupby("epoch").agg({"epoch_duration_s": "mean", "compression_ms": "mean"}).reset_index()
 
-            ax = plt.subplot(1, 1, 1)
-            ax.bar(
+            # Create 2 subplots: epoch duration on top, compression time on bottom
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+            # Top: Epoch Duration
+            ax1.bar(
                 transfer_agg["epoch"],
-                transfer_agg["total_transfer_s"],
-                color="steelblue",
-                alpha=0.7,
+                transfer_agg["epoch_duration_s"],
+                color=COLORS["bar_primary"],
+                alpha=0.8,
                 label="Epoch Duration",
+                edgecolor=COLORS["bar_primary"],
+                linewidth=0.5,
             )
-            ax.bar(
+            ax1.set_ylabel("Epoch Duration [sec]")
+            ax1.legend(loc="upper right")
+            ax1.set_title(f"Total Transfer Time Breakdown - {experiment_name}")
+
+            # Bottom: Compression Time (in ms for visibility)
+            ax2.bar(
                 transfer_agg["epoch"],
-                transfer_agg["compression_s"],
-                color="coral",
+                transfer_agg["compression_ms"],
+                color=COLORS["bar_secondary"],
                 alpha=0.9,
                 label="Compression Time (T_comp)",
+                edgecolor=COLORS["bar_secondary"],
+                linewidth=0.5,
             )
-            ax.set_ylabel("Time [sec]")
-            ax.set_xlabel("Epoch")
-            ax.legend()
-            plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
+            ax2.set_ylabel("Compression Time [ms]")
+            ax2.set_xlabel("Epoch")
+            ax2.legend(loc="upper right")
 
-    if not has_meaningful_compression_data:
-        ax = plt.gca()
-        ax.text(
-            0.5,
-            0.5,
-            "Compression not enabled\n(compression_time_ms = 0)",
-            ha="center",
-            va="center",
-            fontsize=14,
-            transform=ax.transAxes,
-        )
-        ax.axis("off")
-        plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
+            plt.tight_layout()
+            plt.savefig(analysis_dir / "total_transfer_time.png", dpi=150)
+            plt.close()
+            return "total_transfer_time.png"
+
+    # No meaningful data case
+    plt.figure(figsize=(12, 6))
+    ax = plt.gca()
+    ax.text(
+        0.5,
+        0.5,
+        "Compression not enabled\n(compression_time_ms = 0)",
+        ha="center",
+        va="center",
+        fontsize=14,
+        color="#666666",
+        transform=ax.transAxes,
+    )
+    ax.axis("off")
+    plt.title(f"Total Transfer Time (T_comm + T_comp) - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "total_transfer_time.png", dpi=150)
     plt.close()
-    print("  ✅ Generated total_transfer_time.png")
+    return "total_transfer_time.png"
 
-    # ==========================================================================
-    # 9. CPU Usage
-    # ==========================================================================
+
+def _generate_cpu_usage_plot(resources_df, experiment_name, analysis_dir):
+    """Generate CPU usage plot."""
     plt.figure(figsize=(12, 6))
     if not resources_df.empty and "cpu_percent" in resources_df.columns:
+        num_nodes = resources_df["node"].nunique()
+        palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
         ax = sns.lineplot(
             data=resources_df,
             x="timestamp",
             y="cpu_percent",
             hue="node",
-            alpha=0.3,
+            alpha=0.4,
             legend=False,
-            palette="viridis",
+            palette=palette,
             estimator=None,
+            linewidth=1.2,
         )
         mean_cpu = resources_df.groupby("timestamp")["cpu_percent"].mean().reset_index()
         sns.lineplot(
             data=mean_cpu,
             x="timestamp",
             y="cpu_percent",
-            color="navy",
-            linewidth=2,
+            color=COLORS["mean_line"],
+            linewidth=2.5,
             label="Mean",
             ax=ax,
         )
@@ -612,90 +735,138 @@ def analyze_results(experiment_id):
             ha="center",
             va="center",
             fontsize=14,
+            color="#666666",
         )
         plt.title(f"CPU Usage - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "cpu_usage.png", dpi=150)
     plt.close()
-    print("  ✅ Generated cpu_usage.png")
+    return "cpu_usage.png"
 
-    # ==========================================================================
-    # 10. Target Accuracy Reached Time (Time-to-Accuracy)
-    # ==========================================================================
-    if not df.empty and "test_accuracy" in df.columns and "timestamp" in df.columns:
-        acc_data = df[df["test_accuracy"].notna()].copy()
-        if not acc_data.empty:
-            plt.figure(figsize=(12, 6))
 
-            # Calculate statistics per epoch
-            epoch_stats = acc_data.groupby("epoch").agg({"timestamp": "mean", "test_accuracy": ["mean", "std", "min", "max"]})
-            epoch_stats.columns = ["timestamp", "mean", "std", "min", "max"]
-            epoch_stats = epoch_stats.reset_index()
-            epoch_stats["std"] = epoch_stats["std"].fillna(0)
+def _generate_time_to_accuracy_plot(df, experiment_name, analysis_dir):
+    """Generate time-to-accuracy plot."""
+    if df.empty or "test_accuracy" not in df.columns or "timestamp" not in df.columns:
+        return None
 
-            ax = plt.gca()
+    acc_data = df[df["test_accuracy"].notna()].copy()
+    if acc_data.empty:
+        return None
 
-            # Plot confidence band (mean ± std)
-            ax.fill_between(
-                epoch_stats["timestamp"],
-                epoch_stats["mean"] - epoch_stats["std"],
-                epoch_stats["mean"] + epoch_stats["std"],
-                alpha=0.3,
-                color="steelblue",
-                label="Mean ± SD",
-            )
+    plt.figure(figsize=(12, 6))
+    epoch_stats = acc_data.groupby("epoch").agg({"timestamp": "mean", "test_accuracy": ["mean", "std", "min", "max"]})
+    epoch_stats.columns = ["timestamp", "mean", "std", "min", "max"]
+    epoch_stats = epoch_stats.reset_index()
+    epoch_stats["std"] = epoch_stats["std"].fillna(0)
 
-            # Plot mean line
-            ax.plot(
-                epoch_stats["timestamp"],
-                epoch_stats["mean"],
-                color="navy",
-                linewidth=2.5,
-                label="Mean",
-                marker="o",
-                markersize=3,
-            )
+    ax = plt.gca()
 
-            # Target line
-            ax.axhline(
-                y=TARGET_ACCURACY,
-                color="green",
-                linestyle="--",
-                linewidth=2,
-                label=f"Target ({TARGET_ACCURACY:.0%})",
-            )
+    ax.fill_between(
+        epoch_stats["timestamp"],
+        epoch_stats["mean"] - epoch_stats["std"],
+        epoch_stats["mean"] + epoch_stats["std"],
+        alpha=0.3,
+        color=COLORS["accuracy_fill"],
+        label="Mean ± SD",
+    )
 
-            # Find time to target (first epoch where mean exceeds target)
-            reached_epochs = epoch_stats[epoch_stats["mean"] >= TARGET_ACCURACY]
-            if not reached_epochs.empty:
-                first_reach = reached_epochs["timestamp"].iloc[0]
-                ax.axvline(
-                    x=first_reach,
-                    color="red",
-                    linestyle=":",
-                    linewidth=2,
-                    label=f"Target reached: {first_reach:.1f}s",
-                )
+    ax.plot(
+        epoch_stats["timestamp"],
+        epoch_stats["mean"],
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean",
+        marker="o",
+        markersize=3,
+    )
 
-            plt.title(f"Time-to-Accuracy (Target: {TARGET_ACCURACY:.0%}) - {experiment_name}")
-            plt.ylabel("Test Accuracy")
-            plt.xlabel("Elapsed Time [sec]")
-            plt.ylim(0, 1.05)
-            plt.legend(loc="lower right")
-            plt.tight_layout()
-            plt.savefig(analysis_dir / "time_to_accuracy.png", dpi=150)
-            plt.close()
-            print("  ✅ Generated time_to_accuracy.png")
+    ax.axhline(
+        y=TARGET_ACCURACY,
+        color=COLORS["target_line"],
+        linestyle="--",
+        linewidth=2,
+        label=f"Target ({TARGET_ACCURACY:.0%})",
+    )
 
-    # ==========================================================================
-    # Mean accuracy/loss plots
-    # ==========================================================================
+    reached_epochs = epoch_stats[epoch_stats["mean"] >= TARGET_ACCURACY]
+    if not reached_epochs.empty:
+        first_reach = reached_epochs["timestamp"].iloc[0]
+        ax.axvline(
+            x=first_reach,
+            color=COLORS["phase_line"],
+            linestyle=":",
+            linewidth=2,
+            label=f"Target reached: {first_reach:.1f}s",
+        )
+
+    plt.title(f"Time-to-Accuracy (Target: {TARGET_ACCURACY:.0%}) - {experiment_name}")
+    plt.ylabel("Test Accuracy")
+    plt.xlabel("Elapsed Time [sec]")
+    plt.ylim(0, 1.05)
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "time_to_accuracy.png", dpi=150)
+    plt.close()
+    return "time_to_accuracy.png"
+
+
+def _generate_accuracy_mean_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate accuracy mean plot with test accuracy emphasized."""
     acc_df = df.melt(
         id_vars=["epoch", "phase", "node"],
         value_vars=["train_accuracy", "test_accuracy"],
         var_name="metric",
         value_name="value",
     )
+
+    if acc_df.empty:
+        return None
+
+    # Filter out SSP interrupted rows
+    if "is_ssp_interrupted" in df.columns:
+        valid_epochs = df[~df["is_ssp_interrupted"]]["epoch"].unique()
+        acc_df = acc_df[acc_df["epoch"].isin(valid_epochs)]
+
+    plt.figure(figsize=(12, 6))
+
+    # Plot train accuracy first (background, thinner, more transparent)
+    train_data = acc_df[acc_df["metric"] == "train_accuracy"]
+    test_data = acc_df[acc_df["metric"] == "test_accuracy"]
+
+    ax = sns.lineplot(
+        data=train_data,
+        x="epoch",
+        y="value",
+        color=COLORS["accuracy_fill"],
+        linewidth=1.5,
+        alpha=0.5,
+        label="Train Accuracy",
+        errorbar="sd",
+    )
+    # Plot test accuracy (foreground, thicker, more prominent)
+    sns.lineplot(
+        data=test_data,
+        x="epoch",
+        y="value",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Test Accuracy",
+        errorbar="sd",
+        ax=ax,
+    )
+    add_phase_line_func(ax, df, "epoch", text_position="bottom")
+    plt.title(f"Accuracy over Epochs (Mean +/- SD) - {experiment_name}")
+    plt.ylabel("Accuracy")
+    plt.xlabel("Epoch")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "accuracy_mean.png", dpi=150)
+    plt.close()
+    return "accuracy_mean.png"
+
+
+def _generate_loss_mean_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate loss mean plot with test loss emphasized."""
     loss_df = df.melt(
         id_vars=["epoch", "phase", "node"],
         value_vars=["train_loss", "test_loss"],
@@ -703,126 +874,327 @@ def analyze_results(experiment_id):
         value_name="value",
     )
 
-    if not acc_df.empty:
-        plt.figure(figsize=(12, 6))
-        ax = sns.lineplot(
-            data=acc_df,
-            x="epoch",
-            y="value",
-            hue="metric",
-            markers=False,
-            dashes=False,
-            errorbar="sd",
-        )
-        add_phase_line(ax, "epoch", text_position="bottom")
-        plt.title(f"Accuracy over Epochs (Mean +/- SD) - {experiment_name}")
-        plt.ylabel("Accuracy")
-        plt.xlabel("Epoch")
-        plt.tight_layout()
-        plt.savefig(analysis_dir / "accuracy_mean.png", dpi=150)
-        plt.close()
-        print("  ✅ Generated accuracy_mean.png")
+    if loss_df.empty:
+        return None
 
-    if not loss_df.empty:
-        plt.figure(figsize=(12, 6))
-        ax = sns.lineplot(
-            data=loss_df,
-            x="epoch",
-            y="value",
-            hue="metric",
-            markers=False,
-            dashes=False,
-            errorbar="sd",
-        )
-        add_phase_line(ax, "epoch")
-        plt.title(f"Loss over Epochs (Mean +/- SD) - {experiment_name}")
-        plt.ylabel("Loss")
-        plt.xlabel("Epoch")
-        plt.tight_layout()
-        plt.savefig(analysis_dir / "loss_mean.png", dpi=150)
-        plt.close()
-        print("  ✅ Generated loss_mean.png")
+    # Filter out SSP interrupted rows
+    if "is_ssp_interrupted" in df.columns:
+        valid_epochs = df[~df["is_ssp_interrupted"]]["epoch"].unique()
+        loss_df = loss_df[loss_df["epoch"].isin(valid_epochs)]
 
-    # Node-wise plots
-    if not df.empty:
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_accuracy",
-            hue="node",
-            alpha=0.3,
-            legend=False,
-            palette="viridis",
-            estimator=None,
-        )
-        ax = sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_accuracy",
-            color="navy",
-            linewidth=2,
-            label="Mean",
-            errorbar=None,
-        )
-        add_phase_line(ax, "epoch", text_position="bottom")
-        plt.title(f"Node-wise Test Accuracy - {experiment_name}")
-        plt.ylabel("Test Accuracy")
-        plt.xlabel("Epoch")
-        plt.tight_layout()
-        plt.savefig(analysis_dir / "accuracy_nodes.png", dpi=150)
-        plt.close()
-        print("  ✅ Generated accuracy_nodes.png")
+    plt.figure(figsize=(12, 6))
 
-        plt.figure(figsize=(12, 6))
-        sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_loss",
-            hue="node",
-            alpha=0.3,
-            legend=False,
-            palette="viridis",
-            estimator=None,
-        )
-        ax = sns.lineplot(
-            data=df,
-            x="epoch",
-            y="test_loss",
-            color="navy",
-            linewidth=2,
-            label="Mean",
-            errorbar=None,
-        )
-        add_phase_line(ax, "epoch")
-        plt.title(f"Node-wise Test Loss - {experiment_name}")
-        plt.ylabel("Test Loss")
-        plt.xlabel("Epoch")
-        plt.tight_layout()
-        plt.savefig(analysis_dir / "loss_nodes.png", dpi=150)
-        plt.close()
-        print("  ✅ Generated loss_nodes.png")
+    # Plot train loss first (background, thinner, more transparent)
+    train_data = loss_df[loss_df["metric"] == "train_loss"]
+    test_data = loss_df[loss_df["metric"] == "test_loss"]
 
-    print(f"✨ Analysis complete. Results in: {analysis_dir}")
+    ax = sns.lineplot(
+        data=train_data,
+        x="epoch",
+        y="value",
+        color=COLORS["loss_fill"],
+        linewidth=1.5,
+        alpha=0.5,
+        label="Train Loss",
+        errorbar="sd",
+    )
+    # Plot test loss (foreground, thicker, more prominent)
+    sns.lineplot(
+        data=test_data,
+        x="epoch",
+        y="value",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Test Loss",
+        errorbar="sd",
+        ax=ax,
+    )
+    add_phase_line_func(ax, df, "epoch")
+    plt.title(f"Loss over Epochs (Mean +/- SD) - {experiment_name}")
+    plt.ylabel("Loss")
+    plt.xlabel("Epoch")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "loss_mean.png", dpi=150)
+    plt.close()
+    return "loss_mean.png"
+
+
+def _generate_accuracy_nodes_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate node-wise accuracy plot."""
+    if df.empty:
+        return None
+
+    # Filter out SSP interrupted rows
+    plot_df = df[df["test_accuracy"].notna()].copy()
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+    if plot_df.empty:
+        return None
+
+    plt.figure(figsize=(12, 6))
+    num_nodes = plot_df["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_accuracy",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        estimator=None,
+        linewidth=1.2,
+    )
+    ax = sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_accuracy",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean",
+        errorbar=None,
+    )
+    add_phase_line_func(ax, plot_df, "epoch", text_position="bottom")
+    plt.title(f"Node-wise Test Accuracy - {experiment_name}")
+    plt.ylabel("Test Accuracy")
+    plt.xlabel("Epoch")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "accuracy_nodes.png", dpi=150)
+    plt.close()
+    return "accuracy_nodes.png"
+
+
+def _generate_loss_nodes_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate node-wise loss plot."""
+    if df.empty:
+        return None
+
+    # Filter out SSP interrupted rows
+    plot_df = df[df["test_loss"].notna()].copy()
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+    if plot_df.empty:
+        return None
+
+    plt.figure(figsize=(12, 6))
+    num_nodes = plot_df["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_loss",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        estimator=None,
+        linewidth=1.2,
+    )
+    ax = sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="test_loss",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean",
+        errorbar=None,
+    )
+    add_phase_line_func(ax, plot_df, "epoch")
+    plt.title(f"Node-wise Test Loss - {experiment_name}")
+    plt.ylabel("Test Loss")
+    plt.xlabel("Epoch")
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "loss_nodes.png", dpi=150)
+    plt.close()
+    return "loss_nodes.png"
+
+
+def analyze_results(experiment_id):
+    """Analyze collected results and generate plots in parallel."""
+    print(f"📊 Analyzing results for: {experiment_id}")
+
+    exp_dir = RESULTS_DIR / experiment_id
+    analysis_dir = exp_dir / "analysis"
+    analysis_dir.mkdir(exist_ok=True)
+
+    # Extract experiment name without timestamp
+    timestamp_pattern = r"-\d{8}T\d{6}$"
+    experiment_name = re.sub(timestamp_pattern, "", experiment_id)
+
+    # Load data
+    df, resources_df = _load_metrics_and_resources(exp_dir)
+
+    if df.empty:
+        print("⚠️  No metrics data found.")
+        return
+
+    # Set theme
+    sns.set_theme(style="darkgrid")
+
+    # Helper to add phase switch line
+    def add_phase_line(ax, data, x_col="epoch", text_position="top"):
+        # Filter out SSP interrupted rows for accurate phase detection
+        clean_data = data.copy()
+        if "is_ssp_interrupted" in clean_data.columns:
+            clean_data = clean_data[~clean_data["is_ssp_interrupted"]]
+
+        wafl_data = clean_data[clean_data["phase"] == "WAFL"]
+        if wafl_data.empty:
+            return
+
+        wafl_start = wafl_data[x_col].min()
+        if pd.isna(wafl_start):
+            return
+
+        ax.axvline(
+            x=wafl_start,
+            color=COLORS["phase_line"],
+            linestyle="--",
+            alpha=0.7,
+            linewidth=1.5,
+        )
+        y_min, y_max = ax.get_ylim()
+        if text_position == "top":
+            y_pos = y_max * 0.95
+            va = "top"
+        else:
+            y_pos = y_min + (y_max - y_min) * 0.05
+            va = "bottom"
+        ax.text(
+            wafl_start,
+            y_pos,
+            " Phase Switch",
+            color=COLORS["phase_line"],
+            va=va,
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    # Define all plot generation tasks
+    plot_tasks = [
+        (
+            "accuracy.png",
+            lambda: _generate_accuracy_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "epoch_duration.png",
+            lambda: _generate_epoch_duration_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "idle_time_ratio.png",
+            lambda: _generate_idle_time_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "wasted_computation.png",
+            lambda: _generate_wasted_computation_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "survival_rate.png",
+            lambda: _generate_survival_rate_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "goodput.png",
+            lambda: _generate_goodput_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "traffic_volume.png",
+            lambda: _generate_traffic_volume_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "total_transfer_time.png",
+            lambda: _generate_transfer_time_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "cpu_usage.png",
+            lambda: _generate_cpu_usage_plot(resources_df, experiment_name, analysis_dir),
+        ),
+        (
+            "time_to_accuracy.png",
+            lambda: _generate_time_to_accuracy_plot(df, experiment_name, analysis_dir),
+        ),
+        (
+            "accuracy_mean.png",
+            lambda: _generate_accuracy_mean_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "loss_mean.png",
+            lambda: _generate_loss_mean_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "accuracy_nodes.png",
+            lambda: _generate_accuracy_nodes_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "loss_nodes.png",
+            lambda: _generate_loss_nodes_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+    ]
+
+    # Execute plot generation sequentially
+    generated_plots = []
+    for task_name, task_func in plot_tasks:
+        try:
+            result = task_func()
+            if result:
+                generated_plots.append(result)
+                print(f"  ✅ Generated {result}")
+        except Exception as e:
+            print(f"  ❌ Failed to generate {task_name}: {e}")
+
+    print(f"✨ Analysis complete. {len(generated_plots)} plots generated in: {analysis_dir}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Collect and analyze WAFL results")
     parser.add_argument("--id", help="Experiment ID (default: latest)")
     parser.add_argument("--skip-collect", action="store_true", help="Skip collection, only analyze")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Analyze all experiments without 'analysis' folder",
+    )
     args = parser.parse_args()
 
     config = load_config()
 
-    exp_id = args.id or get_latest_experiment_id()
-    if not exp_id:
-        print("❌ No experiment ID found.")
-        sys.exit(1)
+    if args.all:
+        # Find all experiments without analysis folder
+        experiments = get_experiments_without_analysis()
+        if not experiments:
+            print("✅ All experiments already have analysis folders.")
+            return
 
-    if not args.skip_collect:
-        collect_results(exp_id, config)
+        print(f"📋 Found {len(experiments)} experiments without analysis folder:")
+        for exp_id in experiments:
+            print(f"   - {exp_id}")
+        print()
 
-    analyze_results(exp_id)
+        # Process each experiment
+        for i, exp_id in enumerate(experiments):
+            print(f"\n{'=' * 60}")
+            print(f"[{i + 1}/{len(experiments)}] Processing: {exp_id}")
+            print(f"{'=' * 60}")
+
+            if not args.skip_collect:
+                collect_results(exp_id, config)
+
+            analyze_results(exp_id)
+
+        print(f"\n🎉 All {len(experiments)} experiments processed!")
+    else:
+        # Single experiment mode
+        exp_id = args.id or get_latest_experiment_id()
+        if not exp_id:
+            print("❌ No experiment ID found.")
+            sys.exit(1)
+
+        if not args.skip_collect:
+            collect_results(exp_id, config)
+
+        analyze_results(exp_id)
 
 
 if __name__ == "__main__":

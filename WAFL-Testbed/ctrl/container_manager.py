@@ -128,7 +128,8 @@ class ContainerManager:
         host_p2p = node_info.get("host_port_p2p", 10002)
         cont_p2p = 10002
 
-        ports = f"-p {host_ctrl}:{cont_ctrl} -p {host_p2p}:{cont_p2p}"
+        # TCP ports for control and P2P, plus UDP for P2P (for FEC-based model sharing)
+        ports = f"-p {host_ctrl}:{cont_ctrl} -p {host_p2p}:{cont_p2p} -p {host_p2p}:{cont_p2p}/udp"
 
         # Mounts
         target_path = f"{self.deployment_location}/{self.project_name}"

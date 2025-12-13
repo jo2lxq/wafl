@@ -1,10 +1,10 @@
 {
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - UDP + FEC (M=4, Redundancy 20%)",
+  "experiment_name": "_debug",
   "epochs": {
-    "self": 64,
+    "self": 8,
     "wafl": 512
   },
-  "contact_pattern": "sumo/contact_pattern_mobility.json",
+  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -15,21 +15,23 @@
     "enabled": false
   },
   "mobility_aware": {
-    "enabled": true,
-    "contact_pattern_file": "sumo/contact_pattern_mobility.json",
-    "network_conditions_file": "sumo/network_conditions_mobility.json",
+    "enabled": false,
+    "contact_pattern_file": "sumo_real/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo_real/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
   "method": {
     "ssp": {
-      "enabled": false
+      "enabled": true,
+      "ssp_threshold": 0.8
     },
     "udp": {
       "enabled": true,
-      "fec_m": 4
+      "fec_m": 16
     },
     "compression": {
-      "enabled": false
+      "enabled": true,
+      "initial_method": "zlib"
     }
   }
 }

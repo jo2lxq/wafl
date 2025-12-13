@@ -678,7 +678,7 @@ class ModelSharingUtils:
 
         # Compression metrics
         if self.compression_manager is not None:
-            comp_stats = self.compression_manager.get_last_compression_stats()
+            comp_stats = self.compression_manager.get_epoch_stats()
             metrics.update(
                 {
                     "compression_method": self.compression_manager.method,
@@ -727,6 +727,9 @@ class ModelSharingUtils:
                 "bytes_sent": 0,
                 "bytes_received": 0,
             }
+        # Reset compression stats if enabled
+        if self.compression_manager is not None:
+            self.compression_manager.reset_epoch_stats()
 
 
 class CTRL_TCP:
@@ -1124,21 +1127,28 @@ class CTRL_TCP:
 
                     # Log detailed wasted computation metrics
                     if wasted_metrics:
-                        self.metrics_logger.log(
-                            "ssp_force_next",
-                            epoch=self.current_epoch_number,
-                            phase=self.current_epoch_type,
+                        epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
+                        phase = self.current_epoch_type or "UNKNOWN"
+                        self.metrics_logger.log_ssp_metrics(
+                            phase=phase,
+                            epoch=epoch_num,
                             wasted_ms=wasted_metrics.get("wasted_ms", 0.0),
                             wasted_norm=wasted_metrics.get("wasted_norm", 0.0),
                             batches_processed=wasted_metrics.get("batches_processed", 0),
+                            was_force_stopped=True,
                         )
                         self.logger.info(f"📊 SSP Metrics: wasted_ms={wasted_metrics['wasted_ms']:.2f}, wasted_norm={wasted_metrics['wasted_norm']:.6f}, batches={wasted_metrics['batches_processed']}")
                     else:
                         # Fallback logging if metrics not available
-                        self.metrics_logger.log(
-                            "ssp_force_next",
-                            epoch=self.current_epoch_number,
-                            phase=self.current_epoch_type,
+                        epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
+                        phase = self.current_epoch_type or "UNKNOWN"
+                        self.metrics_logger.log_ssp_metrics(
+                            phase=phase,
+                            epoch=epoch_num,
+                            wasted_ms=0.0,
+                            wasted_norm=0.0,
+                            batches_processed=0,
+                            was_force_stopped=True,
                         )
 
                 conn.sendall("OK\r\n".encode("utf-8"))

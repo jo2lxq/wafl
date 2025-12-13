@@ -138,6 +138,7 @@ def deploy_to_node(node, deployment_location, user):
         "wafl",
         "data",
         "utils",
+        "ctrl",
     ]
 
     # Collect existing source paths
