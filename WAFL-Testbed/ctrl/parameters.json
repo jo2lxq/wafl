@@ -1,8 +1,8 @@
 {
   "experiment_name": "test",
   "epochs": {
-    "self": 64,
-    "wafl": 1024
+    "self": 8,
+    "wafl": 8
   },
   "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
   "wafl_phase": {

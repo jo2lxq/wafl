@@ -54,6 +54,40 @@ def get_parameter_files(parameters_dir: Path, pattern: Optional[str] = None) -> 
     return files
 
 
+def get_existing_experiments(results_dir: Path) -> set:
+    """
+    Get set of experiment names that already have results.
+
+    Result folder names follow the pattern: {experiment_name}-{timestamp}
+    This function extracts experiment names by removing the timestamp suffix.
+
+    Args:
+        results_dir: Path to the results directory
+
+    Returns:
+        Set of experiment names that have existing results
+    """
+    existing = set()
+
+    if not results_dir.exists():
+        return existing
+
+    for folder in results_dir.iterdir():
+        if folder.is_dir():
+            # Folder name format: experiment_name-YYYYMMDDTHHmmss
+            # Extract experiment name by removing the timestamp suffix
+            folder_name = folder.name
+            # Check if it ends with a timestamp pattern (e.g., -20251215T214815)
+            if len(folder_name) > 16 and folder_name[-15] == "-" and folder_name[-14:].replace("T", "").isdigit():
+                experiment_name = folder_name[:-16]  # Remove -YYYYMMDDTHHmmss
+                existing.add(experiment_name)
+            else:
+                # If no timestamp pattern, use the full folder name
+                existing.add(folder_name)
+
+    return existing
+
+
 def load_json(file_path: Path) -> dict:
     """Load JSON file and return as dictionary."""
     with open(file_path, "r", encoding="utf-8") as f:
@@ -84,8 +118,10 @@ def run_experiment(
     param_file: Path,
     parameters_json: Path,
     execution_config: Path,
+    existing_experiments: set,
     dry_run: bool = False,
-) -> bool:
+    force: bool = False,
+) -> str:
     """
     Run a single experiment.
 
@@ -93,17 +129,19 @@ def run_experiment(
         param_file: Path to the parameter file
         parameters_json: Path to ctrl/parameters.json
         execution_config: Path to ctrl/execution_config.json
+        existing_experiments: Set of experiment names that already have results
         dry_run: If True, don't actually run the experiment
+        force: If True, run even if results already exist
 
     Returns:
-        True if successful, False otherwise
+        'success', 'failed', or 'skipped'
     """
     # Load parameter file
     try:
         params = load_json(param_file)
     except Exception as e:
         print(f"❌ Failed to load {param_file.name}: {e}")
-        return False
+        return "failed"
 
     experiment_name = params.get("experiment_name", param_file.stem)
 
@@ -112,9 +150,15 @@ def run_experiment(
     print(f"📝 Name: {experiment_name}")
     print(f"{'=' * 60}")
 
+    # Check if experiment results already exist
+    if experiment_name in existing_experiments and not force:
+        print(f"⏭️  [SKIPPED] Results already exist for '{experiment_name}'")
+        print("   Use --force to run anyway")
+        return "skipped"
+
     if dry_run:
         print("🔸 [DRY-RUN] Would execute this experiment")
-        return True
+        return "success"
 
     try:
         # Step 1: Copy parameter file to parameters.json
@@ -138,17 +182,17 @@ def run_experiment(
 
         if result.returncode == 0:
             print(f"✅ Experiment completed successfully: {param_file.name}")
-            return True
+            return "success"
         else:
             print(f"❌ Experiment failed with return code {result.returncode}: {param_file.name}")
-            return False
+            return "failed"
 
     except KeyboardInterrupt:
         print("\n⚠️  Experiment interrupted by user")
         raise
     except Exception as e:
         print(f"❌ Error running experiment: {e}")
-        return False
+        return "failed"
 
 
 def list_experiments(files: List[Path]) -> None:
@@ -197,6 +241,11 @@ def main():
         action="store_true",
         help="Show what would be executed without actually running",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run experiments even if results already exist",
+    )
 
     args = parser.parse_args()
 
@@ -230,31 +279,41 @@ def main():
         list_experiments(files)
         sys.exit(0)
 
+    # Get existing experiment results
+    project_root = ctrl_dir.parent
+    results_dir = project_root / "results"
+    existing_experiments = get_existing_experiments(results_dir)
+
+    if existing_experiments:
+        print(f"\n📂 Found {len(existing_experiments)} existing experiment result(s) in results/")
+
     # Run experiments
     print("\n🔬 WAFL Batch Experiment Runner")
     print(f"📅 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📁 Found {len(files)} experiment(s) to run")
+    print(f"📁 Found {len(files)} experiment(s) to process")
 
     if args.dry_run:
         print("🔸 Running in DRY-RUN mode (no actual execution)")
 
-    results = {"success": [], "failed": []}
+    if args.force:
+        print("⚠️  Running in FORCE mode (ignoring existing results)")
+
+    results = {"success": [], "failed": [], "skipped": []}
 
     try:
         for i, param_file in enumerate(files, 1):
             print(f"\n[{i}/{len(files)}] Processing {param_file.name}...")
 
-            success = run_experiment(
+            result = run_experiment(
                 param_file,
                 parameters_json,
                 execution_config,
+                existing_experiments,
                 dry_run=args.dry_run,
+                force=args.force,
             )
 
-            if success:
-                results["success"].append(param_file.name)
-            else:
-                results["failed"].append(param_file.name)
+            results[result].append(param_file.name)
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Batch execution interrupted by user")
@@ -265,6 +324,9 @@ def main():
     print(f"{'=' * 60}")
     print(f"✅ Successful: {len(results['success'])}")
     for name in results["success"]:
+        print(f"   • {name}")
+    print(f"⏭️  Skipped: {len(results['skipped'])}")
+    for name in results["skipped"]:
         print(f"   • {name}")
     print(f"❌ Failed: {len(results['failed'])}")
     for name in results["failed"]:

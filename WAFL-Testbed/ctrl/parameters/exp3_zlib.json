@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 3: Communication and Computation Trade-off Optimization - zlib Fixed",
   "epochs": {
     "self": 64,
-    "wafl": 1024
+    "wafl": 512
   },
   "contact_pattern": "sumo_real/contact_pattern_mobility.json",
   "wafl_phase": {

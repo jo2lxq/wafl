@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 1: Synchronous Scalability Verification - Baseline (Strict Sync, p=1.0)",
   "epochs": {
     "self": 64,
-    "wafl": 1024
+    "wafl": 256
   },
   "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
   "wafl_phase": {

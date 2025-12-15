@@ -1141,11 +1141,20 @@ class ControlServer:
         agent_status = {agent.name: "IDLE" for agent in self.agents}
         epochs_completed = {agent.name: 0 for agent in self.agents}
 
+        # Track retry state for stalled agents
+        last_status_success = {agent.name: time.time() for agent in self.agents}
+        consecutive_errors = {agent.name: 0 for agent in self.agents}
+        MAX_CONSECUTIVE_ERRORS = 5  # Log warning after this many consecutive errors
+        STALL_WARNING_INTERVAL = 60.0  # Warn about stalled agents every 60 seconds
+
         start_time = time.time()
         last_progress_log = 0
         last_epoch_logged = -1
+        last_stall_warning = 0
 
         while True:
+            current_time = time.time()
+
             # Check epoch progress
             min_epoch = min(epochs_completed.values())
             max_epoch = max(epochs_completed.values())
@@ -1238,24 +1247,30 @@ class ControlServer:
                         if success is not None:
                             if success:
                                 agent_status[agent_name] = "RUNNING"
+                                last_status_success[agent_name] = current_time
+                                consecutive_errors[agent_name] = 0
                             else:
                                 self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent_name}, retrying...")
 
             # ========== Poll agent status (PARALLEL) ==========
+            # Poll RUNNING agents, and also retry agents that haven't responded recently
             def poll_agent_status(agent):
                 """Poll status for a single agent."""
                 if agent_status[agent.name] != "RUNNING":
-                    return (agent.name, None, None, [])
+                    return (agent.name, None, None, [], False)
                 status, logs = agent.get_status()
-                return (agent.name, status, logs, [])
+                # Check if this was a communication error
+                is_comm_error = status is not None and status.startswith("ERROR_COMM")
+                return (agent.name, status, logs, [], is_comm_error)
 
+            # Include agents that are RUNNING
             running_agents = [a for a in self.agents if agent_status[a.name] == "RUNNING"]
 
             if running_agents:
                 with ThreadPoolExecutor(max_workers=len(running_agents)) as executor:
                     futures = {executor.submit(poll_agent_status, agent): agent for agent in running_agents}
                     for future in as_completed(futures):
-                        agent_name, status, logs, _ = future.result()
+                        agent_name, status, logs, _, is_comm_error = future.result()
                         if status is None:
                             continue
 
@@ -1264,10 +1279,29 @@ class ControlServer:
                                 if log_line.strip():
                                     self.logger.debug(f"[{agent_name}] {log_line}")
 
-                        if "ERROR" in status:
+                        # Handle communication errors - keep agent as RUNNING and retry later
+                        if is_comm_error:
+                            consecutive_errors[agent_name] += 1
+                            time_since_success = current_time - last_status_success[agent_name]
+
+                            if consecutive_errors[agent_name] >= MAX_CONSECUTIVE_ERRORS:
+                                self.logger.warning(f"⚠️ Agent {agent_name}: {consecutive_errors[agent_name]} consecutive comm errors (last success {time_since_success:.1f}s ago), will retry...")
+                            else:
+                                self.logger.debug(f"Agent {agent_name}: comm error #{consecutive_errors[agent_name]}, will retry")
+                            # Keep agent in RUNNING state to retry on next poll
+                            continue
+
+                        # Check for application-level errors (not comm errors)
+                        if status.startswith("ERROR") and not is_comm_error:
                             self.logger.error(f"❌ Agent {agent_name} encountered error: {status}")
                             agent_status[agent_name] = "ERROR"
-                        elif status.startswith("DONE"):
+                            continue
+
+                        # Successful status response - reset error counters
+                        last_status_success[agent_name] = current_time
+                        consecutive_errors[agent_name] = 0
+
+                        if status.startswith("DONE"):
                             try:
                                 parts = status.split("-")
                                 if len(parts) >= 3:
@@ -1279,13 +1313,31 @@ class ControlServer:
                             except Exception as e:
                                 self.logger.error(f"Error parsing status {status}: {e}")
 
+            # ========== Warn about stalled agents periodically ==========
+            elapsed_time = current_time - start_time
+            if elapsed_time - last_stall_warning >= STALL_WARNING_INTERVAL:
+                stalled_agents = []
+                for agent in self.agents:
+                    if agent_status[agent.name] == "RUNNING":
+                        time_since_success = current_time - last_status_success[agent.name]
+                        if time_since_success > STALL_WARNING_INTERVAL:
+                            stalled_agents.append(f"{agent.name} (no response for {time_since_success:.1f}s, epoch {epochs_completed[agent.name]})")
+
+                if stalled_agents:
+                    self.logger.warning(f"⏳ Agents not responding (will keep retrying): {', '.join(stalled_agents)}")
+                last_stall_warning = elapsed_time
+
             # Progress logging every 30 seconds
-            elapsed_time = time.time() - start_time
             if elapsed_time - last_progress_log >= 30:
+                # Count agents by status for detailed progress
+                running_count = sum(1 for s in agent_status.values() if s == "RUNNING")
+                idle_count = sum(1 for s in agent_status.values() if s == "IDLE")
+                error_count = sum(1 for s in agent_status.values() if s == "ERROR")
+
                 if ssp_enabled:
-                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%})")
+                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
                 else:
-                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync)")
+                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
                 last_progress_log = elapsed_time
 
             time.sleep(0.5)
