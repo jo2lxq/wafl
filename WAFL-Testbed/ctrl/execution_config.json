@@ -1,7 +1,7 @@
 {
   "deployment_location": "/home/denjo/workspace/ktakahashi",
   "user": "denjo",
-  "experiment_name": "_debug",
+  "experiment_name": "test",
   "log_level": "debug",
   "nodes": [
     {
@@ -9,70 +9,80 @@
       "physical_ip": "192.168.11.100",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 1
     },
     {
       "name": 1,
       "physical_ip": "192.168.11.101",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 1
     },
     {
       "name": 2,
       "physical_ip": "192.168.11.102",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 1
     },
     {
       "name": 3,
       "physical_ip": "192.168.11.103",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 1
     },
     {
       "name": 4,
       "physical_ip": "192.168.11.104",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 1
     },
     {
       "name": 5,
       "physical_ip": "192.168.11.105",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 2
     },
     {
       "name": 6,
       "physical_ip": "192.168.11.106",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 2
     },
     {
       "name": 7,
       "physical_ip": "192.168.11.107",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 2
     },
     {
       "name": 8,
       "physical_ip": "192.168.11.108",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 2
     },
     {
       "name": 9,
       "physical_ip": "192.168.11.109",
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "host_port_p2p": 10002,
+      "cpu_limit": 2
     },
     {
       "name": 10,

@@ -1,8 +1,8 @@
 {
-  "experiment_name": "_debug",
+  "experiment_name": "test",
   "epochs": {
-    "self": 8,
-    "wafl": 512
+    "self": 64,
+    "wafl": 1024
   },
   "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
   "wafl_phase": {
@@ -15,23 +15,18 @@
     "enabled": false
   },
   "mobility_aware": {
-    "enabled": false,
-    "contact_pattern_file": "sumo_real/contact_pattern_mobility.json",
-    "network_conditions_file": "sumo_real/network_conditions_mobility.json",
-    "path_loss_model_file": "sumo/path_loss_model.json"
+    "enabled": false
   },
   "method": {
     "ssp": {
       "enabled": true,
-      "ssp_threshold": 0.8
+      "ssp_threshold": 0.6
     },
     "udp": {
-      "enabled": true,
-      "fec_m": 16
+      "enabled": false
     },
     "compression": {
-      "enabled": true,
-      "initial_method": "zlib"
+      "enabled": false
     }
   }
 }

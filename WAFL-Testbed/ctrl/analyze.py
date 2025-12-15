@@ -1147,6 +1147,373 @@ def analyze_results(experiment_id):
     print(f"✨ Analysis complete. {len(generated_plots)} plots generated in: {analysis_dir}")
 
 
+# =============================================================================
+# Cross-Experiment Comparison Functions
+# =============================================================================
+
+
+def _get_experiment_groups():
+    """Group experiments by 'Experiment X:' pattern."""
+    if not RESULTS_DIR.exists():
+        return {}
+
+    groups = {}
+    for d in RESULTS_DIR.iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            # Extract experiment group pattern like "Experiment 1:" or "Experiment 2:"
+            match = re.match(r"^(Experiment \d+:)", d.name)
+            if match:
+                group_name = match.group(1).strip(":")
+                if group_name not in groups:
+                    groups[group_name] = []
+                groups[group_name].append(d.name)
+
+    # Sort experiments within each group
+    for group in groups:
+        groups[group].sort()
+
+    return groups
+
+
+def _load_experiment_data(experiment_id):
+    """Load metrics data for an experiment."""
+    exp_dir = RESULTS_DIR / experiment_id
+    df, _ = _load_metrics_and_resources(exp_dir)
+    return df
+
+
+def _get_short_name(experiment_id):
+    """Extract short name from experiment ID for legend."""
+    # Remove "Experiment X: Title - " and timestamp
+    match = re.match(r"^Experiment \d+: [^-]+ - (.+)-\d{8}T\d{6}$", experiment_id)
+    if match:
+        return match.group(1)
+    # Fallback: remove timestamp
+    return re.sub(r"-\d{8}T\d{6}$", "", experiment_id)
+
+
+def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
+    """Generate accuracy comparison plot."""
+    plt.figure(figsize=(14, 7))
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "test_accuracy" not in df.columns:
+            continue
+
+        plot_df = df[df["test_accuracy"].notna()].copy()
+        if "is_ssp_interrupted" in plot_df.columns:
+            plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+        if plot_df.empty:
+            continue
+
+        acc_mean = plot_df.groupby("epoch")["test_accuracy"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            acc_mean["epoch"],
+            acc_mean["test_accuracy"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+            marker="o",
+            markersize=3,
+        )
+
+    plt.title(f"Test Accuracy Comparison - {group_name}")
+    plt.ylabel("Test Accuracy")
+    plt.xlabel("Epoch")
+    plt.legend(loc="lower right")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "accuracy_comparison.png", dpi=150)
+    plt.close()
+    return "accuracy_comparison.png"
+
+
+def _generate_loss_comparison(experiments_data, group_name, output_dir):
+    """Generate loss comparison plot."""
+    plt.figure(figsize=(14, 7))
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "test_loss" not in df.columns:
+            continue
+
+        plot_df = df[df["test_loss"].notna()].copy()
+        if "is_ssp_interrupted" in plot_df.columns:
+            plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+        if plot_df.empty:
+            continue
+
+        loss_mean = plot_df.groupby("epoch")["test_loss"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            loss_mean["epoch"],
+            loss_mean["test_loss"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+            marker="o",
+            markersize=3,
+        )
+
+    plt.title(f"Test Loss Comparison - {group_name}")
+    plt.ylabel("Test Loss")
+    plt.xlabel("Epoch")
+    plt.legend(loc="upper right")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "loss_comparison.png", dpi=150)
+    plt.close()
+    return "loss_comparison.png"
+
+
+def _generate_duration_comparison(experiments_data, group_name, output_dir):
+    """Generate epoch duration comparison plot."""
+    plt.figure(figsize=(14, 7))
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "epoch_duration_ms" not in df.columns:
+            continue
+
+        plot_df = df[df["epoch_duration_ms"].notna()].copy()
+        if plot_df.empty:
+            continue
+
+        dur_mean = plot_df.groupby("epoch")["epoch_duration_ms"].mean().reset_index()
+        dur_mean["duration_s"] = dur_mean["epoch_duration_ms"] / 1000
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            dur_mean["epoch"],
+            dur_mean["duration_s"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+            marker="o",
+            markersize=3,
+        )
+
+    plt.title(f"Epoch Duration Comparison - {group_name}")
+    plt.ylabel("Duration [sec]")
+    plt.xlabel("Epoch")
+    plt.legend(loc="upper right")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "epoch_duration_comparison.png", dpi=150)
+    plt.close()
+    return "epoch_duration_comparison.png"
+
+
+def _generate_time_to_accuracy_comparison(experiments_data, group_name, output_dir):
+    """Generate time-to-accuracy bar chart comparison."""
+    tta_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "test_accuracy" not in df.columns or "timestamp" not in df.columns:
+            continue
+
+        plot_df = df[df["test_accuracy"].notna()].copy()
+        if "is_ssp_interrupted" in plot_df.columns:
+            plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+        if plot_df.empty:
+            continue
+
+        epoch_stats = plot_df.groupby("epoch").agg({"test_accuracy": "mean", "timestamp": "max"}).reset_index()
+        epoch_stats.columns = ["epoch", "mean", "timestamp"]
+
+        reached = epoch_stats[epoch_stats["mean"] >= TARGET_ACCURACY]
+        if not reached.empty:
+            tta = reached["timestamp"].iloc[0]
+        else:
+            tta = epoch_stats["timestamp"].max()
+
+        tta_data.append(
+            {
+                "experiment": _get_short_name(exp_id),
+                "time_to_accuracy": tta,
+                "reached": not reached.empty,
+            }
+        )
+
+    if not tta_data:
+        return None
+
+    tta_df = pd.DataFrame(tta_data)
+
+    plt.figure(figsize=(12, 6))
+    colors = [COLORS["goodput"] if r else COLORS["loss_fill"] for r in tta_df["reached"]]
+    bars = plt.bar(tta_df["experiment"], tta_df["time_to_accuracy"], color=colors, alpha=0.8)
+
+    for bar, reached in zip(bars, tta_df["reached"]):
+        height = bar.get_height()
+        suffix = "" if reached else " (not reached)"
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f"{height:.1f}s{suffix}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.title(f"Time to {TARGET_ACCURACY:.0%} Accuracy - {group_name}")
+    plt.ylabel("Time [sec]")
+    plt.xlabel("Experiment")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "time_to_accuracy_comparison.png", dpi=150)
+    plt.close()
+    return "time_to_accuracy_comparison.png"
+
+
+def _generate_survival_rate_comparison(experiments_data, group_name, output_dir):
+    """Generate survival rate comparison plot."""
+    plt.figure(figsize=(14, 7))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "survival_rate" not in df.columns:
+            continue
+
+        plot_df = df[df["survival_rate"].notna()].copy()
+        if plot_df.empty or (plot_df["survival_rate"] == 1.0).all():
+            continue
+
+        has_data = True
+        sr_mean = plot_df.groupby("epoch")["survival_rate"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            sr_mean["epoch"],
+            sr_mean["survival_rate"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+            marker="o",
+            markersize=3,
+        )
+
+    if not has_data:
+        plt.close()
+        return None
+
+    plt.title(f"Survival Rate Comparison (UDP/FEC) - {group_name}")
+    plt.ylabel("Survival Rate")
+    plt.xlabel("Epoch")
+    plt.ylim(0, 1.05)
+    plt.legend(loc="lower right")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "survival_rate_comparison.png", dpi=150)
+    plt.close()
+    return "survival_rate_comparison.png"
+
+
+def _generate_throughput_comparison(experiments_data, group_name, output_dir):
+    """Generate throughput comparison plot."""
+    plt.figure(figsize=(14, 7))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "bytes_received" not in df.columns or "epoch_duration_ms" not in df.columns:
+            continue
+
+        plot_df = df[(df["bytes_received"].notna()) & (df["epoch_duration_ms"].notna())].copy()
+        if plot_df.empty or plot_df["bytes_received"].sum() == 0:
+            continue
+
+        has_data = True
+        plot_df["throughput_mbps"] = (plot_df["bytes_received"] * 8 / 1e6) / (plot_df["epoch_duration_ms"] / 1000)
+        tp_mean = plot_df.groupby("epoch")["throughput_mbps"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            tp_mean["epoch"],
+            tp_mean["throughput_mbps"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+            marker="o",
+            markersize=3,
+        )
+
+    if not has_data:
+        plt.close()
+        return None
+
+    plt.title(f"Throughput Comparison - {group_name}")
+    plt.ylabel("Throughput [Mbps]")
+    plt.xlabel("Epoch")
+    plt.legend(loc="upper right")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "throughput_comparison.png", dpi=150)
+    plt.close()
+    return "throughput_comparison.png"
+
+
+def compare_experiments():
+    """Compare experiments grouped by 'Experiment X:' pattern."""
+    groups = _get_experiment_groups()
+
+    if not groups:
+        print("❌ No experiment groups found matching 'Experiment X:' pattern.")
+        return
+
+    print(f"📊 Found {len(groups)} experiment groups:")
+    for group_name, experiments in groups.items():
+        print(f"   {group_name}: {len(experiments)} experiments")
+
+    comparison_dir = RESULTS_DIR / ".comparison"
+    comparison_dir.mkdir(exist_ok=True)
+
+    for group_name, experiment_ids in groups.items():
+        print(f"\n{'=' * 60}")
+        print(f"Comparing: {group_name} ({len(experiment_ids)} experiments)")
+        print(f"{'=' * 60}")
+
+        group_dir = comparison_dir / group_name.replace(" ", "_").replace(":", "")
+        group_dir.mkdir(exist_ok=True)
+
+        experiments_data = {}
+        for exp_id in experiment_ids:
+            print(f"  📂 Loading: {_get_short_name(exp_id)}")
+            df = _load_experiment_data(exp_id)
+            if not df.empty:
+                experiments_data[exp_id] = df
+
+        if len(experiments_data) < 2:
+            print("  ⚠️ Need at least 2 experiments for comparison, skipping.")
+            continue
+
+        plots = [
+            ("accuracy_comparison.png", _generate_accuracy_comparison),
+            ("loss_comparison.png", _generate_loss_comparison),
+            ("epoch_duration_comparison.png", _generate_duration_comparison),
+            ("time_to_accuracy_comparison.png", _generate_time_to_accuracy_comparison),
+            ("survival_rate_comparison.png", _generate_survival_rate_comparison),
+            ("throughput_comparison.png", _generate_throughput_comparison),
+        ]
+
+        generated = []
+        for plot_name, plot_func in plots:
+            try:
+                result = plot_func(experiments_data, group_name, group_dir)
+                if result:
+                    generated.append(result)
+                    print(f"  ✅ Generated {result}")
+            except Exception as e:
+                print(f"  ❌ Failed to generate {plot_name}: {e}")
+
+        print(f"  📈 {len(generated)} comparison plots generated in: {group_dir}")
+
+    print(f"\n🎉 Comparison complete! Results in: {comparison_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Collect and analyze WAFL results")
     parser.add_argument("--id", help="Experiment ID (default: latest)")
@@ -1156,11 +1523,19 @@ def main():
         action="store_true",
         help="Analyze all experiments without 'analysis' folder",
     )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Generate comparison graphs for experiments grouped by 'Experiment X:' pattern",
+    )
     args = parser.parse_args()
 
     config = load_config()
 
-    if args.all:
+    if args.compare:
+        # Cross-experiment comparison mode
+        compare_experiments()
+    elif args.all:
         # Find all experiments without analysis folder
         experiments = get_experiments_without_analysis()
         if not experiments:
