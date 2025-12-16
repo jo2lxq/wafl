@@ -69,14 +69,14 @@ run = [
 [tasks.sumo]
 description = "Complete mobility preprocessing pipeline (unified script)"
 run = [
-  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/ --epochs 1100",
+  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/ --epochs 2200",
   ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
 ]
 
 [tasks.sumo-osm]
 description = "Mobility preprocessing with OSM real-world map"
 run = [
-  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo_real/ --osm data/osm/map.osm --epochs 1100",
+  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo_real/ --osm data/osm/map.osm --epochs 2200",
   ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo_real/mobility_trace.csv --contact data/sumo_real/contact_pattern_mobility.json --conditions data/sumo_real/network_conditions_mobility.json --network data/sumo_real/network.net.xml --mode all --output-dir data/sumo_real/visuals/",
 ]
 
