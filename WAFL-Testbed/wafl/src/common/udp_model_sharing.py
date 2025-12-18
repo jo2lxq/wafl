@@ -37,7 +37,8 @@ class UDPModelSharing:
             "fec_recovery_success": 0,
             "fec_recovery_fail": 0,
             "total_chunks_received": 0,
-            "failed_chunks": 0,
+            "failed_chunks": 0,  # Chunks that failed due to timeout (insufficient packets)
+            "timeout_models": 0,  # Models that failed due to timeout
             "bytes_sent": 0,
             "bytes_received": 0,
         }
@@ -56,6 +57,9 @@ class UDPModelSharing:
             total_chunks = math.ceil(len(model_data) / chunk_size)
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            # Track actual bytes sent (including FEC redundancy and headers)
+            actual_bytes_sent = 0
 
             for chunk_idx in range(total_chunks):
                 start = chunk_idx * chunk_size
@@ -78,14 +82,17 @@ class UDPModelSharing:
                     header = struct.pack("!IIII", chunk_idx, total_chunks, block_idx, len(chunk))
                     packet = header + block
                     sock.sendto(packet, (target_ip, target_port))
+                    # Track actual bytes sent (including header)
+                    actual_bytes_sent += len(packet)
                     # Pacing
                     time.sleep(0.0001)
             sock.close()
 
             total_packets = total_chunks * self.m
-            self.logger.info(f"📡 Sent model via UDP ({len(model_data)} bytes, {total_chunks} chunks, {total_packets} packets with FEC) to {target_ip}:{target_port}")
+            fec_overhead_ratio = (actual_bytes_sent / len(model_data) - 1) * 100 if len(model_data) > 0 else 0
+            self.logger.info(f"📡 Sent model via UDP ({len(model_data)} payload bytes, {actual_bytes_sent} total bytes with FEC+headers, {total_chunks} chunks, {total_packets} packets, +{fec_overhead_ratio:.1f}% overhead) to {target_ip}:{target_port}")
             self.stats["sent_models"] += 1
-            self.stats["bytes_sent"] += len(model_data)
+            self.stats["bytes_sent"] += actual_bytes_sent  # Count actual bytes sent, not just payload
             return True
 
         except Exception as e:
@@ -96,19 +103,18 @@ class UDPModelSharing:
     def get_survival_rate(self) -> float:
         """Calculate packet survival rate.
 
-        This measures the ratio of chunks that were received WITHOUT needing FEC recovery.
-        A rate < 1.0 indicates packet loss that required FEC to recover.
+        This measures the ratio of models that were successfully received
+        (with or without FEC recovery) vs total models attempted.
+        Includes timeout failures in the calculation.
         """
-        total_chunks = self.stats.get("total_chunks_received", 0)
-        fec_recovered = self.stats.get("fec_recovery_success", 0)
+        received = self.stats.get("received_models", 0)
+        timeout = self.stats.get("timeout_models", 0)
+        total = received + timeout
 
-        if total_chunks == 0:
+        if total == 0:
             return 1.0  # No data yet
 
-        # Survival rate = chunks received perfectly / total chunks
-        # If FEC was needed, it means some packets were lost
-        perfect_chunks = total_chunks - fec_recovered
-        return perfect_chunks / total_chunks if total_chunks > 0 else 1.0
+        return received / total
 
     def start_listener(self, callback):
         """
@@ -169,13 +175,23 @@ class UDPModelSharing:
                         callback(full_data, addr[0])
                     del incoming_models[source_key]
 
-                # Cleanup old partial models
+                # Cleanup old partial models (timeout)
                 current_time = time.time()
                 to_remove = []
                 for key, state in incoming_models.items():
                     if current_time - state["last_update"] > self.timeout:
                         to_remove.append(key)
                 for key in to_remove:
+                    state = incoming_models[key]
+                    # Count failed chunks due to timeout
+                    failed_chunks = 0
+                    for chunk_idx, blocks in state["chunks"].items():
+                        if len(blocks) < self.k:
+                            failed_chunks += 1
+                    if failed_chunks > 0 or len(state["chunks"]) > 0:
+                        self.stats["timeout_models"] += 1
+                        self.stats["failed_chunks"] += failed_chunks
+                        self.logger.warning(f"⏱️ Model timeout from {key}: {len(state['chunks'])} chunks received, {failed_chunks} chunks incomplete (< {self.k} packets)")
                     del incoming_models[key]
 
             except socket.timeout:

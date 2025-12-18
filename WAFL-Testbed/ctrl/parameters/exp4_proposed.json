@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 4: Integrated Scenario - Proposed Full (SSP + UDP + FEC + Adaptive Compression)",
   "epochs": {
     "self": 64,
-    "wafl": 2048
+    "wafl": 1536
   },
   "contact_pattern": "sumo_real/contact_pattern_mobility.json",
   "wafl_phase": {
@@ -23,7 +23,7 @@
   "method": {
     "ssp": {
       "enabled": true,
-      "ssp_threshold": 0.7
+      "ssp_threshold": 0.8
     },
     "udp": {
       "enabled": true,

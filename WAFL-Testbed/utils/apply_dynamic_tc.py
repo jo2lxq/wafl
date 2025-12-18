@@ -24,18 +24,22 @@ def get_veth_interface(container_name: str) -> str:
         veth interface name (e.g., "veth1a2b3c4")
     """
     try:
-        # Get container PID
-        cmd = ["docker", "inspect", "-f", "{{.State.Pid}}", container_name]
+        # Check if container is running
+        cmd = ["docker", "inspect", "-f", "{{.State.Running}}", container_name]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        pid = result.stdout.strip()
+        running = result.stdout.strip()
 
-        if not pid or pid == "0":
+        if running != "true":
             raise RuntimeError(f"Container {container_name} not running")
 
-        # Get iflink index from container's eth0
-        cmd = ["sudo", "nsenter", "-t", pid, "-n", "cat", "/sys/class/net/eth0/iflink"]
+        # Get iflink index from container's eth0 using docker exec
+        # This works on the same host where the container is running
+        cmd = ["docker", "exec", container_name, "cat", "/sys/class/net/eth0/iflink"]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         iflink = result.stdout.strip()
+
+        if not iflink:
+            raise RuntimeError(f"Could not get eth0 iflink from container {container_name}")
 
         # Find corresponding veth interface on host
         cmd = ["ip", "link"]
@@ -60,7 +64,7 @@ def clear_tc_rules(interface: str):
     try:
         subprocess.run(
             ["sudo", "tc", "qdisc", "del", "dev", interface, "root"],
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except subprocess.CalledProcessError:
@@ -84,7 +88,18 @@ def apply_htb_filter_tc(
     print(f"  📡 Applying tc rules to {interface}...")
 
     # Step 1: Create root HTB qdisc
-    cmd = ["sudo", "tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb"]
+    cmd = [
+        "sudo",
+        "tc",
+        "qdisc",
+        "add",
+        "dev",
+        interface,
+        "root",
+        "handle",
+        "1:",
+        "htb",
+    ]
     subprocess.run(cmd, check=True, capture_output=True)
     print("    ✓ Created root HTB qdisc")
 
@@ -214,8 +229,8 @@ def apply_dynamic_tc(
     # Get conditions for this epoch
     epoch_conditions = conditions[epoch]
 
-    # Convert node_id to integer for lookup
-    node_key = int(node_id)
+    # Use string key for JSON dict lookup (JSON keys are always strings)
+    node_key = str(node_id)
 
     if node_key not in epoch_conditions:
         print(f"⚠️  Warning: No conditions for node {node_id} in epoch {epoch}, skipping")
@@ -225,7 +240,10 @@ def apply_dynamic_tc(
     peers_list = epoch_conditions[node_key]
 
     if not isinstance(peers_list, list):
-        print(f"❌ Error: Node conditions must be an array, got {type(peers_list)}", file=sys.stderr)
+        print(
+            f"❌ Error: Node conditions must be an array, got {type(peers_list)}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if not peers_list:
@@ -238,28 +256,26 @@ def apply_dynamic_tc(
 
     print(f"  Found {len(peers_list)} peers in range")
 
-    # Load execution_config for node name to IP mapping
+    # Load execution_config for node name to physical IP mapping
+    # IMPORTANT: Use physical IP (192.168.11.xxx) for tc filters, not Docker internal IP
+    # because containers run on separate physical hosts and communicate via physical network
     node_to_ip = {}
     if execution_config_file and Path(execution_config_file).exists():
         with open(execution_config_file) as f:
             exec_config = json.load(f)
 
-        # Build mapping: node name -> Docker IP
-        for i, node in enumerate(exec_config.get("nodes", [])):
-            node_name = str(node["name"])
-            docker_ip = f"172.18.0.{i + 2}"
-            node_to_ip[int(node_name)] = docker_ip
+        # Build mapping: node ID -> physical IP (for inter-host communication)
+        for node in exec_config.get("nodes", []):
+            node_id_int = int(node["name"])
+            physical_ip = node.get("physical_ip")
+            if physical_ip:
+                node_to_ip[node_id_int] = physical_ip
 
-        print(f"  Loaded IP mapping for {len(node_to_ip)} nodes")
+        print(f"  Loaded physical IP mapping for {len(node_to_ip)} nodes")
     else:
-        # Fallback: assume sequential IPs
-        print("  ⚠️  No execution_config provided, using sequential IP assignment")
-        for peer_info in peers_list:
-            peer_id = peer_info.get("peer")
-            if peer_id is not None:
-                # Assume sequential: node 15 -> 172.18.0.2, node 16 -> 172.18.0.3, etc.
-                # This is a fallback and may not be accurate
-                node_to_ip[peer_id] = f"172.18.0.{peer_id + 2}"
+        print("  ⚠️  No execution_config provided, cannot determine physical IPs")
+        print("  ❌ tc filters require physical IPs for inter-host communication")
+        return
 
     # Convert peer list to IP-based dict for tc application
     peers_for_tc = {}
@@ -362,7 +378,10 @@ path loss model using HTB (Hierarchical Token Bucket) with IP-based filtering.
         sys.exit(1)
 
     if not Path(args.pathloss).exists():
-        print(f"❌ Error: Path loss model file not found: {args.pathloss}", file=sys.stderr)
+        print(
+            f"❌ Error: Path loss model file not found: {args.pathloss}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Load path loss model for rank definitions

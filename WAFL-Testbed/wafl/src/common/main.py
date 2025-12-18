@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import gc
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import pickle
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, List, Optional, Tuple
 
 import torch
@@ -177,6 +179,9 @@ class ModelLearningUtils:
         self.current_gradient_norm = 0.0
 
         try:
+            # Disable GC during training to reduce latency spikes
+            gc.disable()
+
             running_loss = 0.0
             total_loss = 0.0
             num_batches = 0
@@ -214,6 +219,9 @@ class ModelLearningUtils:
 
                 if self.stop_requested:
                     self.logger.warning("⚠️ Epoch interrupted by stop request (SSP Reset).")
+                    # Re-enable GC before returning
+                    gc.enable()
+                    gc.collect()
                     return False
             self.train_loss = total_loss / num_batches if num_batches > 0 else 0.0
             self.train_accuracy = correct_train / total_train if total_train > 0 else 0.0
@@ -230,19 +238,31 @@ class ModelLearningUtils:
             self.logger.info(f"📈 Test Accuracy: {test_accuracy:.4f}")
 
             # Log metrics to CSV
-            epoch_duration_ms = (time.time() - self.epoch_start_time) * 1000 if self.epoch_start_time else 0.0
+            # self_learn内の時間 = 純粋な計算時間 (training + evaluation)
+            compute_time_ms = (time.time() - self.epoch_start_time) * 1000 if self.epoch_start_time else 0.0
+
+            # WAFLフェーズでは、通信時間はself_learnの前にwafl_learnで計測されている
+            # epoch_duration_ms = compute_time_ms + comm_time_ms (合計時間)
+            comm_time_ms = getattr(self, "_wafl_comm_time_ms", 0.0)
+            epoch_duration_ms = compute_time_ms + comm_time_ms if WAFL_LEARN else compute_time_ms
+
             metrics = {
                 "train_loss": self.train_loss,
                 "train_accuracy": self.train_accuracy,
                 "test_loss": test_loss,
                 "test_accuracy": test_accuracy,
                 "epoch_duration_ms": epoch_duration_ms,
+                "compute_time_ms": compute_time_ms,
+                "comm_time_ms": comm_time_ms,
                 # SSP metrics (no waste if epoch completed normally)
                 "batches_processed": self.batches_processed,
             }
             # Add communication and compression metrics
             comm_metrics = self.model_sharing.get_epoch_metrics()
             metrics.update(comm_metrics)
+
+            # Reset wafl comm time for next epoch
+            self._wafl_comm_time_ms = 0.0
 
             self.ctrl_tcp.metrics_logger.log_epoch(phase_name, self.epoch_number + 1, metrics)
 
@@ -251,16 +271,21 @@ class ModelLearningUtils:
                 self.net.state_dict(),
                 self.model_instance_path,
             )
-            self.model_sharing.update_model_instance(self.net.state_dict(), "Testing")
+            self.model_sharing.update_model_instance(self.net.state_dict(), "Testing", epoch_number=self.epoch_number + 1)
             SUCCESS = True
         except Exception as exc:
             self.logger.error(f"The following error occurred in self_learn: {str(exc)[:100]}...")
             SUCCESS = False
+        finally:
+            # Re-enable GC after training epoch
+            gc.enable()
+            gc.collect()
         return SUCCESS
 
     def wafl_learn(self, five_digit_number_str: str) -> bool:
         """
         Implementation of the Epoch-by-Epoch Learning Process for WAFL-MLP.
+        Uses parallel model fetching from all neighbors for improved throughput.
         """
         self.logger.info(f"🎯 Beginning the WAFL-Learning Epoch: {five_digit_number_str}")
         SUCCESS = False
@@ -268,25 +293,57 @@ class ModelLearningUtils:
             neighbours = self.get_neighbour_list(five_digit_number_str)
             n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
-            for neighbour in neighbours:
+
+            # Measure communication time for model exchange
+            comm_start_time = time.time()
+
+            # Parallel model fetching from all neighbors
+            received_models = []
+
+            def fetch_from_peer(neighbour):
+                """Fetch model from a single peer. Returns (neighbour, model) or (neighbour, None)."""
                 peer_ip = self.ctrl_tcp.get_device_ip(neighbour)
                 if peer_ip is None:
                     self.logger.error(f"Could not get IP for neighbour {neighbour}")
-                    continue
-                received_model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
-                if isinstance(received_model, str):
-                    self.logger.error(f"Failed to receive model from {neighbour}")
-                    continue
+                    return (neighbour, None)
+                try:
+                    model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
+                    if isinstance(model, str):
+                        self.logger.error(f"Failed to receive model from {neighbour}: {model[:50]}")
+                        return (neighbour, None)
+                    return (neighbour, model)
+                except Exception as e:
+                    self.logger.error(f"Exception fetching model from {neighbour}: {e}")
+                    return (neighbour, None)
+
+            if n_nbr > 0:
+                # Use ThreadPoolExecutor for parallel model fetching
+                max_workers = min(n_nbr, 16)  # Cap at 16 concurrent connections
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(fetch_from_peer, n): n for n in neighbours}
+                    for future in as_completed(futures):
+                        neighbour, model = future.result()
+                        if model is not None:
+                            received_models.append(model)
+
+            # Aggregate received models
+            n_received = len(received_models)
+            for received_model in received_models:
                 for key in self.net.state_dict():
                     model_difference = received_model[key] - self.net.state_dict()[key]
                     local_model[key] += model_difference * self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
+
+            comm_time_ms = (time.time() - comm_start_time) * 1000
             self.net.load_state_dict(local_model)
 
-            # Always call self_learn to continue training, regardless of neighbor count
-            if n_nbr:
-                self.logger.info(f"📡 Exchanged models with {n_nbr} neighbors")
+            # Log communication stats
+            if n_nbr > 0:
+                self.logger.info(f"📡 Parallel model exchange: {n_received}/{n_nbr} neighbors (comm_time: {comm_time_ms:.1f}ms)")
             else:
                 self.logger.info("No neighbors available for model exchange in this epoch")
+
+            # Store communication time for metrics (to be picked up by self_learn)
+            self._wafl_comm_time_ms = comm_time_ms
 
             # Call self_learn with WAFL_LEARN=True to continue training
             SELF_LEARN_FLAG = self.self_learn(five_digit_number_str, WAFL_LEARN=True)
@@ -342,6 +399,7 @@ class ModelSharingUtils:
         self.vMODEL_INSTANCE = None
         self.vMODEL_INSTANCE_CACHE = None
         self.vMODEL_METADATA = ""
+        self.vMODEL_EPOCH = 0  # Track the epoch number of the current model
         self.fLISTENER_ACTIVE = True
         self.agent_index = index
         self.name = name
@@ -609,14 +667,21 @@ class ModelSharingUtils:
                     time.sleep(1.0)
             self.logger.info("P2P listener thread has been terminated.")
 
-    def update_model_instance(self, LE_model: Any, metadata: str = "") -> None:
+    def update_model_instance(self, LE_model: Any, metadata: str = "", epoch_number: int = 0) -> None:
         """
         Updates the WAFL model instance that is
         to be dispatched.
+
+        Args:
+            LE_model: The model state dict to share
+            metadata: Optional metadata string
+            epoch_number: The epoch number when this model was created (for staleness tracking)
         """
         self.vMODEL_INSTANCE = copy.deepcopy(LE_model)
         self.vMODEL_INSTANCE_CACHE = None
         self.vMODEL_METADATA = metadata
+        self.vMODEL_EPOCH = epoch_number
+        self.logger.debug(f"Updated model instance (epoch={epoch_number})")
 
     def request_model_from_peer(self, peer_IP: str, other_options: str = "") -> Any:
         """
@@ -724,6 +789,7 @@ class ModelSharingUtils:
                 "fec_recovery_fail": 0,
                 "total_chunks_received": 0,
                 "failed_chunks": 0,
+                "timeout_models": 0,
                 "bytes_sent": 0,
                 "bytes_received": 0,
             }
@@ -767,6 +833,9 @@ class CTRL_TCP:
         # Initialize model_sharing and model_learning attributes
         self.model_sharing: Optional[ModelSharingUtils] = None
         self.model_learning: Optional[ModelLearningUtils] = None
+
+        # SSP: Pending metrics from FORCE_NEXT (to be logged at next epoch start)
+        self._pending_ssp_metrics: Optional[dict] = None
 
         if not self._load_config(config_path):
             raise ValueError("Failed to load configuration file")
@@ -872,9 +941,14 @@ class CTRL_TCP:
             for key in ["batch_size", "learning_rate", "coefficiency"]:
                 if key not in self.wafl_phase_params:
                     raise ValueError(f"Missing required key '{key}' in wafl_phase_params")
-            self.timeout = 10.0  # dummy
-            if not isinstance(self.timeout, float):
-                self.logger.error("Invalid format for 'wafl_devices.timeout' in JSON. Float required.")
+
+            # Load model exchange timeout from parameters (default: 5.0 seconds)
+            method_config = config_data.get("method", {})
+            self.timeout = method_config.get("model_exchange_timeout", 5.0)
+            self.logger.info(f"Model exchange timeout set to {self.timeout}s")
+
+            if not isinstance(self.timeout, (int, float)):
+                self.logger.error("Invalid format for 'method.model_exchange_timeout' in JSON. Number required.")
                 return False
             self.logger.info("All configurations successfully stored in member variables.")
             return True
@@ -1125,31 +1199,19 @@ class CTRL_TCP:
                     else:
                         self.logger.info("Learning thread stopped successfully.")
 
-                    # Log detailed wasted computation metrics
-                    if wasted_metrics:
-                        epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
-                        phase = self.current_epoch_type or "UNKNOWN"
-                        self.metrics_logger.log_ssp_metrics(
-                            phase=phase,
-                            epoch=epoch_num,
-                            wasted_ms=wasted_metrics.get("wasted_ms", 0.0),
-                            wasted_norm=wasted_metrics.get("wasted_norm", 0.0),
-                            batches_processed=wasted_metrics.get("batches_processed", 0),
-                            was_force_stopped=True,
-                        )
-                        self.logger.info(f"📊 SSP Metrics: wasted_ms={wasted_metrics['wasted_ms']:.2f}, wasted_norm={wasted_metrics['wasted_norm']:.6f}, batches={wasted_metrics['batches_processed']}")
-                    else:
-                        # Fallback logging if metrics not available
-                        epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
-                        phase = self.current_epoch_type or "UNKNOWN"
-                        self.metrics_logger.log_ssp_metrics(
-                            phase=phase,
-                            epoch=epoch_num,
-                            wasted_ms=0.0,
-                            wasted_norm=0.0,
-                            batches_processed=0,
-                            was_force_stopped=True,
-                        )
+                    # Store SSP metrics to be logged at next epoch start
+                    # This ensures 1 epoch = 1 record
+                    epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
+                    phase = self.current_epoch_type or "UNKNOWN"
+                    self._pending_ssp_metrics = {
+                        "epoch": epoch_num,
+                        "phase": phase,
+                        "wasted_ms": wasted_metrics.get("wasted_ms", 0.0) if wasted_metrics else 0.0,
+                        "wasted_norm": wasted_metrics.get("wasted_norm", 0.0) if wasted_metrics else 0.0,
+                        "batches_processed": wasted_metrics.get("batches_processed", 0) if wasted_metrics else 0,
+                        "was_force_stopped": True,
+                    }
+                    self.logger.info(f"📊 SSP Metrics stored for epoch {epoch_num}: wasted_ms={self._pending_ssp_metrics['wasted_ms']:.2f}, batches={self._pending_ssp_metrics['batches_processed']}")
 
                 conn.sendall("OK\r\n".encode("utf-8"))
                 return True
@@ -1261,6 +1323,22 @@ class CTRL_TCP:
         self.current_epoch_type = "SELF"
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
+
+        # --- Log pending SSP metrics from previous FORCE_NEXT (if any) ---
+        if self._pending_ssp_metrics:
+            pending = self._pending_ssp_metrics
+            self.logger.info(f"📝 Logging pending SSP metrics for epoch {pending['epoch']} (was force-stopped)")
+            self.metrics_logger.log_epoch(
+                phase=pending["phase"],
+                epoch=pending["epoch"],
+                metrics={
+                    "wasted_ms": pending["wasted_ms"],
+                    "wasted_norm": pending["wasted_norm"],
+                    "batches_processed": pending["batches_processed"],
+                    "was_force_stopped": 1,
+                },
+            )
+            self._pending_ssp_metrics = None
         # ---
 
         FLAG = self.model_learning.self_learn(five_digit_number_str)
@@ -1285,6 +1363,22 @@ class CTRL_TCP:
         self.current_epoch_type = "WAFL"
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
+
+        # --- Log pending SSP metrics from previous FORCE_NEXT (if any) ---
+        if self._pending_ssp_metrics:
+            pending = self._pending_ssp_metrics
+            self.logger.info(f"📝 Logging pending SSP metrics for epoch {pending['epoch']} (was force-stopped)")
+            self.metrics_logger.log_epoch(
+                phase=pending["phase"],
+                epoch=pending["epoch"],
+                metrics={
+                    "wasted_ms": pending["wasted_ms"],
+                    "wasted_norm": pending["wasted_norm"],
+                    "batches_processed": pending["batches_processed"],
+                    "was_force_stopped": 1,
+                },
+            )
+            self._pending_ssp_metrics = None
         # ---
 
         # Implement the logic for WAFL learning here

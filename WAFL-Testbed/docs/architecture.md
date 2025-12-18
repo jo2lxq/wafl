@@ -157,6 +157,8 @@ tc qdisc add dev veth0 root netem \
 
 Docker の `--cpus` オプションで CPU 使用率を制限し，異なる性能のデバイスを模擬する．
 
+> **Note**: CPU 制限は **WAFL フェーズ開始時** に `docker update` で動的に適用される．SELF フェーズでは制限なしで実行されるため，事前学習が高速化される．
+
 **設定例**:
 ```json
 {

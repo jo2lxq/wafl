@@ -20,6 +20,8 @@ class MetricsLogger:
         "test_accuracy",
         # Timing metrics
         "epoch_duration_ms",
+        "compute_time_ms",  # Pure computation time (training)
+        "comm_time_ms",  # Communication time (model exchange)
         # SSP metrics
         "wasted_ms",
         "wasted_norm",
@@ -128,6 +130,8 @@ class MetricsLogger:
             "test_accuracy": metrics.get("test_accuracy", ""),
             # Timing
             "epoch_duration_ms": metrics.get("epoch_duration_ms", ""),
+            "compute_time_ms": metrics.get("compute_time_ms", ""),
+            "comm_time_ms": metrics.get("comm_time_ms", 0),
             # SSP metrics - default to 0 so graphs can show "no waste"
             "wasted_ms": metrics.get("wasted_ms", 0),
             "wasted_norm": metrics.get("wasted_norm", 0),
@@ -148,37 +152,6 @@ class MetricsLogger:
             "compression_time_ms": metrics.get("compression_time_ms", 0),
             "original_size": metrics.get("original_size", 0),
             "compressed_size": metrics.get("compressed_size", 0),
-        }
-        self._write_row(entry)
-
-    def log_ssp_metrics(
-        self,
-        phase: str,
-        epoch: int,
-        wasted_ms: float,
-        wasted_norm: float,
-        batches_processed: int,
-        was_force_stopped: bool = True,
-    ):
-        """Log SSP (Semi-Synchronous Protocol) metrics when a node is force-stopped.
-
-        Args:
-            phase: Training phase (SELF or WAFL)
-            epoch: Epoch number
-            wasted_ms: Wasted computation time in milliseconds
-            wasted_norm: Wasted gradient norm
-            batches_processed: Number of batches processed before force stop
-            was_force_stopped: Whether this epoch was force-stopped
-        """
-        relative_time = time.time() - self.start_time
-        entry = {
-            "timestamp": relative_time,
-            "phase": phase,
-            "epoch": epoch,
-            "wasted_ms": wasted_ms,
-            "wasted_norm": wasted_norm,
-            "batches_processed": batches_processed,
-            "was_force_stopped": 1 if was_force_stopped else 0,
         }
         self._write_row(entry)
 

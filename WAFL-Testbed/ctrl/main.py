@@ -976,7 +976,7 @@ class ControlServer:
             epochs: Dictionary with 'self' and 'wafl' epoch counts
             wafl_phase: WAFL phase parameters
             contact_pattern: Contact pattern file name
-            ssp_config: SSP configuration with 'enabled', 'staleness', and 'ssp_threshold' keys
+            ssp_config: SSP configuration with 'enabled' and 'ssp_threshold' keys
 
         Note:
             Agent shutdown is always performed in the finally block, even if an exception occurs during the experiment.
@@ -984,9 +984,8 @@ class ControlServer:
         self.logger.info(f"🚀 Experiment started - ID: {self.experiment_id} (SELF: {epochs['self']}, WAFL: {epochs['wafl']} epochs)")
         experiment_success = False
 
-        # Set default SSP config if not provided
         if ssp_config is None:
-            ssp_config = {"enabled": False, "staleness": 0, "ssp_threshold": 1.0}
+            ssp_config = {"enabled": False, "ssp_threshold": 1.0}
 
         try:
             # 0. Create agents with unified configuration deployment
@@ -1000,76 +999,27 @@ class ControlServer:
             self.agents = self._create_agents(experiment_parameters)
             self.logger.info("✅ Phase [0/4] - Complete (all agents ready)")
 
-            # Verify container configurations after startup
-            self.logger.info("🔍 Verifying container configurations...")
-
-            try:
-                import verify
-
-                # Load configurations
-                config_validator = verify.ConfigValidator()
-                if config_validator.load_configs():
-                    # Validate config files with logger
-                    params_valid = config_validator.validate_parameters(logger=self.logger)
-                    exec_valid = config_validator.validate_execution_config(logger=self.logger)
-
-                    if params_valid and exec_valid:
-                        self.logger.info("✅ Configuration files validated")
-
-                        # Verify container applications with logger
-                        container_verifier = verify.ContainerVerifier(
-                            config_validator.params,
-                            config_validator.exec_config,
-                            verbose=False,
-                        )
-
-                        containers_valid = container_verifier.verify_all(logger=self.logger)
-
-                        if containers_valid and len(container_verifier.errors) == 0:
-                            self.logger.info("✅ All container verifications passed")
-                            if container_verifier.warnings:
-                                for warning in container_verifier.warnings:
-                                    self.logger.warning(f"⚠ {warning}")
-                        else:
-                            self.logger.error("💥 Container verification FAILED")
-                            for error in container_verifier.errors:
-                                self.logger.error(f"✗ {error}")
-                            raise RuntimeError("Container verification failed. Please check container configurations.")
-                    else:
-                        for error in config_validator.errors:
-                            self.logger.error(f"✗ {error}")
-                        raise RuntimeError("Configuration validation failed")
-                else:
-                    for error in config_validator.errors:
-                        self.logger.error(f"✗ {error}")
-                    raise RuntimeError("Failed to load configuration files")
-
-            except ImportError as e:
-                self.logger.warning(f"⚠️ Could not import verification module: {e}")
-                self.logger.warning("Skipping container verification...")
-            except Exception as e:
-                self.logger.error(f"💥 Verification error: {e}")
-                raise
-
             # 1. Run SELF phase (always BSP - nodes train independently)
             self.logger.info(f"🏃 Phase [1/4] - SELF training ({epochs['self']} epochs)")
             # SELF phase uses BSP mode - each node completes independently
-            # staleness parameter is deprecated but kept for API compatibility
+            # NOTE: No CPU limits during SELF phase for maximum training speed
             self._run_phase(
                 "SELF",
                 epochs["self"],
-                staleness=0,  # Deprecated, not used
                 ssp_threshold=1.0,
                 ssp_enabled=False,
             )
             self.logger.info("✅ Phase [1/4] - Complete (SELF training finished)")
 
-            # 2. Run WAFL phase
-            self.logger.info(f"🤝 Phase [2/4] - WAFL training ({epochs['wafl']} epochs)")
+            # 2. Apply CPU limits before WAFL phase
+            self.logger.info("⚙️ Applying CPU limits for WAFL phase...")
+            self._apply_cpu_limits_to_all_agents()
+
+            # 3. Run WAFL phase
+            self.logger.info(f"🤝 Phase [3/4] - WAFL training ({epochs['wafl']} epochs)")
 
             # Extract SSP configuration
             ssp_enabled = ssp_config.get("enabled", False)
-            staleness = ssp_config.get("staleness", 0)
             ssp_threshold = ssp_config.get("ssp_threshold", 1.0)
             aggregation = wafl_phase.get("aggregation_strategy", "FedAvg")
 
@@ -1084,15 +1034,29 @@ class ControlServer:
             self.logger.info(f"   - Learning Rate: {wafl_phase.get('learning_rate', 0.001)}")
             self.logger.info(f"   - Coefficiency: {wafl_phase.get('coefficiency', 1.0)}")
 
+            # Record WAFL phase start timestamp for time-to-accuracy analysis
+            wafl_phase_start_timestamp = time.time()
+            wafl_phase_start_relative = wafl_phase_start_timestamp - self.start_timestamp
+            metadata = {
+                "wafl_phase_start_timestamp": wafl_phase_start_timestamp,
+                "wafl_phase_start_relative": wafl_phase_start_relative,
+                "experiment_start_timestamp": self.start_timestamp,
+                "self_epochs": epochs["self"],
+                "wafl_epochs": epochs["wafl"],
+            }
+            metadata_path = os.path.join(self.results_dir, "metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            self.logger.info(f"📝 WAFL phase metadata saved to {metadata_path}")
+
             self._run_phase(
                 "WAFL",
                 epochs["wafl"],
-                staleness=staleness,
                 ssp_threshold=ssp_threshold,
                 ssp_enabled=ssp_enabled,
             )
 
-            self.logger.info("✅ Phase [2/4] - Complete (WAFL training finished)")
+            self.logger.info("✅ Phase [3/4] - Complete (WAFL training finished)")
             experiment_success = True
 
         except KeyboardInterrupt:
@@ -1100,18 +1064,59 @@ class ControlServer:
         except Exception as e:
             self.logger.error(f"💥 Experiment failed: {e}", exc_info=True)
         finally:
-            # 3. Shutdown all agents
-            self.logger.info("🛑 Phase [3/4] - Shutting down all agents")
+            # 4. Shutdown all agents
+            self.logger.info("🛑 Phase [4/4] - Shutting down all agents")
             self._shutdown_all_agents()
 
             status = "SUCCESS" if experiment_success else "FAILED"
             self.logger.info(f"✅ Experiment complete - ID: {self.experiment_id}, Status: {status}")
 
+    def _apply_cpu_limits_to_all_agents(self):
+        """
+        Apply CPU limits to all agents at the start of WAFL phase.
+
+        This reads cpu_limit from execution_config.json and applies it
+        to each running container using docker update.
+        """
+        # Load execution config to get cpu_limit for each node
+        exec_config_path = os.path.join("ctrl", "execution_config.json")
+        try:
+            with open(exec_config_path, "r") as f:
+                exec_config = json.load(f)
+        except Exception as e:
+            self.logger.error(f"💥 Failed to load execution config: {e}")
+            return
+
+        nodes = exec_config.get("nodes", [])
+        node_cpu_limits = {str(node["name"]): node.get("cpu_limit") for node in nodes}
+
+        # Create a ContainerManager for applying CPU limits
+        container_manager = ContainerManager(
+            user=self.config["USER"],
+            deployment_location=self.config["DEPLOYMENT_LOCATION"],
+            project_name=self.config["PROJECT_NAME"],
+            logger=self.logger,
+        )
+
+        applied_count = 0
+        for agent in self.agents:
+            cpu_limit = node_cpu_limits.get(agent.name)
+            if cpu_limit:
+                container_name = f"wafl-node-{agent.name}"
+                success = container_manager.apply_cpu_limit(
+                    ip=agent.ip,
+                    container_name=container_name,
+                    cpu_limit=cpu_limit,
+                )
+                if success:
+                    applied_count += 1
+
+        self.logger.info(f"✅ CPU limits applied to {applied_count}/{len(self.agents)} agents")
+
     def _run_phase(
         self,
         phase_name: str,
         total_epochs: int,
-        staleness: int,  # Deprecated: kept for API compatibility, but not used
         ssp_threshold: float = 1.0,
         ssp_enabled: bool = False,
     ):
@@ -1128,7 +1133,6 @@ class ControlServer:
         Args:
             phase_name: "SELF" or "WAFL"
             total_epochs: Total number of epochs to run
-            staleness: Deprecated, kept for API compatibility (not used)
             ssp_threshold: Fraction of agents (0.0-1.0) required before forcing slow agents to skip (SSP only)
             ssp_enabled: Whether SSP mode is enabled
         """
@@ -1148,70 +1152,97 @@ class ControlServer:
         STALL_WARNING_INTERVAL = 60.0  # Warn about stalled agents every 60 seconds
 
         start_time = time.time()
+        last_epoch_logged = 0
         last_progress_log = 0
-        last_epoch_logged = -1
         last_stall_warning = 0
+        last_tc_applied_epoch = 0  # Track last epoch where tc was applied
 
-        while True:
-            current_time = time.time()
+        # Track epoch completion times on the control server side
+        epoch_start_times = {0: start_time}  # When each epoch started (epoch 0 = phase start)
+        epoch_durations = []  # List of {epoch, phase, duration_ms}
 
-            # Check epoch progress
-            min_epoch = min(epochs_completed.values())
-            max_epoch = max(epochs_completed.values())
+        # Create a single shared thread pool for all parallel operations
+        # This avoids the overhead of creating/destroying thread pools in each loop iteration
+        max_workers = max(len(self.agents), 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as shared_executor:
+            while True:
+                current_time = time.time()
 
-            # Log epoch progress
-            if min_epoch > last_epoch_logged:
-                if ssp_enabled:
-                    self.logger.debug(f"{phase_name} Epoch {min_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
-                else:
-                    self.logger.debug(f"{phase_name} Epoch {min_epoch}: All nodes synchronized (BSP)")
-                last_epoch_logged = min_epoch
-            if min_epoch >= total_epochs:
-                break
+                # Check epoch progress
+                min_epoch = min(epochs_completed.values())
+                max_epoch = max(epochs_completed.values())
 
-            # ========== SSP Mode: Threshold-based force skip ==========
-            # When ssp_threshold fraction of nodes complete an epoch, force remaining nodes
-            # to skip to that epoch. This ensures no node is more than 1 epoch behind.
-            if ssp_enabled and ssp_threshold < 1.0:
-                # Find the highest epoch where threshold is met
-                # Count agents who have completed each epoch level or higher
-                target_epoch = -1
-                for check_epoch in range(max_epoch, min_epoch, -1):
-                    # Count agents who have completed check_epoch OR HIGHER
-                    count = sum(1 for ae in epochs_completed.values() if ae >= check_epoch)
+                # Log epoch progress
+                if min_epoch > last_epoch_logged:
+                    # Record epoch completion time and duration
+                    current_epoch_end_time = time.time()
+                    if min_epoch > 0:  # Don't record for epoch 0 (phase start)
+                        epoch_start = epoch_start_times.get(min_epoch - 1, start_time)
+                        duration_ms = (current_epoch_end_time - epoch_start) * 1000
+                        epoch_duration_entry = {
+                            "epoch": min_epoch,
+                            "phase": phase_name,
+                            "duration_ms": duration_ms,
+                        }
+                        epoch_durations.append(epoch_duration_entry)
+                        self.logger.debug(f"{phase_name} Epoch {min_epoch} completed: {duration_ms:.1f}ms (server-side)")
+                        # Immediately save to file (incremental save)
+                        self._append_ctrl_epoch_duration(epoch_duration_entry)
 
-                    if count >= len(self.agents) * ssp_threshold:
-                        target_epoch = check_epoch
-                        break
+                    # Record start time for next epoch
+                    epoch_start_times[min_epoch] = current_epoch_end_time
 
-                if target_epoch != -1 and target_epoch > min_epoch:
-                    # Identify slow agents (those who haven't completed target_epoch)
-                    slow_agents = [name for name, e in epochs_completed.items() if e < target_epoch]
+                    if ssp_enabled:
+                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
+                    else:
+                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: All nodes synchronized (BSP)")
+                    last_epoch_logged = min_epoch
+                if min_epoch >= total_epochs:
+                    break
 
-                    if slow_agents:
-                        self.logger.info(f"⚡ SSP Threshold ({ssp_threshold:.0%}) reached for epoch {target_epoch}. Forcing {len(slow_agents)} slow agents to skip.")
-                        self.logger.debug(f"   Slow agents: {slow_agents}")
+                # ========== SSP Mode: Threshold-based force skip ==========
+                # When ssp_threshold fraction of nodes complete an epoch, force remaining nodes
+                # to skip to that epoch. This ensures no node is more than 1 epoch behind.
+                if ssp_enabled and ssp_threshold < 1.0:
+                    # Find the highest epoch where threshold is met
+                    # Count agents who have completed each epoch level or higher
+                    target_epoch = -1
+                    for check_epoch in range(max_epoch, min_epoch, -1):
+                        # Count agents who have completed check_epoch OR HIGHER
+                        count = sum(1 for ae in epochs_completed.values() if ae >= check_epoch)
 
-                        # Force slow agents to skip to target_epoch (PARALLEL)
-                        def force_skip_agent(agent):
-                            """Send FORCE_NEXT to a slow agent."""
-                            if epochs_completed[agent.name] >= target_epoch:
-                                return (agent.name, False, None)
+                        if count >= len(self.agents) * ssp_threshold:
+                            target_epoch = check_epoch
+                            break
 
-                            self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
+                    if target_epoch != -1 and target_epoch > min_epoch:
+                        # Identify slow agents (those who haven't completed target_epoch)
+                        slow_agents = [name for name, e in epochs_completed.items() if e < target_epoch]
 
-                            result = None
-                            if agent_status[agent.name] == "RUNNING":
-                                success, response = agent._send_command("FORCE_NEXT\r\n")
-                                result = (agent.name, True, success)
-                            else:
-                                result = (agent.name, True, None)
-                            return result
+                        if slow_agents:
+                            self.logger.info(f"⚡ SSP Threshold ({ssp_threshold:.0%}) reached for epoch {target_epoch}. Forcing {len(slow_agents)} slow agents to skip.")
+                            self.logger.debug(f"   Slow agents: {slow_agents}")
 
-                        slow_agent_objs = [a for a in self.agents if epochs_completed[a.name] < target_epoch]
+                            # Force slow agents to skip to target_epoch (PARALLEL using shared executor)
+                            def force_skip_agent(agent):
+                                """Send FORCE_NEXT to a slow agent."""
+                                if epochs_completed[agent.name] >= target_epoch:
+                                    return (agent.name, False, None)
 
-                        with ThreadPoolExecutor(max_workers=len(slow_agent_objs)) as executor:
-                            futures = {executor.submit(force_skip_agent, agent): agent for agent in slow_agent_objs}
+                                self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
+
+                                result = None
+                                if agent_status[agent.name] == "RUNNING":
+                                    success, response = agent._send_command("FORCE_NEXT\r\n")
+                                    result = (agent.name, True, success)
+                                else:
+                                    result = (agent.name, True, None)
+                                return result
+
+                            slow_agent_objs = [a for a in self.agents if epochs_completed[a.name] < target_epoch]
+
+                            # Use shared executor instead of creating new one
+                            futures = {shared_executor.submit(force_skip_agent, agent): agent for agent in slow_agent_objs}
                             for future in as_completed(futures):
                                 agent_name, was_slow, cmd_success = future.result()
                                 if was_slow:
@@ -1220,28 +1251,30 @@ class ControlServer:
                                     agent_status[agent_name] = "IDLE"
                                     epochs_completed[agent_name] = target_epoch
 
-            # Apply dynamic network conditions if mobility-aware mode is enabled
-            if self.mobility_aware_config and phase_name == "WAFL":
-                self._apply_dynamic_network_conditions(min_epoch)
+                # Apply dynamic network conditions if mobility-aware mode is enabled (once per epoch)
+                if self.mobility_aware_config and phase_name == "WAFL":
+                    if min_epoch > last_tc_applied_epoch:
+                        self._apply_dynamic_network_conditions(min_epoch)
+                        last_tc_applied_epoch = min_epoch
 
-            # ========== Schedule agents based on synchronization mode (PARALLEL) ==========
-            def begin_epoch_for_agent(agent):
-                """Start epoch for an agent if conditions are met."""
-                current_epoch = epochs_completed[agent.name]
-                if current_epoch < total_epochs and agent_status[agent.name] == "IDLE":
-                    next_epoch = current_epoch + 1
-                    can_proceed = min_epoch >= current_epoch
-                    if can_proceed:
-                        success = agent.begin_epoch(phase_name, next_epoch)
-                        return (agent.name, success, next_epoch)
-                return (agent.name, None, None)  # No action needed
+                # ========== Schedule agents based on synchronization mode (PARALLEL) ==========
+                def begin_epoch_for_agent(agent):
+                    """Start epoch for an agent if conditions are met."""
+                    current_epoch = epochs_completed[agent.name]
+                    if current_epoch < total_epochs and agent_status[agent.name] == "IDLE":
+                        next_epoch = current_epoch + 1
+                        can_proceed = min_epoch >= current_epoch
+                        if can_proceed:
+                            success = agent.begin_epoch(phase_name, next_epoch)
+                            return (agent.name, success, next_epoch)
+                    return (agent.name, None, None)  # No action needed
 
-            # Filter agents that might need to start
-            agents_to_schedule = [a for a in self.agents if epochs_completed[a.name] < total_epochs and agent_status[a.name] == "IDLE"]
+                # Filter agents that might need to start
+                agents_to_schedule = [a for a in self.agents if epochs_completed[a.name] < total_epochs and agent_status[a.name] == "IDLE"]
 
-            if agents_to_schedule:
-                with ThreadPoolExecutor(max_workers=len(agents_to_schedule)) as executor:
-                    futures = {executor.submit(begin_epoch_for_agent, agent): agent for agent in agents_to_schedule}
+                if agents_to_schedule:
+                    # Use shared executor instead of creating new one
+                    futures = {shared_executor.submit(begin_epoch_for_agent, agent): agent for agent in agents_to_schedule}
                     for future in as_completed(futures):
                         agent_name, success, next_epoch = future.result()
                         if success is not None:
@@ -1252,23 +1285,23 @@ class ControlServer:
                             else:
                                 self.logger.warning(f"Failed to start epoch {next_epoch} on agent {agent_name}, retrying...")
 
-            # ========== Poll agent status (PARALLEL) ==========
-            # Poll RUNNING agents, and also retry agents that haven't responded recently
-            def poll_agent_status(agent):
-                """Poll status for a single agent."""
-                if agent_status[agent.name] != "RUNNING":
-                    return (agent.name, None, None, [], False)
-                status, logs = agent.get_status()
-                # Check if this was a communication error
-                is_comm_error = status is not None and status.startswith("ERROR_COMM")
-                return (agent.name, status, logs, [], is_comm_error)
+                # ========== Poll agent status (PARALLEL) ==========
+                # Poll RUNNING agents, and also retry agents that haven't responded recently
+                def poll_agent_status(agent):
+                    """Poll status for a single agent."""
+                    if agent_status[agent.name] != "RUNNING":
+                        return (agent.name, None, None, [], False)
+                    status, logs = agent.get_status()
+                    # Check if this was a communication error
+                    is_comm_error = status is not None and status.startswith("ERROR_COMM")
+                    return (agent.name, status, logs, [], is_comm_error)
 
-            # Include agents that are RUNNING
-            running_agents = [a for a in self.agents if agent_status[a.name] == "RUNNING"]
+                # Include agents that are RUNNING
+                running_agents = [a for a in self.agents if agent_status[a.name] == "RUNNING"]
 
-            if running_agents:
-                with ThreadPoolExecutor(max_workers=len(running_agents)) as executor:
-                    futures = {executor.submit(poll_agent_status, agent): agent for agent in running_agents}
+                if running_agents:
+                    # Use shared executor instead of creating new one
+                    futures = {shared_executor.submit(poll_agent_status, agent): agent for agent in running_agents}
                     for future in as_completed(futures):
                         agent_name, status, logs, _, is_comm_error = future.result()
                         if status is None:
@@ -1313,34 +1346,99 @@ class ControlServer:
                             except Exception as e:
                                 self.logger.error(f"Error parsing status {status}: {e}")
 
-            # ========== Warn about stalled agents periodically ==========
-            elapsed_time = current_time - start_time
-            if elapsed_time - last_stall_warning >= STALL_WARNING_INTERVAL:
-                stalled_agents = []
-                for agent in self.agents:
-                    if agent_status[agent.name] == "RUNNING":
-                        time_since_success = current_time - last_status_success[agent.name]
-                        if time_since_success > STALL_WARNING_INTERVAL:
-                            stalled_agents.append(f"{agent.name} (no response for {time_since_success:.1f}s, epoch {epochs_completed[agent.name]})")
+                # ========== Warn about stalled agents periodically ==========
+                elapsed_time = current_time - start_time
+                if elapsed_time - last_stall_warning >= STALL_WARNING_INTERVAL:
+                    stalled_agents = []
+                    for agent in self.agents:
+                        if agent_status[agent.name] == "RUNNING":
+                            time_since_success = current_time - last_status_success[agent.name]
+                            if time_since_success > STALL_WARNING_INTERVAL:
+                                stalled_agents.append(f"{agent.name} (no response for {time_since_success:.1f}s, epoch {epochs_completed[agent.name]})")
 
-                if stalled_agents:
-                    self.logger.warning(f"⏳ Agents not responding (will keep retrying): {', '.join(stalled_agents)}")
-                last_stall_warning = elapsed_time
+                    if stalled_agents:
+                        self.logger.warning(f"⏳ Agents not responding (will keep retrying): {', '.join(stalled_agents)}")
+                    last_stall_warning = elapsed_time
 
-            # Progress logging every 30 seconds
-            if elapsed_time - last_progress_log >= 30:
-                # Count agents by status for detailed progress
-                running_count = sum(1 for s in agent_status.values() if s == "RUNNING")
-                idle_count = sum(1 for s in agent_status.values() if s == "IDLE")
-                error_count = sum(1 for s in agent_status.values() if s == "ERROR")
+                # Progress logging every 30 seconds
+                if elapsed_time - last_progress_log >= 30:
+                    # Count agents by status for detailed progress
+                    running_count = sum(1 for s in agent_status.values() if s == "RUNNING")
+                    idle_count = sum(1 for s in agent_status.values() if s == "IDLE")
+                    error_count = sum(1 for s in agent_status.values() if s == "ERROR")
 
-                if ssp_enabled:
-                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
-                else:
-                    self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
-                last_progress_log = elapsed_time
+                    if ssp_enabled:
+                        self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
+                    else:
+                        self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
+                    last_progress_log = elapsed_time
 
-            time.sleep(0.5)
+                time.sleep(0.5)
+
+        # Save control server epoch durations to metadata file
+        self._save_ctrl_epoch_durations(phase_name, epoch_durations)
+
+    def _save_ctrl_epoch_durations(self, phase_name: str, epoch_durations: list):
+        """
+        Save control server epoch durations to the metadata file.
+
+        This appends the epoch_durations list to the existing metadata.json file
+        in the ctrl subdirectory of results.
+
+        Args:
+            phase_name: "SELF" or "WAFL"
+            epoch_durations: List of {epoch, phase, duration_ms} dictionaries
+        """
+        if not epoch_durations:
+            self.logger.debug(f"No epoch durations to save for {phase_name} phase")
+            return
+
+        # Save to results_dir (same directory as output.log)
+        metadata_path = os.path.join(self.results_dir, "ctrl_metadata.json")
+        try:
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {"epoch_durations": []}
+
+            # Append new epoch durations
+            metadata["epoch_durations"].extend(epoch_durations)
+
+            # Save updated metadata
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            self.logger.info(f"📝 Saved {len(epoch_durations)} epoch durations for {phase_name} phase")
+        except Exception as e:
+            self.logger.error(f"💥 Failed to save epoch durations: {e}")
+
+    def _append_ctrl_epoch_duration(self, epoch_duration_entry: dict):
+        """
+        Append a single epoch duration entry to the metadata file immediately.
+
+        This ensures data is saved incrementally, even if the experiment is interrupted.
+
+        Args:
+            epoch_duration_entry: Dict with {epoch, phase, duration_ms}
+        """
+        # Save to results_dir (same directory as output.log)
+        metadata_path = os.path.join(self.results_dir, "ctrl_metadata.json")
+        try:
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {"epoch_durations": []}
+
+            # Append single entry
+            metadata["epoch_durations"].append(epoch_duration_entry)
+
+            # Save updated metadata
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"💥 Failed to append epoch duration: {e}")
 
     def _shutdown_all_agents(self):
         """Shutdown all agents gracefully by stopping Docker containers in parallel."""
@@ -1561,7 +1659,6 @@ if __name__ == "__main__":
 
         # Run experiment
         # Extract SSP settings - include 'enabled' flag for proper BSP/SSP mode selection
-        staleness = ssp_settings.get("staleness", 0) if ssp_enabled else 0
         ssp_threshold = ssp_settings.get("ssp_threshold", 1.0) if ssp_enabled else 1.0
 
         controller.run_experiment(
@@ -1570,7 +1667,6 @@ if __name__ == "__main__":
             contact_pattern=experiment_parameters["contact_pattern"],
             ssp_config={
                 "enabled": ssp_enabled,
-                "staleness": staleness,
                 "ssp_threshold": ssp_threshold,
             },
         )

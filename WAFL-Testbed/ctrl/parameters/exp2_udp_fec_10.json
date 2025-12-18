@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - UDP + FEC (M=9, Redundancy 10%)",
   "epochs": {
     "self": 64,
-    "wafl": 1536
+    "wafl": 1024
   },
   "contact_pattern": "sumo/contact_pattern_mobility.json",
   "wafl_phase": {

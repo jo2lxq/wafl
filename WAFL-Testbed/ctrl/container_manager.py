@@ -107,6 +107,9 @@ class ContainerManager:
         """
         Start the WAFL node container with standard configuration.
 
+        Note: CPU limits are NOT applied at container startup.
+        Use apply_cpu_limit() at the start of WAFL phase to apply cpu_limit.
+
         Args:
             node_info: Node configuration dict (must contain 'name', 'physical_ip', etc.)
             experiment_params: Experiment parameters (for network conditions)
@@ -115,7 +118,7 @@ class ContainerManager:
         node_name = str(node_info.get("name", "unknown"))
         ip = node_info.get("physical_ip", "")
         container_name = f"wafl-node-{node_name}"
-        cpu_limit = node_info.get("cpu_limit")
+        # NOTE: cpu_limit is NOT applied here - it will be applied at WAFL phase start
 
         # Ports
         host_ctrl = node_info.get("host_port_ctrl", 10001)  # Default from verify.py logic
@@ -135,8 +138,8 @@ class ContainerManager:
         target_path = f"{self.deployment_location}/{self.project_name}"
         mounts = f"-v {target_path}/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"
 
-        # Resource limits
-        resource_flags = f"--cpus={cpu_limit}" if cpu_limit else ""
+        # No resource limits at startup - CPU limits applied at WAFL phase start
+        resource_flags = ""
         image = "wafl-node:latest"
 
         ssh = self.connect_ssh(ip)
@@ -237,3 +240,48 @@ class ContainerManager:
 
         self._log_debug(f"Applied network rules to {container_name}: delay={delay}, loss={loss}, rate={rate}")
         return True
+
+    def apply_cpu_limit(self, ip: str, container_name: str, cpu_limit: float) -> bool:
+        """
+        Apply CPU limit to a running container using docker update.
+
+        This should be called at the start of WAFL phase to apply cpu_limit
+        that was specified in execution_config.json for each node.
+
+        Args:
+            ip: IP address of the host running the container
+            container_name: Name of the Docker container
+            cpu_limit: CPU limit value (e.g., 0.5 for half a core, 1.0 for one core)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not cpu_limit:
+            self._log_debug(f"No CPU limit to apply for {container_name}")
+            return True
+
+        ssh = self.connect_ssh(ip)
+        if not ssh:
+            return False
+
+        try:
+            # Use docker update to apply CPU limit to running container
+            update_cmd = f"docker update --cpus={cpu_limit} {container_name}"
+            stdin, stdout, stderr = self.exec_command(ssh, update_cmd)
+            exit_status = stdout.channel.recv_exit_status()
+
+            if exit_status != 0:
+                error_msg = stderr.read().decode().strip()
+                self._log_error(f"Failed to apply CPU limit to {container_name}: {error_msg}")
+                ssh.close()
+                return False
+
+            self._log_info(f"Applied CPU limit {cpu_limit} to {container_name}")
+            ssh.close()
+            return True
+
+        except Exception as e:
+            self._log_error(f"Failed to apply CPU limit to {container_name}: {e}")
+            if ssh:
+                ssh.close()
+            return False

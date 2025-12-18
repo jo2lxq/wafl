@@ -104,7 +104,6 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
   "method": {
     "ssp": {
       "enabled": true,
-      "staleness": 5,
       "ssp_threshold": 0.9
     },
     "udp": {
@@ -347,7 +346,6 @@ Defines experiment settings, hyperparameters, network conditions, and algorithms
 
 **SSP (Semi-Synchronous Protocol)**:
 - `ssp_threshold`: Completion rate threshold (0.0〜1.0)
-- `staleness`: Deprecated (kept for backward compatibility, not used)
 - When threshold is reached, slow nodes are force-skipped to ensure no node is more than 1 epoch behind
 
 **UDP + FEC**:

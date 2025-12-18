@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 4: Integrated Scenario - Traditional (Strict Sync + TCP + No Compression)",
   "epochs": {
     "self": 64,
-    "wafl": 2048
+    "wafl": 1536
   },
   "contact_pattern": "sumo_real/contact_pattern_mobility.json",
   "wafl_phase": {

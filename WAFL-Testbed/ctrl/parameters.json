@@ -1,10 +1,10 @@
 {
   "experiment_name": "test",
   "epochs": {
-    "self": 8,
-    "wafl": 8
+    "self": 32,
+    "wafl": 128
   },
-  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
+  "contact_pattern": "sumo/contact_pattern_mobility.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -15,15 +15,19 @@
     "enabled": false
   },
   "mobility_aware": {
-    "enabled": false
+    "enabled": true,
+    "contact_pattern_file": "sumo/contact_pattern_mobility.json",
+    "network_conditions_file": "sumo/network_conditions_mobility.json",
+    "path_loss_model_file": "sumo/path_loss_model.json"
   },
   "method": {
     "ssp": {
       "enabled": true,
-      "ssp_threshold": 0.6
+      "ssp_threshold": 0.8
     },
     "udp": {
-      "enabled": false
+      "enabled": true,
+      "fec_m": 9
     },
     "compression": {
       "enabled": false

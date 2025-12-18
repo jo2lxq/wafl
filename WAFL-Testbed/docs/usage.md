@@ -67,13 +67,15 @@ mise start
 1. **コンテナ起動**: 全リモートノードで Docker コンテナを起動
    ```bash
    docker run -d --name wafl-node-0 \
-     --cpus="1.0" \                    # CPU 制限（設定による）
      -p 10001:10001 \                  # 制御ポート
      -p 10002:10002 \                  # P2P ポート
      wafl-node:latest
    ```
 
-2. **リソース制限**: CPU 制限 (`--cpus`) を適用（`cpu_limit` 設定による）
+2. **CPU 制限の適用** (WAFL フェーズ開始時):
+   ```bash
+   docker update --cpus="1.0" wafl-node-0  # WAFLフェーズで動的に適用
+   ```
 
 3. **ネットワークエミュレーション**: `tc` ルールを適用
    ```bash
@@ -103,7 +105,7 @@ mise start
 ...
 🎉 All SELF training epochs completed successfully
 🤝 Phase 2: Starting WAFL phase (4096 epochs)
-⚙️  Synchronization: SSP (Staleness: 5, Threshold: 0.9)
+⚙️  Synchronization: SSP (Threshold: 90%)
 ✅ Agent 0 completed WAFL epoch 00001
 ⚡ SSP Threshold reached for epoch 00005. Forcing slow agents to skip.
 ⏩ Forcing agent 2 (epoch 00004) to skip to 00005
