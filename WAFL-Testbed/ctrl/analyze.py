@@ -337,10 +337,13 @@ def _generate_epoch_duration_plot(df, experiment_name, analysis_dir, add_phase_l
 
     # Load and plot control server epoch durations if available
     if exp_dir is not None:
-        ctrl_metadata_path = exp_dir / "ctrl_metadata.json"
-        if ctrl_metadata_path.exists():
+        # Check unified metadata.json first (new format), then fall back to ctrl_metadata.json (old format)
+        metadata_path = exp_dir / "metadata.json"
+        if not metadata_path.exists():
+            metadata_path = exp_dir / "ctrl_metadata.json"  # Backward compatibility
+        if metadata_path.exists():
             try:
-                with open(ctrl_metadata_path) as f:
+                with open(metadata_path) as f:
                     ctrl_metadata = json.load(f)
                 ctrl_durations = ctrl_metadata.get("epoch_durations", [])
                 if ctrl_durations:
@@ -556,15 +559,17 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
     plt.figure(figsize=(12, 6))
     has_meaningful_goodput_data = False
 
-    if not df.empty and "bytes_received" in df.columns and "bytes_sent" in df.columns and "epoch_duration_ms" in df.columns:
+    if not df.empty and "bytes_received" in df.columns and "bytes_sent" in df.columns and "comm_time_ms" in df.columns:
         # Filter to WAFL phase only
         wafl_df = df[df["phase"] == "WAFL"].copy()
-        goodput_data = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["bytes_sent"].notna()) & (wafl_df["epoch_duration_ms"].notna())].copy()
+        goodput_data = wafl_df[
+            (wafl_df["bytes_received"].notna()) & (wafl_df["bytes_sent"].notna()) & (wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)  # Only where communication occurred
+        ].copy()
         if not goodput_data.empty and (goodput_data["bytes_received"].sum() > 0 or goodput_data["bytes_sent"].sum() > 0):
             has_meaningful_goodput_data = True
-            # Calculate throughput in Mbps
-            goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
-            goodput_data["sent_mbps"] = (goodput_data["bytes_sent"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
+            # Calculate throughput in Mbps using comm_time_ms (pure communication time)
+            goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
+            goodput_data["sent_mbps"] = (goodput_data["bytes_sent"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
 
             goodput_agg = goodput_data.groupby("epoch").agg({"goodput_mbps": "mean", "sent_mbps": "mean"}).reset_index()
 
@@ -1845,17 +1850,17 @@ def _generate_throughput_comparison(experiments_data, group_name, output_dir):
     has_data = False
 
     for i, (exp_id, df) in enumerate(experiments_data.items()):
-        if df.empty or "bytes_received" not in df.columns or "epoch_duration_ms" not in df.columns:
+        if df.empty or "bytes_received" not in df.columns or "comm_time_ms" not in df.columns:
             continue
 
         # Filter to WAFL phase only
         wafl_df = df[df["phase"] == "WAFL"].copy() if "phase" in df.columns else df
-        plot_df = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["epoch_duration_ms"].notna())].copy()
+        plot_df = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)].copy()
         if plot_df.empty or plot_df["bytes_received"].sum() == 0:
             continue
 
         has_data = True
-        plot_df["throughput_mbps"] = (plot_df["bytes_received"] * 8 / 1e6) / (plot_df["epoch_duration_ms"] / 1000)
+        plot_df["throughput_mbps"] = (plot_df["bytes_received"] * 8 / 1e6) / (plot_df["comm_time_ms"] / 1000)
         tp_mean = plot_df.groupby("epoch")["throughput_mbps"].mean().reset_index()
 
         color = NODE_PALETTE[i % len(NODE_PALETTE)]
@@ -1990,6 +1995,250 @@ def _generate_cumulative_sent_data_comparison(experiments_data, group_name, outp
     return "cumulative_sent_data_comparison.png"
 
 
+def _generate_idle_time_comparison(experiments_data, group_name, output_dir):
+    """Generate idle time ratio comparison plot."""
+    sns.set_theme(style="darkgrid")
+    plt.figure(figsize=(12, 6))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "epoch_duration_ms" not in df.columns:
+            continue
+
+        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+        if epoch_dur.empty:
+            continue
+
+        max_dur_per_epoch = epoch_dur.groupby("epoch")["epoch_duration_ms"].max().reset_index()
+        max_dur_per_epoch.columns = ["epoch", "max_duration_ms"]
+        epoch_dur = epoch_dur.merge(max_dur_per_epoch, on="epoch")
+        epoch_dur["idle_time_ms"] = epoch_dur["max_duration_ms"] - epoch_dur["epoch_duration_ms"]
+        epoch_dur["idle_time_ratio"] = epoch_dur["idle_time_ms"] / epoch_dur["max_duration_ms"]
+        idle_agg = epoch_dur.groupby("epoch").agg({"idle_time_ratio": "mean"}).reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            idle_agg["epoch"],
+            idle_agg["idle_time_ratio"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+        )
+        has_data = True
+
+    if not has_data:
+        plt.close()
+        return None
+
+    plt.title(f"Idle Time Ratio Comparison - {group_name}")
+    plt.ylabel("Idle Time Ratio")
+    plt.xlabel("Epoch")
+    plt.ylim(0, 1)
+    plt.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "idle_time_comparison.png", dpi=150)
+    plt.close()
+    return "idle_time_comparison.png"
+
+
+def _generate_wasted_computation_comparison(experiments_data, group_name, output_dir):
+    """Generate wasted computation comparison plot (SSP mode)."""
+    wasted_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "wasted_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        ssp_data = wafl_df[(wafl_df["wasted_ms"].notna()) & (wafl_df["wasted_ms"] > 0)]
+        if ssp_data.empty:
+            continue
+
+        total_wasted_s = ssp_data["wasted_ms"].sum() / 1000
+        wasted_data.append({"experiment": _get_short_name(exp_id), "wasted_s": total_wasted_s})
+
+    if not wasted_data:
+        return None
+
+    wasted_df = pd.DataFrame(wasted_data)
+
+    sns.set_theme(style="darkgrid")
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(
+        wasted_df["experiment"],
+        wasted_df["wasted_s"],
+        color=COLORS["wasted_bar"],
+        alpha=0.8,
+    )
+
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f"{height:.1f}s",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.title(f"Total Wasted Computation (SSP) - {group_name}")
+    plt.ylabel("Wasted Time [sec]")
+    plt.xlabel("Experiment")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "wasted_computation_comparison.png", dpi=150)
+    plt.close()
+    return "wasted_computation_comparison.png"
+
+
+def _generate_goodput_comparison(experiments_data, group_name, output_dir):
+    """Generate goodput comparison plot (WAFL phase only)."""
+    sns.set_theme(style="darkgrid")
+    plt.figure(figsize=(12, 6))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "bytes_received" not in df.columns or "epoch_duration_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        goodput_data = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["epoch_duration_ms"].notna())].copy()
+        if goodput_data.empty or goodput_data["bytes_received"].sum() == 0:
+            continue
+
+        goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
+        goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            goodput_agg["epoch"],
+            goodput_agg["goodput_mbps"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+        )
+        has_data = True
+
+    if not has_data:
+        plt.close()
+        return None
+
+    plt.title(f"Goodput Comparison (WAFL Phase) - {group_name}")
+    plt.ylabel("Goodput [Mbps]")
+    plt.xlabel("Epoch")
+    plt.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "goodput_comparison.png", dpi=150)
+    plt.close()
+    return "goodput_comparison.png"
+
+
+def _generate_traffic_volume_comparison(experiments_data, group_name, output_dir):
+    """Generate traffic volume per epoch comparison plot."""
+    sns.set_theme(style="darkgrid")
+    plt.figure(figsize=(12, 6))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "bytes_sent" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        traffic_data = wafl_df[wafl_df["bytes_sent"].notna()]
+        if traffic_data.empty or traffic_data["bytes_sent"].sum() == 0:
+            continue
+
+        traffic_agg = traffic_data.groupby("epoch").agg({"bytes_sent": "sum"}).reset_index()
+        traffic_agg["sent_mb"] = traffic_agg["bytes_sent"] / (1024 * 1024)
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        plt.plot(
+            traffic_agg["epoch"],
+            traffic_agg["sent_mb"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+        )
+        has_data = True
+
+    if not has_data:
+        plt.close()
+        return None
+
+    plt.title(f"Traffic Volume per Epoch (WAFL Phase) - {group_name}")
+    plt.ylabel("Sent Data [MB]")
+    plt.xlabel("Epoch")
+    plt.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "traffic_volume_comparison.png", dpi=150)
+    plt.close()
+    return "traffic_volume_comparison.png"
+
+
+def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
+    """Generate compute vs communication time comparison plot."""
+    breakdown_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "compute_time_ms" not in df.columns or "comm_time_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[(wafl_df["compute_time_ms"].notna()) & (wafl_df["comm_time_ms"].notna())]
+        if valid.empty:
+            continue
+
+        avg_compute = valid["compute_time_ms"].mean() / 1000
+        avg_comm = valid["comm_time_ms"].mean() / 1000
+        breakdown_data.append(
+            {
+                "experiment": _get_short_name(exp_id),
+                "compute_s": avg_compute,
+                "comm_s": avg_comm,
+            }
+        )
+
+    if not breakdown_data:
+        return None
+
+    breakdown_df = pd.DataFrame(breakdown_data)
+
+    sns.set_theme(style="darkgrid")
+    fig, ax = plt.subplots(figsize=(12, 6))
+    x = range(len(breakdown_df))
+    width = 0.35
+
+    ax.bar(
+        [i - width / 2 for i in x],
+        breakdown_df["compute_s"],
+        width,
+        label="Compute",
+        color=COLORS["goodput"],
+        alpha=0.8,
+    )
+    ax.bar(
+        [i + width / 2 for i in x],
+        breakdown_df["comm_s"],
+        width,
+        label="Communication",
+        color=COLORS["traffic"],
+        alpha=0.8,
+    )
+
+    ax.set_ylabel("Average Time [sec]")
+    ax.set_xlabel("Experiment")
+    ax.set_title(f"Compute vs Communication Time (WAFL Phase) - {group_name}")
+    ax.set_xticks(x)
+    ax.set_xticklabels(breakdown_df["experiment"], rotation=45, ha="right")
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "compute_comm_comparison.png", dpi=150)
+    plt.close()
+    return "compute_comm_comparison.png"
+
+
 def compare_experiments():
     """Compare experiments grouped by 'Experiment X:' pattern."""
     groups = _get_experiment_groups()
@@ -2036,6 +2285,14 @@ def compare_experiments():
                 "cumulative_sent_data_comparison.png",
                 _generate_cumulative_sent_data_comparison,
             ),
+            ("idle_time_comparison.png", _generate_idle_time_comparison),
+            (
+                "wasted_computation_comparison.png",
+                _generate_wasted_computation_comparison,
+            ),
+            ("goodput_comparison.png", _generate_goodput_comparison),
+            ("traffic_volume_comparison.png", _generate_traffic_volume_comparison),
+            ("compute_comm_comparison.png", _generate_compute_comm_comparison),
         ]
 
         generated = []

@@ -23,7 +23,7 @@
   "method": {
     "ssp": {
       "enabled": true,
-      "ssp_threshold": 0.8
+      "ssp_threshold": 0.9
     },
     "udp": {
       "enabled": true,

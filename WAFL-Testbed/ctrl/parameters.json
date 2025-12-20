@@ -1,8 +1,8 @@
 {
   "experiment_name": "test",
   "epochs": {
-    "self": 32,
-    "wafl": 128
+    "self": 8,
+    "wafl": 512
   },
   "contact_pattern": "sumo/contact_pattern_mobility.json",
   "wafl_phase": {
@@ -22,12 +22,10 @@
   },
   "method": {
     "ssp": {
-      "enabled": true,
-      "ssp_threshold": 0.8
+      "enabled": false
     },
     "udp": {
-      "enabled": true,
-      "fec_m": 9
+      "enabled": false
     },
     "compression": {
       "enabled": false

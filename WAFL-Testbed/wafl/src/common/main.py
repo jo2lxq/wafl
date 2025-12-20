@@ -326,12 +326,14 @@ class ModelLearningUtils:
                         if model is not None:
                             received_models.append(model)
 
-            # Aggregate received models
+            # Aggregate received models (optimized with no_grad and in-place operations)
             n_received = len(received_models)
-            for received_model in received_models:
-                for key in self.net.state_dict():
-                    model_difference = received_model[key] - self.net.state_dict()[key]
-                    local_model[key] += model_difference * self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
+            with torch.no_grad():
+                coeff = self.wafl_phase_params["coefficiency"] / (n_nbr + 1)
+                for received_model in received_models:
+                    for key in self.net.state_dict():
+                        model_difference = received_model[key] - self.net.state_dict()[key]
+                        local_model[key].add_(model_difference * coeff)
 
             comm_time_ms = (time.time() - comm_start_time) * 1000
             self.net.load_state_dict(local_model)
@@ -521,9 +523,15 @@ class ModelSharingUtils:
                     other_options += "&protocol=udp"
 
                 command = f"{ModelSharingUtils.cMDLREQ}:src={self.addr}{other_options}\r\n"
-                s.settimeout(self.timeout)
+
+                # Set per-recv timeout to 2s, but enforce overall deadline
+                per_recv_timeout = min(2.0, self.timeout)
+                s.settimeout(per_recv_timeout)
                 s.connect((peer_IP, self.port))
                 s.sendall(command.encode("utf-8"))
+
+                # Overall transfer deadline - this is the key fix for TCP timeout
+                transfer_deadline = time.time() + self.timeout
 
                 # Check response
                 # If UDP, we expect "OK_UDP" or similar, then wait for UDP.
@@ -533,6 +541,10 @@ class ModelSharingUtils:
                 first_packet = s.recv(4096)
                 if b"OK_UDP" in first_packet:
                     self.logger.info(f"Waiting for UDP model from {peer_IP}...")
+
+                    # Send READY acknowledgment so sender knows we're prepared
+                    s.sendall(b"READY\r\n")
+
                     # Wait for UDP data
                     start_wait = time.time()
                     while time.time() - start_wait < self.timeout * 2:  # Give more time for UDP
@@ -544,13 +556,38 @@ class ModelSharingUtils:
                     else:
                         raise Exception("UDP RECEIVE TIMEOUT")
                 else:
-                    # TCP fallback or standard TCP
+                    # TCP fallback or standard TCP - enforce STRICT overall deadline
+                    # This is critical: even if packets trickle in slowly, we must
+                    # abort if total transfer time exceeds deadline
                     data = [first_packet]
+                    bytes_received_in_loop = len(first_packet)
+
                     while True:
-                        packet = s.recv(4096)
-                        if not packet:
-                            break
-                        data.append(packet)
+                        # ALWAYS check overall deadline BEFORE attempting recv
+                        current_time = time.time()
+                        if current_time > transfer_deadline:
+                            self.logger.warning(f"⏱️ TCP strict deadline exceeded after receiving {bytes_received_in_loop} bytes")
+                            raise TimeoutError(f"TCP transfer deadline exceeded ({self.timeout}s)")
+
+                        # Calculate remaining time and set socket timeout accordingly
+                        remaining_time = transfer_deadline - current_time
+                        s.settimeout(min(remaining_time, 1.0))  # Max 1s per recv
+
+                        try:
+                            packet = s.recv(4096)
+                            if not packet:
+                                break  # Connection closed by peer - normal end
+                            data.append(packet)
+                            bytes_received_in_loop += len(packet)
+                        except socket.timeout:
+                            # Socket timeout occurred - check if overall deadline exceeded
+                            if time.time() > transfer_deadline:
+                                self.logger.warning(f"⏱️ TCP deadline exceeded during recv ({bytes_received_in_loop} bytes received)")
+                                raise TimeoutError(f"TCP transfer deadline exceeded ({self.timeout}s)")
+                            # Do NOT continue - if timeout occurred, deadline is imminent
+                            # Re-raise to abort this transfer attempt
+                            raise TimeoutError(f"TCP recv timeout, aborting transfer ({bytes_received_in_loop} bytes received)")
+
                     data = b"".join(data)
                     # Record TCP bytes received
                     self.tcp_stats["bytes_received"] += len(data)
@@ -560,6 +597,9 @@ class ModelSharingUtils:
             if data == b"ERROR" or data is None:
                 raise Exception("FETCH ERROR")
             return True, data
+        except TimeoutError as te:
+            self.logger.warning(f"⏱️ TCP timeout in _fetch_model: {te}")
+            return False, b"ERROR"
         except Exception as exc:
             self.logger.error(f"The following error occurred in _fetch_model: {str(exc)[:100]}...")
             return False, b"ERROR"
@@ -596,16 +636,23 @@ class ModelSharingUtils:
                 # Get peer IP from connection
                 peer_ip = conn.getpeername()[0]
                 self.logger.info(f"📡 Dispatching model via UDP to {peer_ip}")
-                # Send OK via TCP first? Or just send UDP?
-                # Usually we should confirm receipt of request.
-                # But _dispatch_model is called inside the loop.
-                # If we send UDP, we might not send anything on TCP, or send "OK".
-                # But the requester expects data on TCP if not UDP.
-                # If UDP, requester is waiting on UDP.
-                # We should send a small confirmation on TCP.
+
+                # Send OK_UDP notification via TCP
                 conn.sendall(b"OK_UDP\r\n")
 
-                # Send via UDP
+                # READY acknowledgment is optional - don't block on it
+                # Send immediately after OK_UDP to avoid handshake deadlock
+                # TCP stream may combine OK_UDP with other data on receiver side
+                conn.settimeout(0.1)  # Very short timeout - just check if ACK arrived
+                try:
+                    ready_ack = conn.recv(16)
+                    if b"READY" in ready_ack:
+                        self.logger.debug("Receiver confirmed READY for UDP")
+                except (socket.timeout, Exception):
+                    # No ACK is fine - proceed immediately
+                    pass
+
+                # Send via UDP immediately
                 success = self.udp_sharing.send_model(model_data, peer_ip, self.port)  # Use same port
                 if not success:
                     raise Exception("UDP DISPATCH ERROR")
@@ -683,26 +730,41 @@ class ModelSharingUtils:
         self.vMODEL_EPOCH = epoch_number
         self.logger.debug(f"Updated model instance (epoch={epoch_number})")
 
-    def request_model_from_peer(self, peer_IP: str, other_options: str = "") -> Any:
+    def request_model_from_peer(self, peer_IP: str, other_options: str = "", max_retries: int = 3) -> Any:
         """
         The wrapper function for retrieving model parameters from a WAFL peer device.
         options attribute, if non-empty, should be prefixed by a '&' character.
         Format of options: &param1=val1&param2=val2...
-        Keeps requesing for parameters until they are retrieved successfully.
-        Uses Exponential Backoff Mechanism for waiting between retries.
+
+        Args:
+            peer_IP: Target peer IP address
+            other_options: Additional options string
+            max_retries: Maximum number of retry attempts (default: 3)
+
+        Returns:
+            Model data if successful, error message string if failed
         """
         FETCHED = False
         WAIT_TIME = 1.0
         GROWTH_FACTOR = 1.5
-        while not FETCHED and self.fLISTENER_ACTIVE:
+        retries = 0
+
+        while not FETCHED and self.fLISTENER_ACTIVE and retries < max_retries:
             FETCHED, model_data = self._fetch_model(peer_IP, other_options)
             if FETCHED:
                 self.logger.info(f"Model received from peer {str(peer_IP)}")
                 return model_data
-            time.sleep(WAIT_TIME)
-            WAIT_TIME **= GROWTH_FACTOR
-        # Handling KILL command from Control Server.
-        return "Fetch Operation Terminated Abruptly."
+            retries += 1
+            if retries < max_retries:
+                time.sleep(WAIT_TIME)
+                WAIT_TIME = min(WAIT_TIME * GROWTH_FACTOR, 5.0)  # Cap wait time at 5s
+
+        # Record fetch failure for TCP stats (used for survival rate calculation)
+        if not FETCHED and self.udp_sharing is None:
+            self.tcp_stats["fetch_failed"] = self.tcp_stats.get("fetch_failed", 0) + 1
+            self.logger.warning(f"Failed to fetch model from {peer_IP} after {max_retries} retries")
+
+        return "Fetch Operation Failed."
 
     def get_epoch_metrics(self) -> dict:
         """
@@ -727,16 +789,28 @@ class ModelSharingUtils:
                 }
             )
         else:
-            # TCP only - use tcp_stats
+            # TCP only - report actual bytes sent (no estimation)
+            # The fetch failure rate affects survival_rate but not bytes_sent
+            # since we only count successfully sent data, not protocol overhead
+            fetch_success = self.tcp_stats.get("models_received", 0)
+            fetch_failed = self.tcp_stats.get("fetch_failed", 0)
+            fetch_attempts = fetch_success + fetch_failed
+
+            # Calculate survival rate based on fetch success
+            survival_rate = fetch_success / fetch_attempts if fetch_attempts > 0 else 1.0
+
+            # Report actual bytes sent - no artificial adjustment
+            bytes_sent = self.tcp_stats.get("bytes_sent", 0)
+
             metrics.update(
                 {
-                    "survival_rate": 1.0,  # TCP is reliable
+                    "survival_rate": survival_rate,
                     "sent_models": self.tcp_stats.get("models_sent", 0),
-                    "sent_failed": 0,  # TCP doesn't track failures the same way
-                    "received_models": self.tcp_stats.get("models_received", 0),
+                    "sent_failed": fetch_failed,
+                    "received_models": fetch_success,
                     "fec_recovery_success": 0,
                     "fec_recovery_fail": 0,
-                    "bytes_sent": self.tcp_stats.get("bytes_sent", 0),
+                    "bytes_sent": bytes_sent,  # Actual bytes sent (no estimation)
                     "bytes_received": self.tcp_stats.get("bytes_received", 0),
                 }
             )
@@ -944,7 +1018,7 @@ class CTRL_TCP:
 
             # Load model exchange timeout from parameters (default: 5.0 seconds)
             method_config = config_data.get("method", {})
-            self.timeout = method_config.get("model_exchange_timeout", 5.0)
+            self.timeout = method_config.get("model_exchange_timeout", 3.0)
             self.logger.info(f"Model exchange timeout set to {self.timeout}s")
 
             if not isinstance(self.timeout, (int, float)):

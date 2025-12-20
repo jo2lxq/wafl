@@ -80,19 +80,22 @@ def apply_htb_filter_tc(
     """
     Apply HTB + Filter tc configuration for per-peer limitations.
 
+    Uses 'replace' instead of 'add' for atomic qdisc update when possible.
+
     Args:
         interface: Network interface name
         peers: Dict mapping peer IP to their rank and parameters
         rank_definitions: List of rank definitions from path loss model
     """
-    print(f"  📡 Applying tc rules to {interface}...")
+    print(f"  📡 Applying tc rules to {interface} (atomic)...")
 
-    # Step 1: Create root HTB qdisc
+    # Step 1: Replace root HTB qdisc atomically
+    # Using 'replace' allows us to update without the momentary "unlimited" state
     cmd = [
         "sudo",
         "tc",
         "qdisc",
-        "add",
+        "replace",
         "dev",
         interface,
         "root",
@@ -101,7 +104,7 @@ def apply_htb_filter_tc(
         "htb",
     ]
     subprocess.run(cmd, check=True, capture_output=True)
-    print("    ✓ Created root HTB qdisc")
+    print("    ✓ Replaced root HTB qdisc (atomic)")
 
     # Step 2: Create classes for each rank
     rank_to_classid = {}
@@ -131,6 +134,8 @@ def apply_htb_filter_tc(
     for rank in rank_definitions:
         classid, handle = rank_to_classid[rank["name"]]
 
+        # Build netem command with optional loss correlation for burst loss
+        # Burst loss (correlated loss) is especially harmful to TCP
         cmd = [
             "sudo",
             "tc",
@@ -148,8 +153,15 @@ def apply_htb_filter_tc(
             "loss",
             rank["loss"],
         ]
+
+        # Add loss correlation if specified (for burst loss behavior)
+        # Format: "loss X% Y%" where Y is correlation percentage
+        loss_correlation = rank.get("loss_correlation", "25%")  # Default 25% correlation
+        if loss_correlation and loss_correlation != "0%":
+            cmd.append(loss_correlation)
+
         subprocess.run(cmd, check=True, capture_output=True)
-        print(f"    ✓ Applied netem to {classid} (delay={rank['delay']}, loss={rank['loss']})")
+        print(f"    ✓ Applied netem to {classid} (delay={rank['delay']}, loss={rank['loss']} corr={loss_correlation})")
 
     # Step 4: Add filters to route traffic to appropriate class based on destination IP
     filter_count = 0

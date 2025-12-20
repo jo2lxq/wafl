@@ -84,8 +84,8 @@ class UDPModelSharing:
                     sock.sendto(packet, (target_ip, target_port))
                     # Track actual bytes sent (including header)
                     actual_bytes_sent += len(packet)
-                    # Pacing
-                    time.sleep(0.0001)
+                    # NO PACING SLEEP - send at maximum speed like TCP does
+                    # This ensures fair comparison with TCP which uses kernel-level pacing
             sock.close()
 
             total_packets = total_chunks * self.m

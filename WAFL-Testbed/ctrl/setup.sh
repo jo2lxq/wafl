@@ -108,7 +108,7 @@ for HOST in "${HOSTS[@]}"; do
         docker container prune -f 2>/dev/null || true
 
         echo -e '${YELLOW}📁 Clearing deployment directory...${NC}'
-        rm -rf ${DEPLOY_DIR} && mkdir -p ${DEPLOY_DIR}
+        sudo rm -rf ${DEPLOY_DIR} && mkdir -p ${DEPLOY_DIR}
     "
 
     sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$DOCKER_CLEANUP" 2>/dev/null

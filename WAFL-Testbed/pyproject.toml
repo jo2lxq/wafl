@@ -40,7 +40,7 @@ exclude = [
     "assets",
 ]
 indent-width = 4
-line-length = 512
+line-length = 256
 
 [tool.ruff.format]
 quote-style = "double"
