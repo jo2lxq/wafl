@@ -208,26 +208,17 @@ echo 'export SUMO_HOME="/usr/share/sumo"' >> ~/.bashrc
 
 #### tc コマンドの権限エラー
 
-`apply_dynamic_tc.py` は `sudo` を使用する．パスワードなし sudo 設定が必要な場合：
-
-```bash
-# /etc/sudoers に追加（visudo で編集）
-your_username ALL=(ALL) NOPASSWD: /sbin/tc
-```
+tc コマンドはコンテナ内で `docker exec` を使用して実行される．コンテナ起動時に `--cap-add=NET_ADMIN` が付与されているため，通常は権限エラーは発生しない．
 
 #### 動的 tc 設定が適用されない
 
 1. `mobility_aware.enabled` が `true` か確認
 2. ログファイルで "Applying dynamic network conditions" メッセージを確認
-3. ホスト上で手動実行テスト:
+3. コンテナ内で手動確認:
    ```bash
-   cd /path/to/wafl
-   python3 utils/apply_dynamic_tc.py \
-     --container wafl-node-0 \
-     --epoch 0 \
-     --node-id 0 \
-     --conditions data/network_conditions_mobility.json \
-     --pathloss data/sumo/path_loss_model.json
+   docker exec wafl-node-0 tc qdisc show dev eth0
+   docker exec wafl-node-0 tc class show dev eth0
+   docker exec wafl-node-0 tc filter show dev eth0
    ```
 
 ---
@@ -434,26 +425,17 @@ echo 'export SUMO_HOME="/usr/share/sumo"' >> ~/.bashrc
 
 #### tc Command Permission Error
 
-`apply_dynamic_tc.py` uses `sudo`. For passwordless sudo if needed:
-
-```bash
-# Add to /etc/sudoers (edit with visudo)
-your_username ALL=(ALL) NOPASSWD: /sbin/tc
-```
+tc commands are executed inside the container using `docker exec`. Since containers are started with `--cap-add=NET_ADMIN`, permission errors should not normally occur.
 
 #### Dynamic tc Configuration Not Applied
 
 1. Confirm `mobility_aware.enabled` is `true`
 2. Check for "Applying dynamic network conditions" messages in log files
-3. Test manual execution on host:
+3. Manually verify inside container:
    ```bash
-   cd /path/to/wafl
-   python3 utils/apply_dynamic_tc.py \
-     --container wafl-node-0 \
-     --epoch 0 \
-     --node-id 0 \
-     --conditions data/network_conditions_mobility.json \
-     --pathloss data/sumo/path_loss_model.json
+   docker exec wafl-node-0 tc qdisc show dev eth0
+   docker exec wafl-node-0 tc class show dev eth0
+   docker exec wafl-node-0 tc filter show dev eth0
    ```
 
 ### References

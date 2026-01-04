@@ -110,6 +110,16 @@ def get_build_context_hash():
                 except (OSError, IOError):
                     pass
 
+    # Hash utils directory (all files that will be copied to container)
+    utils_dir = PROJECT_ROOT / "utils"
+    if utils_dir.exists():
+        for file_path in sorted(utils_dir.rglob("*")):
+            if file_path.is_file() and not file_path.name.startswith("."):
+                try:
+                    h.update(file_path.read_bytes())
+                except (OSError, IOError):
+                    pass
+
     return h.hexdigest()[:16]
 
 

@@ -1,0 +1,42 @@
+{
+  "epochs": {
+    "self": 8,
+    "wafl": 64
+  },
+  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "mobility_aware": {
+    "enabled": false
+  },
+  "method": {
+    "model_fetch_timeout": 15.0,
+    "ssp": {
+      "enabled": false
+    },
+    "udp": {
+      "enabled": true,
+      "fec_m": "auto",
+      "timeouts": {
+        "initial_packet": 2.0,
+        "inter_packet": 0.2,
+        "model_completion": 15.0
+      }
+    },
+    "compression": {
+      "enabled": true,
+      "initial_method": "zlib"
+    }
+  },
+  "experiment_name": "Experiment 0: fair (UDP)",
+  "network_condition": {
+    "enabled": true,
+    "rate": "3mbit",
+    "delay": "30ms",
+    "loss": "8%"
+  }
+}

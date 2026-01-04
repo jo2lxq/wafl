@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Tuple
 import paramiko
 
 from ctrl.container_manager import ContainerManager
+from ctrl.ssh_connection_manager import SSHConnectionManager
 
 
 class WaflAgent:
@@ -45,6 +46,7 @@ class WaflAgent:
         host_p2p_port: int = None,
         container_p2p_port: int = None,
         node_config: dict = None,
+        ssh_manager=None,
     ):
         self.agent_index = agent_index
         self.name = device_name
@@ -61,13 +63,15 @@ class WaflAgent:
         self.experiment_id = experiment_id
         self.start_timestamp = start_timestamp
         self.node_config = node_config or {}
+        self.ssh_manager = ssh_manager
 
-        # Initialize ContainerManager
+        # Initialize ContainerManager (with shared SSH manager if available)
         self.container_manager = ContainerManager(
             user=self.config.get("USER", "denjo"),
             deployment_location=self.config.get("DEPLOYMENT_LOCATION", "/home/denjo"),
             project_name=self.config.get("PROJECT_NAME", "WAFL-Testbed"),
             logger=self.logger,
+            ssh_manager=self.ssh_manager,
         )
 
         # Deploy configurations during initialization
@@ -111,7 +115,7 @@ class WaflAgent:
                 "wafl_phase": experiment_parameters.get("wafl_phase", {}),
             },
             "runtime": {
-                "log_level": os.environ.get("LOG_LEVEL", "INFO"),
+                "log_level": os.environ.get("LOG_LEVEL", "DEBUG"),
             },
         }
 
@@ -135,23 +139,30 @@ class WaflAgent:
         self.logger.debug(f"📦 Deployment [1/3] - Starting configuration deployment to agent {self.name}")
 
         try:
-            ssh_port = 22
-            username = self.config["USER"]
-            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
-
-            if not os.path.exists(private_key_path):
-                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
-
-            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
             config_dir = os.path.join(target_path, "config")
 
-            self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
+            # Use SSH connection manager if available, otherwise create new connection
+            if self.ssh_manager:
+                ssh = self.ssh_manager.get_connection(self.ip)
+                use_context_manager = False
+            else:
+                ssh_port = 22
+                username = self.config["USER"]
+                private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
-            with paramiko.SSHClient() as ssh:
+                if not os.path.exists(private_key_path):
+                    raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+
+                key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+                self.logger.debug(f"🔗 Connecting to {username}@{self.ip} for configuration deployment")
+
+                ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+                use_context_manager = True
 
+            try:
                 # Ensure config directory exists
                 command_mkdir = f"mkdir -p {config_dir}"
                 stdin, stdout, stderr = ssh.exec_command(command_mkdir)
@@ -321,6 +332,11 @@ class WaflAgent:
                 self.logger.info(f"✅ Deployment [3/3] - Complete ({total_files} files deployed to agent {self.name})")
                 return True
 
+            finally:
+                # Only close SSH connection if we created it (not using manager)
+                if use_context_manager:
+                    ssh.close()
+
         except FileNotFoundError as e:
             self.logger.error(f"📁 Configuration file error for agent {self.name}: {e}")
             return False
@@ -356,24 +372,31 @@ class WaflAgent:
             unified_config = self._create_unified_config(experiment_parameters)
             config_json = json.dumps(unified_config, indent=2, ensure_ascii=False)
 
-            ssh_port = 22
-            username = self.config["USER"]
-            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
-
-            if not os.path.exists(private_key_path):
-                raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
-
-            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             target_path = os.path.join(self.config["DEPLOYMENT_LOCATION"], self.config["PROJECT_NAME"])
             config_dir = os.path.join(target_path, "config")
             config_file_path = os.path.join(config_dir, f"config_{self.agent_index}.json")
 
-            self.logger.debug(f"🔗 Deploying config to {username}@{self.ip}:{config_file_path}")
+            # Use SSH connection manager if available, otherwise create new connection
+            if self.ssh_manager:
+                ssh = self.ssh_manager.get_connection(self.ip)
+                use_context_manager = False
+            else:
+                ssh_port = 22
+                username = self.config["USER"]
+                private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
-            with paramiko.SSHClient() as ssh:
+                if not os.path.exists(private_key_path):
+                    raise FileNotFoundError(f"🔑 SSH private key not found at {private_key_path}")
+
+                key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+                self.logger.debug(f"🔗 Deploying config to {username}@{self.ip}:{config_file_path}")
+
+                ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+                use_context_manager = True
 
+            try:
                 # Create config directory
                 command_mkdir = f"mkdir -p {config_dir}"
                 stdin, stdout, stderr = ssh.exec_command(command_mkdir)
@@ -405,6 +428,11 @@ class WaflAgent:
 
                 self.logger.info(f"✅ Config deployed successfully to agent {self.name} at {config_file_path}")
                 return True
+
+            finally:
+                # Only close SSH connection if we created it (not using manager)
+                if use_context_manager:
+                    ssh.close()
 
         except FileNotFoundError as e:
             self.logger.error(f"🔑 SSH key error for agent {self.name}: {e}")
@@ -459,7 +487,7 @@ class WaflAgent:
             success = self.container_manager.start_wafl_container(
                 node_info=node_info,
                 experiment_params=experiment_params,
-                env_vars="-e LOG_LEVEL=INFO",
+                env_vars="-e LOG_LEVEL=DEBUG",
             )
 
             if not success:
@@ -693,15 +721,11 @@ class WaflAgent:
             return False
 
         try:
-            ssh_port = 22
-            username = args["USER"]
-            private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
-            key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
             command_kill = f"kill -9 {self.pid}"
 
-            with paramiko.SSHClient() as ssh:
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+            # Use SSH connection manager if available, otherwise create new connection
+            if self.ssh_manager:
+                ssh = self.ssh_manager.get_connection(self.ip)
                 stdin, stdout, stderr = ssh.exec_command(command_kill)
                 exit_status = stdout.channel.recv_exit_status()
 
@@ -713,6 +737,26 @@ class WaflAgent:
                     error_msg = stderr.read().decode().strip()
                     self.logger.error(f"❌ Force kill failed for agent {self.name}: {error_msg}")
                     return False
+            else:
+                ssh_port = 22
+                username = args["USER"]
+                private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
+                key = paramiko.Ed25519Key.from_private_key_file(private_key_path)
+
+                with paramiko.SSHClient() as ssh:
+                    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    ssh.connect(self.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+                    stdin, stdout, stderr = ssh.exec_command(command_kill)
+                    exit_status = stdout.channel.recv_exit_status()
+
+                    if exit_status == 0:
+                        self.status = "TERMINATED"
+                        self.logger.info(f"Force kill - Agent {self.name} terminated successfully")
+                        return True
+                    else:
+                        error_msg = stderr.read().decode().strip()
+                        self.logger.error(f"❌ Force kill failed for agent {self.name}: {error_msg}")
+                        return False
 
         except Exception as e:
             self.logger.error(f"💥 Error during force kill for agent {self.name}: {e}", exc_info=True)
@@ -734,8 +778,17 @@ class ControlServer:
         self.mobility_aware_config = None
         self.network_conditions = None
         self.path_loss_model = None
+        self.start_timestamp = time.time()
         self._setup_logging()
         self._load_mobility_aware_config()
+
+        # Initialize SSH connection manager for connection reuse
+        self.ssh_manager = SSHConnectionManager(
+            user=self.config.get("USER", "denjo"),
+            private_key_path="~/.ssh/id_ed25519",
+            timeout=10,
+            logger=self.logger,
+        )
 
     def _load_config(self) -> Dict[str, Any]:
         """Load config file (execution_config.json)."""
@@ -848,6 +901,7 @@ class ControlServer:
                             host_p2p_port=node.get("host_port_p2p", 10002),
                             container_p2p_port=node.get("container_port_p2p", 10002),  # Ensure this is passed
                             node_config=node,
+                            ssh_manager=self.ssh_manager,
                         )
                         return (True, agent, device_name, None)
                     except Exception as e:
@@ -895,9 +949,9 @@ class ControlServer:
             for handler in root_logger.handlers[:]:
                 root_logger.removeHandler(handler)
 
-            # Get log level from config (default to INFO)
-            log_level_str = self.config.get("LOG_LEVEL", "INFO")
-            log_level = getattr(logging, log_level_str, logging.INFO)
+            # Get log level from config (default to DEBUG)
+            log_level_str = self.config.get("LOG_LEVEL", "DEBUG")
+            log_level = getattr(logging, log_level_str, logging.DEBUG)
 
             logging.basicConfig(
                 level=log_level,
@@ -1015,6 +1069,9 @@ class ControlServer:
             self.logger.info("⚙️ Applying CPU limits for WAFL phase...")
             self._apply_cpu_limits_to_all_agents()
 
+            # 2.5. Apply static network conditions if configured
+            self._apply_static_network_conditions()
+
             # 3. Run WAFL phase
             self.logger.info(f"🤝 Phase [3/4] - WAFL training ({epochs['wafl']} epochs)")
 
@@ -1037,14 +1094,26 @@ class ControlServer:
             # Record WAFL phase start timestamp for time-to-accuracy analysis
             wafl_phase_start_timestamp = time.time()
             wafl_phase_start_relative = wafl_phase_start_timestamp - self.start_timestamp
-            metadata = {
-                "wafl_phase_start_timestamp": wafl_phase_start_timestamp,
-                "wafl_phase_start_relative": wafl_phase_start_relative,
-                "experiment_start_timestamp": self.start_timestamp,
-                "self_epochs": epochs["self"],
-                "wafl_epochs": epochs["wafl"],
-            }
+
+            # Load existing metadata (may contain epoch_durations from SELF phase)
             metadata_path = os.path.join(self.results_dir, "metadata.json")
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {}
+
+            # Update with WAFL phase metadata (preserving epoch_durations if present)
+            metadata.update(
+                {
+                    "wafl_phase_start_timestamp": wafl_phase_start_timestamp,
+                    "wafl_phase_start_relative": wafl_phase_start_relative,
+                    "experiment_start_timestamp": self.start_timestamp,
+                    "self_epochs": epochs["self"],
+                    "wafl_epochs": epochs["wafl"],
+                }
+            )
+
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
             self.logger.info(f"📝 WAFL phase metadata saved to {metadata_path}")
@@ -1054,6 +1123,7 @@ class ControlServer:
                 epochs["wafl"],
                 ssp_threshold=ssp_threshold,
                 ssp_enabled=ssp_enabled,
+                epoch_offset=epochs["self"],
             )
 
             self.logger.info("✅ Phase [3/4] - Complete (WAFL training finished)")
@@ -1090,12 +1160,13 @@ class ControlServer:
         nodes = exec_config.get("nodes", [])
         node_cpu_limits = {str(node["name"]): node.get("cpu_limit") for node in nodes}
 
-        # Create a ContainerManager for applying CPU limits
+        # Create a ContainerManager for applying CPU limits (using shared SSH connections)
         container_manager = ContainerManager(
             user=self.config["USER"],
             deployment_location=self.config["DEPLOYMENT_LOCATION"],
             project_name=self.config["PROJECT_NAME"],
             logger=self.logger,
+            ssh_manager=self.ssh_manager,
         )
 
         applied_count = 0
@@ -1113,12 +1184,122 @@ class ControlServer:
 
         self.logger.info(f"✅ CPU limits applied to {applied_count}/{len(self.agents)} agents")
 
+    def _apply_static_network_conditions(self):
+        """
+        Apply static network conditions from parameters.json to all agent containers.
+
+        This is called before WAFL phase to set up tc rules for delay, loss, and rate limiting.
+        The tc rules are applied bidirectionally between all node pairs.
+        """
+        try:
+            with open("ctrl/parameters.json", "r") as f:
+                params = json.load(f)
+        except Exception as e:
+            self.logger.error(f"💥 Failed to load parameters.json: {e}")
+            return
+
+        net_cond = params.get("network_condition", {})
+        if not net_cond.get("enabled", False):
+            self.logger.debug("Static network conditions disabled")
+            return
+
+        delay = net_cond.get("delay", "50ms")
+        loss = net_cond.get("loss", "0%")
+        rate = net_cond.get("rate", "100mbit")
+
+        self.logger.info(f"📡 Applying static network conditions: delay={delay}, loss={loss}, rate={rate}")
+
+        # Load execution config to get peer node IPs
+        try:
+            with open("ctrl/execution_config.json", "r") as f:
+                exec_config = json.load(f)
+        except Exception as e:
+            self.logger.error(f"💥 Failed to load execution_config.json: {e}")
+            return
+
+        # Get list of all peer node IPs for filtering (only apply tc to peer-to-peer traffic)
+        peer_ips = [node["physical_ip"] for node in exec_config.get("nodes", [])]
+        self.logger.debug(f"📋 Peer IPs for tc filtering: {peer_ips}")
+
+        def apply_tc_to_agent(agent):
+            """Apply tc rules to a single agent's container, only for peer-to-peer traffic."""
+            container_name = f"wafl-node-{agent.agent_index}"
+
+            # Build tc commands with filters to apply only to traffic destined for peer nodes
+            # This ensures control server communication is not affected
+            # 1. Clear existing rules
+            # 2. Add root htb qdisc with default class 20 (unrestricted)
+            # 3. Add restricted class 1:10 for peer traffic
+            # 4. Add unrestricted class 1:20 for other traffic (control server, etc.)
+            # 5. Add netem qdisc to restricted class
+            # 6. Add filters to route peer traffic to restricted class
+
+            # Build filter commands for each peer IP
+            filter_cmds_list = []
+            for peer_ip in peer_ips:
+                # Skip self (same container would have same IP)
+                if peer_ip == agent.ip:
+                    continue
+                filter_cmds_list.append(f"tc filter add dev eth0 protocol ip parent 1:0 prio 1 u32 match ip dst {peer_ip} flowid 1:10")
+
+            # Join filter commands with actual newlines
+            filter_cmds = "\n".join(filter_cmds_list)
+
+            tc_script = f"""
+set -e
+tc qdisc del dev eth0 root 2>/dev/null || true
+tc qdisc add dev eth0 root handle 1: htb default 20
+tc class add dev eth0 parent 1: classid 1:10 htb rate {rate}
+tc class add dev eth0 parent 1: classid 1:20 htb rate 1000mbit
+tc qdisc add dev eth0 parent 1:10 handle 10: netem delay {delay} loss {loss}
+{filter_cmds}
+echo "TC applied successfully with peer filters"
+"""
+
+            cmd = f"docker exec {container_name} sh -c '{tc_script}'"
+
+            try:
+                ssh = self.ssh_manager.get_connection(agent.ip)
+
+                stdin, stdout, stderr = ssh.exec_command(cmd)
+                exit_status = stdout.channel.recv_exit_status()
+
+                if exit_status == 0:
+                    return (True, agent.name, None)
+                else:
+                    error = stderr.read().decode().strip()
+                    return (False, agent.name, error)
+            except Exception as e:
+                return (False, agent.name, str(e))
+
+        # Apply tc rules in parallel for all agents
+        applied_count = 0
+        failed_agents = []
+
+        with ThreadPoolExecutor(max_workers=len(self.agents)) as executor:
+            futures = {executor.submit(apply_tc_to_agent, agent): agent for agent in self.agents}
+            for future in as_completed(futures):
+                success, name, error = future.result()
+                if success:
+                    applied_count += 1
+                    self.logger.debug(f"✅ TC rules applied to agent {name}")
+                else:
+                    failed_agents.append(name)
+                    if error:
+                        self.logger.warning(f"⚠️ Failed to apply TC to agent {name}: {error}")
+
+        if failed_agents:
+            self.logger.warning(f"⚠️ TC rules failed for {len(failed_agents)} agents: {failed_agents}")
+        else:
+            self.logger.info(f"✅ Static network conditions applied to {applied_count}/{len(self.agents)} agents (peer traffic only)")
+
     def _run_phase(
         self,
         phase_name: str,
         total_epochs: int,
         ssp_threshold: float = 1.0,
         ssp_enabled: bool = False,
+        epoch_offset: int = 0,
     ):
         """
         Run a single training phase (SELF or WAFL) with configurable synchronization.
@@ -1179,23 +1360,27 @@ class ControlServer:
                     if min_epoch > 0:  # Don't record for epoch 0 (phase start)
                         epoch_start = epoch_start_times.get(min_epoch - 1, start_time)
                         duration_ms = (current_epoch_end_time - epoch_start) * 1000
+                        # Use global epoch number (1-indexed, continuous across SELF and WAFL phases)
+                        global_epoch = min_epoch + epoch_offset
                         epoch_duration_entry = {
-                            "epoch": min_epoch,
+                            "epoch": global_epoch,
                             "phase": phase_name,
                             "duration_ms": duration_ms,
                         }
                         epoch_durations.append(epoch_duration_entry)
-                        self.logger.debug(f"{phase_name} Epoch {min_epoch} completed: {duration_ms:.1f}ms (server-side)")
+                        self.logger.debug(f"{phase_name} Epoch {global_epoch} completed: {duration_ms:.1f}ms (server-side)")
                         # Immediately save to file (incremental save)
                         self._append_ctrl_epoch_duration(epoch_duration_entry)
 
                     # Record start time for next epoch
                     epoch_start_times[min_epoch] = current_epoch_end_time
 
+                    # Log with 1-indexed epoch number for display
+                    display_epoch = min_epoch + epoch_offset
                     if ssp_enabled:
-                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
+                        self.logger.debug(f"{phase_name} Epoch {display_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
                     else:
-                        self.logger.debug(f"{phase_name} Epoch {min_epoch}: All nodes synchronized (BSP)")
+                        self.logger.debug(f"{phase_name} Epoch {display_epoch}: All nodes synchronized (BSP)")
                     last_epoch_logged = min_epoch
                 if min_epoch >= total_epochs:
                     break
@@ -1367,51 +1552,18 @@ class ControlServer:
                     idle_count = sum(1 for s in agent_status.values() if s == "IDLE")
                     error_count = sum(1 for s in agent_status.values() if s == "ERROR")
 
+                    # Display with 1-indexed epoch number (continuous across phases)
+                    display_epoch = min_epoch + epoch_offset
                     if ssp_enabled:
-                        self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
+                        self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
                     else:
-                        self.logger.info(f"📊 {phase_name} Progress: Epoch {min_epoch}/{total_epochs} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
+                        self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
                     last_progress_log = elapsed_time
 
                 time.sleep(0.5)
 
-        # Save control server epoch durations to metadata file
-        self._save_ctrl_epoch_durations(phase_name, epoch_durations)
-
-    def _save_ctrl_epoch_durations(self, phase_name: str, epoch_durations: list):
-        """
-        Save control server epoch durations to the metadata file.
-
-        This appends the epoch_durations list to the existing metadata.json file
-        in the ctrl subdirectory of results.
-
-        Args:
-            phase_name: "SELF" or "WAFL"
-            epoch_durations: List of {epoch, phase, duration_ms} dictionaries
-        """
-        if not epoch_durations:
-            self.logger.debug(f"No epoch durations to save for {phase_name} phase")
-            return
-
-        # Save to results_dir (same directory as output.log)
-        metadata_path = os.path.join(self.results_dir, "ctrl_metadata.json")
-        try:
-            if os.path.exists(metadata_path):
-                with open(metadata_path, "r") as f:
-                    metadata = json.load(f)
-            else:
-                metadata = {"epoch_durations": []}
-
-            # Append new epoch durations
-            metadata["epoch_durations"].extend(epoch_durations)
-
-            # Save updated metadata
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2)
-
-            self.logger.info(f"📝 Saved {len(epoch_durations)} epoch durations for {phase_name} phase")
-        except Exception as e:
-            self.logger.error(f"💥 Failed to save epoch durations: {e}")
+        # Note: epoch durations are saved incrementally via _append_ctrl_epoch_duration
+        # No need to save again here
 
     def _append_ctrl_epoch_duration(self, epoch_duration_entry: dict):
         """
@@ -1422,12 +1574,15 @@ class ControlServer:
         Args:
             epoch_duration_entry: Dict with {epoch, phase, duration_ms}
         """
-        # Save to results_dir (same directory as output.log)
-        metadata_path = os.path.join(self.results_dir, "ctrl_metadata.json")
+        # Save to results_dir (same directory as output.log) as metadata.json (unified format)
+        metadata_path = os.path.join(self.results_dir, "metadata.json")
         try:
             if os.path.exists(metadata_path):
                 with open(metadata_path, "r") as f:
                     metadata = json.load(f)
+                # Ensure epoch_durations key exists (may have been created without it)
+                if "epoch_durations" not in metadata:
+                    metadata["epoch_durations"] = []
             else:
                 metadata = {"epoch_durations": []}
 
@@ -1458,27 +1613,21 @@ class ControlServer:
                 self.logger.debug(f"Sending KILL to agent {agent.name}")
                 agent.send_kill_command()
 
-                # Stop Docker container via SSH
+                # Stop Docker container via SSH using connection manager
                 container_name = f"wafl-node-{agent.name}"
-                ssh_port = 22
-                username = self.config.get("USER", "denjo")
-                key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
-                with paramiko.SSHClient() as ssh:
-                    key = paramiko.Ed25519Key.from_private_key_file(key_path)
-                    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                    ssh.connect(agent.ip, port=ssh_port, username=username, pkey=key, timeout=10)
+                ssh = self.ssh_manager.get_connection(agent.ip)
 
-                    # Stop and remove container
-                    stop_cmd = f"docker stop {container_name} && docker rm {container_name}"
-                    stdin, stdout, stderr = ssh.exec_command(stop_cmd)
-                    exit_status = stdout.channel.recv_exit_status()
+                # Stop and remove container
+                stop_cmd = f"docker stop {container_name} && docker rm {container_name}"
+                stdin, stdout, stderr = ssh.exec_command(stop_cmd)
+                exit_status = stdout.channel.recv_exit_status()
 
-                    if exit_status == 0:
-                        return (True, agent.name, None)
-                    else:
-                        error_msg = stderr.read().decode().strip()
-                        return (False, agent.name, error_msg)
+                if exit_status == 0:
+                    return (True, agent.name, None)
+                else:
+                    error_msg = stderr.read().decode().strip()
+                    return (False, agent.name, error_msg)
 
             except Exception as e:
                 return (False, agent.name if agent else "unknown", str(e))
@@ -1505,8 +1654,21 @@ class ControlServer:
 
         self.logger.info(f"🏁 Agent shutdown complete ({shutdown_count}/{len(self.agents)} containers stopped)")
 
+        # Close all SSH connections after shutdown
+        self.ssh_manager.close_all()
+
     def _apply_dynamic_network_conditions(self, epoch: int):
-        """Apply dynamic network conditions for the given epoch using tc."""
+        """
+        Apply dynamic network conditions for the given epoch using tc.
+
+        This method reads network conditions from self.network_conditions and
+        self.path_loss_model, then applies tc rules directly inside each container
+        using SSH + docker exec (same pattern as static network conditions).
+
+        Bidirectional consideration:
+        - For node A, we need to apply tc rules for traffic TO all peers it communicates with
+        - This includes both nodes A fetches from AND nodes that fetch from A
+        """
         if not self.network_conditions or not self.path_loss_model:
             return
 
@@ -1517,57 +1679,135 @@ class ControlServer:
 
         self.logger.info(f"📡 Applying dynamic network conditions for epoch {epoch}")
 
-        # Get path loss model file path
-        model_file = os.path.join(
-            "data",
-            self.mobility_aware_config.get("path_loss_model_file", "sumo/path_loss_model.json"),
-        )
-        conditions_file = os.path.join(
-            "data",
-            self.mobility_aware_config.get("network_conditions_file", "network_conditions_mobility.json"),
-        )
-        exec_config_file = "ctrl/execution_config.json"
-        deployment_base = self.config.get("DEPLOYMENT_LOCATION", "/home/denjo")
-        project_path = f"{deployment_base}/WAFL-Testbed"
-        username = self.config.get("USER", "denjo")
+        # Get rank definitions from path loss model
+        rank_definitions = self.path_loss_model.get("ranks", [])
+        if not rank_definitions:
+            self.logger.error("💥 No rank definitions found in path loss model")
+            return
+
+        # Build rank name to parameters mapping
+        rank_params = {}
+        for i, rank in enumerate(rank_definitions, start=1):
+            rank_params[rank["name"]] = {
+                "classid": f"1:{i}",
+                "handle": i * 10,
+                "rate": rank.get("rate", "100mbit"),
+                "delay": rank.get("delay", "10ms"),
+                "loss": rank.get("loss", "0%"),
+            }
+
+        # Get epoch conditions
+        epoch_conditions = self.network_conditions[epoch]
+
+        # Load execution config for IP mapping
+        try:
+            with open("ctrl/execution_config.json", "r") as f:
+                exec_config = json.load(f)
+        except Exception as e:
+            self.logger.error(f"💥 Failed to load execution_config.json: {e}")
+            return
+
+        # Build node ID to IP mapping
+        node_to_ip = {}
+        for node in exec_config.get("nodes", []):
+            node_id = int(node["name"])
+            node_to_ip[node_id] = node.get("physical_ip")
 
         def apply_tc_for_agent(agent):
-            """Apply tc rules for a single agent."""
+            """Apply tc rules for a single agent with bidirectional peer consideration."""
             container_name = f"wafl-node-{agent.agent_index}"
             node_id = str(agent.agent_index)
-            cmd = f"cd {project_path} && python3 utils/apply_dynamic_tc.py --container {container_name} --epoch {epoch} --node-id {node_id} --conditions {conditions_file} --pathloss {model_file} --execution-config {exec_config_file}"
+            node_id_int = int(node_id)
+
+            # Collect all peers this node communicates with (bidirectional)
+            peers_for_tc = {}
+
+            # Direction 1: Peers this node fetches FROM (from network_conditions)
+            if node_id in epoch_conditions:
+                for peer_info in epoch_conditions[node_id]:
+                    peer_id = peer_info.get("peer")
+                    if peer_id is None:
+                        continue
+                    peer_ip = node_to_ip.get(peer_id)
+                    if not peer_ip:
+                        continue
+                    rank_name = peer_info.get("rank", "Excellent")
+                    if rank_name in rank_params:
+                        peers_for_tc[peer_ip] = rank_name
+
+            # Direction 2: Nodes that fetch FROM this node (dispatch direction)
+            # For each other node, check if this node is in their peer list
+            for other_node_key, other_peers in epoch_conditions.items():
+                if other_node_key == node_id:
+                    continue
+                if not isinstance(other_peers, list):
+                    continue
+                for peer_info in other_peers:
+                    if peer_info.get("peer") == node_id_int:
+                        other_node_int = int(other_node_key)
+                        other_node_ip = node_to_ip.get(other_node_int)
+                        if other_node_ip and other_node_ip not in peers_for_tc:
+                            rank_name = peer_info.get("rank", "Excellent")
+                            if rank_name in rank_params:
+                                peers_for_tc[other_node_ip] = rank_name
+
+            # Build tc script
+            tc_lines = [
+                "set -e",
+                "tc qdisc del dev eth0 root 2>/dev/null || true",
+                "tc qdisc add dev eth0 root handle 1: htb default 99",
+                "tc class add dev eth0 parent 1: classid 1:99 htb rate 1000mbit",
+            ]
+
+            # Add classes and netem for each rank
+            for rank_name, params in rank_params.items():
+                tc_lines.append(f"tc class add dev eth0 parent 1: classid {params['classid']} htb rate {params['rate']}")
+                tc_lines.append(f"tc qdisc add dev eth0 parent {params['classid']} handle {params['handle']}: netem delay {params['delay']} loss {params['loss']}")
+
+            # Add filters for each peer
+            for peer_ip, rank_name in peers_for_tc.items():
+                if rank_name in rank_params:
+                    classid = rank_params[rank_name]["classid"]
+                    tc_lines.append(f"tc filter add dev eth0 protocol ip parent 1:0 prio 1 u32 match ip dst {peer_ip} flowid {classid}")
+
+            tc_lines.append('echo "Dynamic TC applied successfully"')
+            tc_script = "\n".join(tc_lines)
+
+            cmd = f"docker exec {container_name} sh -c '{tc_script}'"
 
             try:
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(agent.ip, username=username)
+                ssh = self.ssh_manager.get_connection(agent.ip)
 
                 stdin, stdout, stderr = ssh.exec_command(cmd)
                 exit_status = stdout.channel.recv_exit_status()
 
                 if exit_status == 0:
-                    result = (True, agent.name, None)
+                    return (True, agent.name, len(peers_for_tc))
                 else:
-                    error_msg = stderr.read().decode().strip()
-                    result = (False, agent.name, error_msg)
-
-                ssh.close()
-                return result
+                    error = stderr.read().decode().strip()
+                    return (False, agent.name, error)
             except Exception as e:
                 return (False, agent.name, str(e))
 
         # Apply tc rules in parallel for all agents
+        applied_count = 0
+        failed_agents = []
+
         with ThreadPoolExecutor(max_workers=len(self.agents)) as executor:
             futures = {executor.submit(apply_tc_for_agent, agent): agent for agent in self.agents}
             for future in as_completed(futures):
-                success, name, error = future.result()
-                if success:
-                    self.logger.debug(f"✅ Applied tc rules for agent {name} (epoch {epoch})")
+                result = future.result()
+                if result[0]:  # success
+                    applied_count += 1
+                    self.logger.debug(f"✅ Applied tc rules for agent {result[1]} (epoch {epoch}, {result[2]} peers)")
                 else:
-                    if error:
-                        self.logger.warning(f"⚠️ Failed to apply tc rules for agent {name}: {error}")
-                    else:
-                        self.logger.error(f"💥 Error applying tc for agent {name}")
+                    failed_agents.append(result[1])
+                    self.logger.warning(f"⚠️ Failed to apply tc rules for agent {result[1]}: {result[2]}")
+
+        if failed_agents:
+            self.logger.warning(f"⚠️ Dynamic TC rules failed for {len(failed_agents)} agents")
+        else:
+            self.logger.info(f"✅ Dynamic network conditions applied to {applied_count}/{len(self.agents)} agents (epoch {epoch})")
 
 
 if __name__ == "__main__":

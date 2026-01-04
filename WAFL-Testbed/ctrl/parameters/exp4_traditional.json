@@ -1,8 +1,8 @@
 {
-  "experiment_name": "Experiment 4: Integrated Scenario - Traditional (Strict Sync + TCP + No Compression)",
+  "experiment_name": "Experiment 4: Integrated Scenario - Traditional (Strict Sync + TCP + zlib)",
   "epochs": {
     "self": 64,
-    "wafl": 1536
+    "wafl": 2048
   },
   "contact_pattern": "sumo_real/contact_pattern_mobility.json",
   "wafl_phase": {
@@ -29,7 +29,9 @@
       "enabled": false
     },
     "compression": {
-      "enabled": false
-    }
+      "enabled": true,
+      "initial_method": "zlib"
+    },
+    "model_fetch_timeout": 15.0
   }
 }

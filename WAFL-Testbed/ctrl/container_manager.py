@@ -1,9 +1,12 @@
 import logging
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import paramiko
+
+if TYPE_CHECKING:
+    from ctrl.ssh_connection_manager import SSHConnectionManager
 
 
 class ContainerManager:
@@ -19,12 +22,14 @@ class ContainerManager:
         project_name: str = "WAFL-Testbed",
         verbose: bool = False,
         logger: Optional[logging.Logger] = None,
+        ssh_manager: Optional["SSHConnectionManager"] = None,
     ):
         self.user = user
         self.deployment_location = deployment_location
         self.project_name = project_name
         self.verbose = verbose
         self.logger = logger
+        self.ssh_manager = ssh_manager
         self.private_key_path = os.path.expanduser("~/.ssh/id_ed25519")
 
         if not os.path.exists(self.private_key_path):
@@ -51,8 +56,16 @@ class ContainerManager:
             print(f"  \033[90m[DEBUG]\033[0m {msg}")
 
     def connect_ssh(self, ip: str) -> Optional[paramiko.SSHClient]:
-        """Establish SSH connection"""
+        """
+        Establish SSH connection.
+
+        If an SSHConnectionManager was provided, uses it for connection pooling.
+        Otherwise, creates a new connection each time.
+        """
         try:
+            if self.ssh_manager:
+                return self.ssh_manager.get_connection(ip)
+
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             ssh.connect(ip, port=22, username=self.user, pkey=self.key, timeout=10)
@@ -90,11 +103,13 @@ class ContainerManager:
             cleanup_cmd = f"docker rm -f {container_name} 2>/dev/null || true"
             stdin, stdout, stderr = self.exec_command(ssh, cleanup_cmd)
             stdout.channel.recv_exit_status()
-            ssh.close()
+            # Only close if not using connection manager
+            if not self.ssh_manager:
+                ssh.close()
             return True
         except Exception as e:
             self._log_error(f"Failed to stop container {container_name}: {e}")
-            if ssh:
+            if ssh and not self.ssh_manager:
                 ssh.close()
             return False
 
@@ -136,7 +151,7 @@ class ContainerManager:
 
         # Mounts
         target_path = f"{self.deployment_location}/{self.project_name}"
-        mounts = f"-v {target_path}/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"
+        mounts = f"-v {target_path}/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"  # noqa: E501
 
         # No resource limits at startup - CPU limits applied at WAFL phase start
         resource_flags = ""
@@ -157,18 +172,20 @@ class ContainerManager:
 
             if not image_id:
                 self._log_error(f"wafl-node:latest image not found on {ip}")
-                ssh.close()
+                if not self.ssh_manager:
+                    ssh.close()
                 return False
 
             # 3. Run container
-            run_cmd = f"docker run -d --name {container_name} {ports} {mounts} {env_vars} {resource_flags} {image}"
+            run_cmd = f"docker run -d --name {container_name} --cap-add=NET_ADMIN {ports} {mounts} {env_vars} {resource_flags} {image}"
             stdin, stdout, stderr = self.exec_command(ssh, run_cmd)
             exit_status = stdout.channel.recv_exit_status()
 
             if exit_status != 0:
                 error_msg = stderr.read().decode().strip()
                 self._log_error(f"Docker run failed for {container_name}: {error_msg}")
-                ssh.close()
+                if not self.ssh_manager:
+                    ssh.close()
                 return False
 
             container_id = stdout.read().decode().strip()
@@ -180,12 +197,13 @@ class ContainerManager:
             # Wait for container to be somewhat ready (verify.py does this)
             time.sleep(3)
 
-            ssh.close()
+            if not self.ssh_manager:
+                ssh.close()
             return True
 
         except Exception as e:
             self._log_error(f"Failed to start container {container_name}: {e}")
-            if ssh:
+            if ssh and not self.ssh_manager:
                 ssh.close()
             return False
 
@@ -213,32 +231,11 @@ class ContainerManager:
             self._log_debug(f"Network conditions disabled for {container_name}")
             return True
 
-        delay = net_cond.get("delay", "50ms")
-        loss = net_cond.get("loss", "0%")
-        rate = net_cond.get("rate", "100mbit")
-
-        target_path = f"{self.deployment_location}/{self.project_name}"
-        # Try running without sudo first, as the script contains sudo for tc commands
-        # and the user might have permissions for docker but not full sudo
-        tc_cmd = f"{target_path}/ctrl/apply_network_rules.sh {container_name} {delay} {loss} {rate}"
-
-        # Use get_pty=True because sudo inside the script might require a TTY
-        stdin, stdout, stderr = self.exec_command(ssh, tc_cmd, get_pty=True)
-        exit_status = stdout.channel.recv_exit_status()
-
-        output = stdout.read().decode().strip()
-        error = stderr.read().decode().strip()
-
-        if exit_status != 0:
-            self._log_error(f"Failed to apply network rules to {container_name}: {error}")
-            return False
-
-        if self.verbose:
-            self._log_debug(f"Network rules output: {output}")
-            if error:
-                self._log_debug(f"Network rules stderr: {error}")
-
-        self._log_debug(f"Applied network rules to {container_name}: delay={delay}, loss={loss}, rate={rate}")
+        # Network conditions are now applied dynamically by ctrl/main.py using
+        # direct tc commands inside the container via SSH + docker exec.
+        # Static network rules at container startup are no longer used.
+        # This method is kept for compatibility but does nothing.
+        self._log_debug(f"Network conditions will be applied dynamically for {container_name} (delay={net_cond.get('delay')}, loss={net_cond.get('loss')}, rate={net_cond.get('rate')})")
         return True
 
     def apply_cpu_limit(self, ip: str, container_name: str, cpu_limit: float) -> bool:
@@ -273,15 +270,17 @@ class ContainerManager:
             if exit_status != 0:
                 error_msg = stderr.read().decode().strip()
                 self._log_error(f"Failed to apply CPU limit to {container_name}: {error_msg}")
-                ssh.close()
+                if not self.ssh_manager:
+                    ssh.close()
                 return False
 
             self._log_info(f"Applied CPU limit {cpu_limit} to {container_name}")
-            ssh.close()
+            if not self.ssh_manager:
+                ssh.close()
             return True
 
         except Exception as e:
             self._log_error(f"Failed to apply CPU limit to {container_name}: {e}")
-            if ssh:
+            if ssh and not self.ssh_manager:
                 ssh.close()
             return False

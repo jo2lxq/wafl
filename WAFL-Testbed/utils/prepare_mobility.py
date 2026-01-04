@@ -336,11 +336,10 @@ def convert_osm_to_network(osm_path: str, output_net_path: str):
         "true",  # Join complex junctions
         "--junctions.corner-detail",
         "0",  # Reduce corner detail (avoids angle calc issues)
-        # Road type filtering (keep only vehicle-accessible roads)
-        "--keep-edges.by-vclass",
-        "passenger",  # Only keep edges accessible by passenger vehicles
-        "--remove-edges.by-type",
-        "highway.cycleway,highway.pedestrian,highway.footway,highway.path,railway.subway,railway.tram,railway.rail,railway.platform",
+        # Road type filtering - keep only major roads (primary, secondary, tertiary)
+        # This limits simulation to roads of a certain width/importance
+        "--keep-edges.by-type",
+        "highway.motorway,highway.motorway_link,highway.trunk,highway.trunk_link,highway.primary,highway.primary_link,highway.secondary,highway.secondary_link,highway.tertiary,highway.tertiary_link",
         # Traffic features
         "--tls.guess",
         "true",  # Guess traffic lights

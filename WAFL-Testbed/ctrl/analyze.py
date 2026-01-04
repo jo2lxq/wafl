@@ -81,6 +81,8 @@ COLORS = {
     "idle": "#9e9ec8",  # Soft Lavender - for idle time
     "wasted_bar": "#e89b5c",  # Soft Orange - wasted computation
     "wasted_line": "#2c3e50",  # Dark Slate - batches line
+    "control_server": "#E63946",  # Vivid Red - for control server
+    "no_data": "#7f8c8d",  # Cool Gray - for "no data" messages (avoid pure gray)
 }
 
 
@@ -156,7 +158,7 @@ def collect_results(experiment_id, config):
         local_node_dir = local_exp_dir / node_name
         local_node_dir.mkdir(exist_ok=True)
 
-        files_to_collect = ["metrics.csv", "resources.csv", "model.pth"]
+        files_to_collect = ["metrics.csv", "resources.csv", "model.pth", "output.log"]
         collected = []
 
         try:
@@ -337,10 +339,10 @@ def _generate_epoch_duration_plot(df, experiment_name, analysis_dir, add_phase_l
 
     # Load and plot control server epoch durations if available
     if exp_dir is not None:
-        # Check unified metadata.json first (new format), then fall back to ctrl_metadata.json (old format)
+        # Load metadata.json (unified format)
         metadata_path = exp_dir / "metadata.json"
         if not metadata_path.exists():
-            metadata_path = exp_dir / "ctrl_metadata.json"  # Backward compatibility
+            metadata_path = exp_dir / "ctrl" / "metadata.json"  # Try ctrl subdirectory
         if metadata_path.exists():
             try:
                 with open(metadata_path) as f:
@@ -348,13 +350,21 @@ def _generate_epoch_duration_plot(df, experiment_name, analysis_dir, add_phase_l
                 ctrl_durations = ctrl_metadata.get("epoch_durations", [])
                 if ctrl_durations:
                     ctrl_df = pd.DataFrame(ctrl_durations)
+
+                    # Remove duplicates if any (keep last occurrence)
+                    ctrl_df = ctrl_df.drop_duplicates(subset=["epoch"], keep="last")
+
                     ctrl_df["duration_s"] = ctrl_df["duration_ms"] / 1000
 
-                    # Plot control server times with prominent black line
+                    # Sort by epoch for proper line plotting
+                    ctrl_df = ctrl_df.sort_values("epoch")
+
+                    # Plot control server times with prominent colored line
+                    # Epoch numbers are now global (continuous across SELF and WAFL phases)
                     ax.plot(
                         ctrl_df["epoch"],
                         ctrl_df["duration_s"],
-                        color="#000000",  # Black
+                        color=COLORS["control_server"],  # Vivid red for visibility
                         linewidth=3.0,
                         label="Control Server",
                         marker="o",
@@ -470,7 +480,7 @@ def _generate_wasted_computation_plot(df, experiment_name, analysis_dir):
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
             transform=ax.transAxes,
         )
         ax.set_xlim(0, 1)
@@ -543,7 +553,7 @@ def _generate_survival_rate_plot(df, experiment_name, analysis_dir, add_phase_li
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -571,10 +581,37 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
             goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
             goodput_data["sent_mbps"] = (goodput_data["bytes_sent"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
 
-            goodput_agg = goodput_data.groupby("epoch").agg({"goodput_mbps": "mean", "sent_mbps": "mean"}).reset_index()
+            # Calculate retransmission estimation based on survival_rate
+            # Loss rate = 1 - survival_rate
+            # Retransmission factor = 1 / (1 - loss_rate) = 1 / survival_rate
+            if "survival_rate" in goodput_data.columns:
+                goodput_data["survival_rate"] = goodput_data["survival_rate"].fillna(1.0)
+                # Clamp survival_rate to avoid division by zero (min 0.1 = max 10x retrans)
+                goodput_data["survival_rate_clamped"] = goodput_data["survival_rate"].clip(lower=0.1)
+                goodput_data["retrans_factor"] = 1.0 / goodput_data["survival_rate_clamped"]
+                goodput_data["estimated_physical_mbps"] = goodput_data["sent_mbps"] * goodput_data["retrans_factor"]
+            else:
+                goodput_data["estimated_physical_mbps"] = goodput_data["sent_mbps"]
+                goodput_data["retrans_factor"] = 1.0
+
+            goodput_agg = goodput_data.groupby("epoch").agg({"goodput_mbps": "mean", "sent_mbps": "mean", "estimated_physical_mbps": "mean", "retrans_factor": "mean"}).reset_index()
 
             ax = plt.subplot(1, 1, 1)
-            # Plot sent throughput (total)
+
+            # Plot estimated physical throughput (includes retransmissions)
+            ax.plot(
+                goodput_agg["epoch"],
+                goodput_agg["estimated_physical_mbps"],
+                color=COLORS["phase_line"],  # Red to highlight overhead
+                linewidth=2,
+                marker="^",
+                markersize=3,
+                label="Est. Physical (w/ Retrans)",
+                alpha=0.8,
+                linestyle="--",
+            )
+
+            # Plot sent throughput (application layer)
             ax.plot(
                 goodput_agg["epoch"],
                 goodput_agg["sent_mbps"],
@@ -582,7 +619,7 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
                 linewidth=2,
                 marker="s",
                 markersize=3,
-                label="Sent Throughput",
+                label="Sent (App Layer)",
                 alpha=0.7,
             )
             # Plot received (goodput)
@@ -604,7 +641,13 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
             ax.set_ylabel("Throughput [Mbps]")
             ax.set_xlabel("Epoch")
             ax.legend()
-            plt.title(f"Throughput (Sent vs Goodput) - {experiment_name}")
+
+            # Add retrans factor info to title
+            avg_retrans = goodput_agg["retrans_factor"].mean()
+            if avg_retrans > 1.01:
+                plt.title(f"Throughput (Sent vs Goodput) - {experiment_name}\n(Avg Retrans Factor: {avg_retrans:.2f}x)")
+            else:
+                plt.title(f"Throughput (Sent vs Goodput) - {experiment_name}")
 
     if not has_meaningful_goodput_data:
         ax = plt.gca()
@@ -615,7 +658,7 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -690,7 +733,7 @@ def _generate_traffic_volume_plot(df, experiment_name, analysis_dir):
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
             transform=ax.transAxes,
         )
         ax.axis("off")
@@ -758,7 +801,7 @@ def _generate_transfer_time_plot(df, experiment_name, analysis_dir):
         ha="center",
         va="center",
         fontsize=14,
-        color="#666666",
+        color=COLORS["no_data"],
         transform=ax.transAxes,
     )
     ax.axis("off")
@@ -782,18 +825,27 @@ def _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir):
     # Convert NaN to 0 for comm_time_ms
     wafl_data["comm_time_ms"] = wafl_data["comm_time_ms"].fillna(0)
 
+    # Handle waiting_time_ms if present
+    has_waiting_time = "waiting_time_ms" in wafl_data.columns
+    if has_waiting_time:
+        wafl_data["waiting_time_ms"] = wafl_data["waiting_time_ms"].fillna(0)
+        wafl_data["net_comm_ms"] = wafl_data["comm_time_ms"] - wafl_data["waiting_time_ms"]
+        # Ensure non-negative (just in case)
+        wafl_data["net_comm_ms"] = wafl_data["net_comm_ms"].clip(lower=0)
+    else:
+        wafl_data["waiting_time_ms"] = 0
+        wafl_data["net_comm_ms"] = wafl_data["comm_time_ms"]
+
     # Aggregate by epoch
-    epoch_agg = (
-        wafl_data.groupby("epoch")
-        .agg(
-            {
-                "compute_time_ms": "mean",
-                "comm_time_ms": "mean",
-                "epoch_duration_ms": "mean",
-            }
-        )
-        .reset_index()
-    )
+    agg_dict = {
+        "compute_time_ms": "mean",
+        "comm_time_ms": "mean",  # Total comm time
+        "net_comm_ms": "mean",  # Net comm time
+        "waiting_time_ms": "mean",  # Waiting time
+        "epoch_duration_ms": "mean",
+    }
+
+    epoch_agg = wafl_data.groupby("epoch").agg(agg_dict).reset_index()
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -803,8 +855,10 @@ def _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir):
 
     # Convert to seconds for better readability
     compute_sec = epoch_agg["compute_time_ms"] / 1000
-    comm_sec = epoch_agg["comm_time_ms"] / 1000
+    net_comm_sec = epoch_agg["net_comm_ms"] / 1000
+    wait_sec = epoch_agg["waiting_time_ms"] / 1000
 
+    # 1. Compute Time (Bottom)
     ax.bar(
         x,
         compute_sec,
@@ -814,21 +868,38 @@ def _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir):
         alpha=0.9,
         edgecolor="none",
     )
+
+    # 2. Net Communication Time (Middle)
     ax.bar(
         x,
-        comm_sec,
+        net_comm_sec,
         bar_width,
         bottom=compute_sec,
-        label="Communication Time",
+        label="Net Communication",
         color=COLORS["bar_secondary"],
         alpha=0.9,
         edgecolor="none",
     )
 
+    # 3. Waiting Time (Top)
+    # Only plot if we actually have waiting time data
+    if has_waiting_time and wait_sec.sum() > 0:
+        ax.bar(
+            x,
+            wait_sec,
+            bar_width,
+            bottom=compute_sec + net_comm_sec,
+            label="Waiting Time",
+            color=COLORS["idle"],  # Reuse idle color
+            alpha=0.9,
+            edgecolor="none",
+            hatch="//",  # Add hatch to distinguish
+        )
+
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Time [sec]")
     ax.legend(loc="upper right")
-    plt.title(f"Time Breakdown (Compute vs Communication) - {experiment_name}")
+    plt.title(f"Time Breakdown (Compute vs Comm vs Wait) - {experiment_name}")
     plt.tight_layout()
     plt.savefig(analysis_dir / "compute_comm_breakdown.png", dpi=150)
     plt.close()
@@ -876,7 +947,7 @@ def _generate_cpu_usage_plot(resources_df, experiment_name, analysis_dir):
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
         )
         plt.title(f"CPU Usage - {experiment_name}")
     plt.tight_layout()
@@ -1285,7 +1356,7 @@ def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
             ha="center",
             va="center",
             fontsize=14,
-            color="#666666",
+            color=COLORS["no_data"],
             transform=ax.transAxes,
         )
         ax.axis("off")

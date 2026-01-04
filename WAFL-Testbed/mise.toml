@@ -7,6 +7,7 @@ mise.file = ".env"
 
 [tasks.rsync]
 run = [
+  "rsync -arhvz --delete ./.env ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -arhvz --delete ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -arhvz --delete ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
   "rsync -arhvz --delete ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
@@ -55,16 +56,9 @@ run = [
 [tasks.analyze]
 run = [
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/analyze.py --all\"",
-  "rsync -arhvz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
-]
-
-[tasks.compare]
-description = "Generate comparison graphs for experiments grouped by 'Experiment X:' pattern"
-run = [
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/analyze.py --compare\"",
   "rsync -arhvz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
 ]
-
 
 [tasks.sumo]
 description = "Complete mobility preprocessing pipeline (unified script)"
