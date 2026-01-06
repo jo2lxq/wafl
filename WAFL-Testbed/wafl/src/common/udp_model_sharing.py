@@ -5,6 +5,8 @@ import socket
 import struct
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from queue import Empty, Queue
 
 import zfec
 
@@ -27,8 +29,9 @@ class UDPModelSharing:
     PTYPE_END = 4  # End of Transfer (Fast NACK trigger)
 
     MAX_RETRIES = 10  # Max NACK attempts (Increased for resilience)
+    BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
 
-    def __init__(self, ip: str, port: int, fec_m: int = 8, timeout: float = 3.0, inter_packet_timeout: float = 0.5):
+    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float):
         self.ip = ip
         self.port = port
 
@@ -37,8 +40,8 @@ class UDPModelSharing:
         # parity: redundant packets per chunk
         # m = k + parity (total packets per chunk)
         self.k = fec_m
-        # Default parity: 50% redundancy for conservative startup (will be adjusted by Adaptive FEC)
-        self.parity = max(4, math.ceil(self.k * 0.5))
+        # Default parity: 75% redundancy - ensures high Survival in Excellent/Good conditions
+        self.parity = max(12, math.ceil(self.k * 0.75))
         self.m = self.k + self.parity
 
         # Pacing Control
@@ -84,6 +87,17 @@ class UDPModelSharing:
         self.mcast_ttl = 2
 
         self.logger.info(f"UDPModelSharing initialized: k={self.k}, m={self.m} (parity={self.parity}), timeout={self.timeout}s, pacing={self.pacing_delay * 1000:.2f}ms")
+
+        # NACK Thread Pool (persistent, avoids thread creation overhead)
+        self.nack_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="NACK")
+
+        # Per-peer worker threads and queues for parallel reception
+        # This eliminates single-thread bottleneck when receiving from multiple peers
+        self.peer_queues = {}  # {peer_ip: Queue}
+        self.peer_workers = {}  # {peer_ip: Thread}
+        self.peer_workers_lock = threading.Lock()
+        self.callback = None  # Will be set by start_listener
+        self.stats_lock = threading.Lock()  # Protect stats from concurrent worker access
 
     def update_network_params(self, new_k: int, new_parity: int = None, new_pacing: float = None) -> None:
         """
@@ -188,7 +202,8 @@ class UDPModelSharing:
                 for chunk_idx, blocks_in, original_len in chunks_data:
                     futures.append(executor.submit(self.encoder.encode, blocks_in))
 
-                # Send loop with pacing
+                # Send loop with BATCH PACING (send multiple packets, then sleep once)
+                packets_sent_in_batch = 0
                 for i, future in enumerate(futures):
                     chunk_idx, _, original_len = chunks_data[i]
                     blocks_out = future.result()
@@ -200,10 +215,12 @@ class UDPModelSharing:
                         packet = header + block
                         sock.sendto(packet, (target_ip, target_port))
                         actual_bytes_sent += len(packet)
+                        packets_sent_in_batch += 1
 
-                        # PACING: Sleep to control burst rate
-                        if self.pacing_delay > 0:
-                            time.sleep(self.pacing_delay)
+                        # BATCH PACING: Sleep after every BATCH_SIZE packets
+                        if self.pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
+                            time.sleep(self.pacing_delay * self.BATCH_SIZE)
+                            packets_sent_in_batch = 0
 
             # Send END packet for Fast NACK trigger
             # Header: PTYPE_END, ts, seq, 0, 0, 0, 0, 0, 0, 0
@@ -266,65 +283,123 @@ class UDPModelSharing:
         callback(data: bytes, source_ip: str)
         """
         self.running = True
+        self.callback = callback  # Save for peer workers
         self.thread = threading.Thread(target=self._listener_loop, args=(callback,), daemon=True)
         self.thread.start()
 
+    def _get_or_create_peer_worker(self, peer_ip):
+        """
+        Get or create a dedicated worker thread and queue for a peer.
+        This ensures each peer's packets are processed independently.
+        """
+        with self.peer_workers_lock:
+            if peer_ip not in self.peer_workers:
+                q = Queue(maxsize=10000)
+                self.peer_queues[peer_ip] = q
+                t = threading.Thread(target=self._peer_worker_loop, args=(peer_ip, q), daemon=True, name=f"PeerWorker-{peer_ip}")
+                t.start()
+                self.peer_workers[peer_ip] = t
+                self.logger.debug(f"🧵 Created worker thread for peer {peer_ip}")
+            return self.peer_queues[peer_ip]
+
     def _listener_loop(self, callback):
+        """
+        Main listener loop - acts as a dispatcher.
+        DATA/MCAST packets are routed to per-peer worker queues.
+        NACK/ACK packets are handled inline (they're small and time-critical).
+        """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("0.0.0.0", self.port))
-        self.sock.settimeout(2.0)  # Reduced for faster cleanup checks
+        self.sock.settimeout(2.0)
 
-        # Increase receive buffer to avoid OS-level drops
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)  # 2MB
+        # Increase receive buffer to 8MB to avoid OS-level drops
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
 
-        # State: (source_ip, model_seq) -> {chunk_idx: {block_idx: data}, meta: {}}
-        incoming_models = {}
-
-        # Track completed (IP, model_seq) pairs to ignore late FEC packets
-        # set of (IP, model_seq) tuples
-        completed_models = set()
-        completed_history = collections.deque(maxlen=1000)  # For cleaning up completed_models set
-
-        self.logger.info(f"UDP Listener started on port {self.port}")
+        self.logger.info(f"UDP Listener (dispatcher) started on port {self.port}")
 
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(self.MAX_PACKET_SIZE + 100)
 
-                if len(data) < self.HEADER_SIZE:  # Updated: 22-byte header
+                if len(data) < self.HEADER_SIZE:
                     continue
 
                 header = data[: self.HEADER_SIZE]
-                payload = data[self.HEADER_SIZE :]
-
-                # Parse header with k and m (new format 32 bytes)
                 ptype, timestamp, model_seq, chunk_idx, total_chunks, block_idx, original_len, sender_k, sender_m, _ = struct.unpack("!BdIIIIIBBB", header)
 
+                peer_ip = addr[0]
+
+                # NACK handling - time critical, handle inline
                 if ptype == self.PTYPE_NACK:
-                    # Payload contains sequence of missing chunk indices (4 bytes each)
+                    payload = data[self.HEADER_SIZE :]
                     missing_chunks = []
                     for i in range(0, len(payload), 4):
                         if i + 4 <= len(payload):
                             missing_chunks.append(struct.unpack("!I", payload[i : i + 4])[0])
-
-                    self.logger.info(f"🔁 NACK received from {addr[0]} for model {model_seq}, missing chunks: {len(missing_chunks)}")
-                    self._handle_nack(addr[0], model_seq, missing_chunks)
+                    self.logger.info(f"🔁 NACK received from {peer_ip} for model {model_seq}, missing chunks: {len(missing_chunks)}")
+                    self._handle_nack(peer_ip, model_seq, missing_chunks)
                     continue
 
-                elif ptype == self.PTYPE_END:
-                    # Fast NACK Trigger: Sender finished transmission
-                    # Immediately check if we have everything
-                    key = (addr[0], model_seq)
+                # ACK handling - inline
+                if ptype == self.PTYPE_ACK:
+                    self._handle_ack(peer_ip, model_seq, timestamp)
+                    continue
 
+                # DATA/MCAST/END packets - route to per-peer worker
+                if ptype in [self.PTYPE_DATA, self.PTYPE_MCAST, self.PTYPE_END]:
+                    peer_queue = self._get_or_create_peer_worker(peer_ip)
+                    try:
+                        peer_queue.put_nowait((data, addr, timestamp))
+                    except Exception as e:
+                        # Queue full - drop packet (will be recovered via NACK)
+                        self.logger.error(f"Queue full for {peer_ip}: {e}")
+                        pass
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                self.logger.error(f"Error in UDP dispatcher: {e}")
+
+    def _peer_worker_loop(self, peer_ip, queue):
+        """
+        Per-peer worker thread - handles FEC decoding and model reassembly.
+        Each peer has its own isolated state, eliminating contention.
+        """
+        # Per-peer state (completely isolated from other peers)
+        incoming_models = {}  # model_seq -> state
+        completed_models = set()
+        completed_history = collections.deque(maxlen=100)
+
+        self.logger.info(f"🧵 Peer worker started for {peer_ip}")
+
+        while self.running:
+            try:
+                # Get packet from queue with timeout
+                try:
+                    data, addr, _ = queue.get(timeout=2.0)
+                except Empty:
+                    # Check for timeouts during idle
+                    self._check_peer_timeouts(peer_ip, incoming_models)
+                    continue
+
+                if len(data) < self.HEADER_SIZE:
+                    continue
+
+                header = data[: self.HEADER_SIZE]
+                payload = data[self.HEADER_SIZE :]
+                ptype, timestamp, model_seq, chunk_idx, total_chunks, block_idx, original_len, sender_k, sender_m, _ = struct.unpack("!BdIIIIIBBB", header)
+
+                # Handle END packet - triggers fast NACK
+                if ptype == self.PTYPE_END:
+                    key = model_seq
                     if key in completed_models:
                         continue
 
                     if key not in incoming_models:
-                        # Even if no data packets arrived, we can now start a state from END packet
                         incoming_models[key] = {
                             "chunks": {},
-                            "meta": {},  # Will be initialized below
+                            "meta": {},
                             "last_update": time.time(),
                             "first_packet_time": time.time(),
                             "sender_k": sender_k,
@@ -334,133 +409,91 @@ class UDPModelSharing:
                         }
 
                     state = incoming_models[key]
-                    state["last_update"] = time.time()
-
-                    # Ensure total_chunks is known in meta for at least one entry (for _identify_missing_chunks)
-                    if 0 not in state["meta"]:  # Use chunk 0 as placeholder meta if none received
-                        state["meta"][0] = {"total": total_chunks, "len": original_len}
-
                     if self._is_model_complete(state):
                         continue
 
                     missing = self._identify_missing_chunks(state)
                     if missing:
-                        self._send_nack(addr[0], model_seq, missing)
+                        self._send_nack(peer_ip, model_seq, missing)
                         state["retries"] += 1
                         state["last_update"] = time.time()
-                        self.logger.info(f"⚡ Fast NACK triggered by END for {addr[0]} m-{model_seq}, missing {len(missing)} chunks")
                     continue
 
-                if ptype == self.PTYPE_ACK:
-                    # Echoed timestamp in header is used to calculate RTT
-                    self._handle_ack(addr[0], model_seq, timestamp)
-                    continue
-
-                # PTYPE_DATA or PTYPE_MCAST
+                # Handle DATA/MCAST packets
                 if ptype not in [self.PTYPE_DATA, self.PTYPE_MCAST]:
-                    self.logger.warning(f"Unknown packet type {ptype} from {addr[0]}")
                     continue
 
-                source_ip = addr[0]
-                # Use (IP, model_seq) as unique key for each model transmission
-                model_key = (source_ip, model_seq)
-
-                # Skip packets from already completed models
-                if model_key in completed_models:
+                key = model_seq
+                if key in completed_models:
                     continue
 
-                if model_key not in incoming_models:
-                    incoming_models[model_key] = {
+                if key not in incoming_models:
+                    incoming_models[key] = {
                         "chunks": {},
                         "meta": {},
                         "last_update": time.time(),
-                        "first_packet_time": time.time(),  # Track when first packet arrived
-                        "sender_k": sender_k,  # Store sender's FEC params
+                        "first_packet_time": time.time(),
+                        "sender_k": sender_k,
                         "sender_m": sender_m,
-                        "retries": 0,  # NACK retry count
-                        "last_ts": timestamp,  # Store timestamp of last packet for ACK
+                        "retries": 0,
+                        "last_ts": timestamp,
                     }
 
-                # Update last timestamp
-                incoming_models[model_key]["last_ts"] = timestamp
+                state = incoming_models[key]
+                state["last_update"] = time.time()
+                state["last_ts"] = timestamp
 
-                model_state = incoming_models[model_key]
-                model_state["last_update"] = time.time()
+                if chunk_idx not in state["chunks"]:
+                    state["chunks"][chunk_idx] = {}
+                    state["meta"][chunk_idx] = {"total": total_chunks, "len": original_len}
 
-                if chunk_idx not in model_state["chunks"]:
-                    model_state["chunks"][chunk_idx] = {}
-                    model_state["meta"][chunk_idx] = {
-                        "total": total_chunks,
-                        "len": original_len,
-                    }
+                if block_idx not in state["chunks"][chunk_idx]:
+                    state["chunks"][chunk_idx][block_idx] = payload
+                    with self.stats_lock:
+                        self.stats["total_chunks_received"] += 1
+                        self.stats["bytes_received"] += len(data)
 
-                model_state["chunks"][chunk_idx][block_idx] = payload
+                # Check if model is complete
+                if self._is_model_complete(state):
+                    model_data = self._reassemble_model(state)
+                    if model_data is not None:
+                        with self.stats_lock:
+                            self.stats["received_models"] += 1
 
-                # Check if model is complete (early completion when k packets received)
-                if self._is_model_complete(model_state):
-                    full_data = self._reassemble_model(model_state)
-                    if full_data:
-                        callback(full_data, source_ip)
-                        # Send ACK with RTT info
-                        last_ts = model_state.get("last_ts", time.time())
-                        self._send_ack(source_ip, model_seq, last_ts)
+                        # Send ACK
+                        self._send_ack(peer_ip, model_seq, state["last_ts"])
 
-                    del incoming_models[model_key]
-                    completed_models.add(model_key)
-                    completed_history.append(model_key)
-                    if len(completed_history) >= 1000:
-                        # Sliding window cleanup
-                        old_key = completed_history.popleft()
-                        completed_models.discard(old_key)
+                        # Call callback
+                        if self.callback:
+                            try:
+                                self.callback(model_data, peer_ip)
+                            except Exception as e:
+                                self.logger.error(f"Callback error: {e}")
 
-                # Cleanup models based on timeouts
-                current_time = time.time()
-                to_remove = []
-                for key, state in incoming_models.items():
-                    time_since_last_packet = current_time - state["last_update"]
-                    time_since_first_packet = current_time - state.get("first_packet_time", current_time)
+                        # Mark as completed
+                        completed_models.add(key)
+                        completed_history.append(key)
+                        if len(completed_history) > 50:
+                            old_key = completed_history.popleft()
+                            if old_key in completed_models:
+                                completed_models.discard(old_key)
+                        del incoming_models[key]
 
-                    # Inter-packet timeout: no packet received for too long
-                    # This enables fast failure detection when packets stop arriving
-                    if time_since_last_packet > self.inter_packet_timeout:
-                        if state["retries"] < self.MAX_RETRIES:
-                            # Try NACK (Fast Retransmit on silence)
-                            missing = self._identify_missing_chunks(state)
-                            if missing:
-                                self._send_nack(key[0], key[1], missing)
-                                state["retries"] += 1
-                                state["last_update"] = current_time  # Reset timer to allow retransmission arrival
-                                self.logger.info(f"🔁 Sending NACK (Inter-packet) to {key[0]} for model {key[1]}, requesting {len(missing)} chunks (Retry {state['retries']})")
-                            else:
-                                to_remove.append(key)
-                        else:
-                            to_remove.append(key)
-
-                    # Model completion timeout: total time exceeded
-                    elif time_since_first_packet > self.timeout:
-                        to_remove.append(key)
-
-                for key in to_remove:
-                    # Remove without counting as timeout_models (handled at higher level)
-                    # Note: stats['timeout_models'] should theoretically be incremented here if we want strictly accurate UDP stats internal
-                    # but UDPModelSharing.get_survival_rate uses it.
-                    self.stats["timeout_models"] += 1
-                    del incoming_models[key]
-
-            except socket.timeout:
-                # Socket timeout - check for inter_packet timeout on all pending models
-                current_time = time.time()
-                to_remove = []
-                for key, state in incoming_models.items():
-                    time_since_last_packet = current_time - state["last_update"]
-                    if time_since_last_packet > self.inter_packet_timeout:
-                        to_remove.append(key)
-                for key in to_remove:
-                    self.stats["timeout_models"] += 1  # Count for accurate survival rate
-                    del incoming_models[key]
-                continue
             except Exception as e:
-                self.logger.error(f"Error in UDP listener: {e}")
+                self.logger.error(f"Error in peer worker {peer_ip}: {e}")
+
+    def _check_peer_timeouts(self, peer_ip, incoming_models):
+        """Check for model completion timeouts in a peer's state."""
+        current_time = time.time()
+        to_remove = []
+        for key, state in incoming_models.items():
+            time_since_first = current_time - state.get("first_packet_time", current_time)
+            if time_since_first > self.timeout:
+                to_remove.append(key)
+        for key in to_remove:
+            with self.stats_lock:
+                self.stats["timeout_models"] += 1
+            del incoming_models[key]
 
     def _is_model_complete(self, state):
         chunks = state["chunks"]
@@ -521,20 +554,19 @@ class UDPModelSharing:
                 chunk_data = chunk_data[:original_len]
                 full_data += chunk_data
 
-            self.stats["received_models"] += 1
-            self.stats["bytes_received"] += len(full_data)
-            self.stats["total_chunks_received"] += len(sorted_chunk_indices)
-
+            # Stats are tracked by _peer_worker_loop with proper locking
             if chunks_recovered_with_fec > 0:
-                self.stats["fec_recovery_success"] += chunks_recovered_with_fec
+                with self.stats_lock:
+                    self.stats["fec_recovery_success"] += chunks_recovered_with_fec
                 self.logger.info(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - FEC recovered {chunks_recovered_with_fec}/{len(sorted_chunk_indices)} chunks")
             else:
-                self.logger.info(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - no FEC recovery needed")
+                self.logger.debug(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - no FEC recovery needed")
 
             return full_data
         except Exception as e:
             self.logger.error(f"❌ Reassembly failed: {e}")
-            self.stats["fec_recovery_fail"] += 1
+            with self.stats_lock:
+                self.stats["fec_recovery_fail"] += 1
             return None
 
     def _identify_missing_chunks(self, state):
@@ -594,10 +626,9 @@ class UDPModelSharing:
         if self.pacing_delay > old_pacing:
             self.logger.debug(f"📉 NACK received, slowing pacing: {old_pacing * 1000:.2f}ms -> {self.pacing_delay * 1000:.2f}ms")
 
-        # Encode and Send (Simple synchronous send for retransmission or use executor?)
-        # Use executor to avoid blocking listener
+        # Encode and Send using NACK thread pool (avoids thread creation overhead)
         total_chunks = len(chunks_data)
-        threading.Thread(target=self._resend_worker, args=(target_ip, needed, self.m, self.k, model_seq, encoder, total_chunks)).start()
+        self.nack_executor.submit(self._resend_worker, target_ip, needed, self.m, self.k, model_seq, encoder, total_chunks)
 
     def _resend_worker(self, target_ip, chunks_to_send, m, k, model_seq, encoder, total_chunks):
         try:

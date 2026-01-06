@@ -328,6 +328,22 @@ class ConfigValidator:
                 self.warnings.append(f"{with_limit}/{len(nodes)} nodes have cpu_limit configured")
                 log_warning(f"{with_limit}/{len(nodes)} nodes have cpu_limit configured")
 
+        # Check timeouts (REQUIRED)
+        timeouts = self.exec_config.get("timeouts")
+        if timeouts is None:
+            self.errors.append("'timeouts' section is missing in execution_config.json")
+            log_error("Missing 'timeouts' section - this is required")
+            all_valid = False
+        else:
+            required_timeout_keys = ["model_fetch", "udp_initial_packet", "udp_inter_packet", "udp_model_completion"]
+            missing_keys = [k for k in required_timeout_keys if k not in timeouts]
+            if missing_keys:
+                self.errors.append(f"Missing required timeout keys: {missing_keys}")
+                log_error(f"Missing required timeout keys: {missing_keys}")
+                all_valid = False
+            else:
+                log_success(f"Timeouts configuration: Valid (model_fetch={timeouts['model_fetch']}s, udp_model_completion={timeouts['udp_model_completion']}s)")
+
         return all_valid
 
 

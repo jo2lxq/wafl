@@ -3,7 +3,7 @@
     "self": 8,
     "wafl": 64
   },
-  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
+  "contact_pattern": "contact_pattern/rgg_n28_a1000_s04_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -14,7 +14,6 @@
     "enabled": false
   },
   "method": {
-    "model_fetch_timeout": 15.0,
     "ssp": {
       "enabled": false
     },
@@ -22,7 +21,7 @@
       "enabled": false
     },
     "compression": {
-      "enabled": true,
+      "enabled": false,
       "initial_method": "zlib"
     }
   },

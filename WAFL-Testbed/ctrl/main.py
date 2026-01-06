@@ -117,6 +117,7 @@ class WaflAgent:
             "runtime": {
                 "log_level": os.environ.get("LOG_LEVEL", "DEBUG"),
             },
+            "timeouts": self.config["TIMEOUTS"],
         }
 
         # Add mobility-aware configuration if provided
@@ -810,6 +811,17 @@ class ControlServer:
             # Read log level (default to 'info')
             log_level = exec_config.get("log_level", "info").upper()
 
+            # Load timeouts configuration (REQUIRED)
+            timeouts_config = exec_config.get("timeouts")
+            if timeouts_config is None:
+                raise ValueError("'timeouts' section is missing in execution_config.json. Please configure timeouts.")
+
+            # Validate all required timeout values
+            required_timeout_keys = ["model_fetch", "udp_initial_packet", "udp_inter_packet", "udp_model_completion"]
+            missing_keys = [k for k in required_timeout_keys if k not in timeouts_config]
+            if missing_keys:
+                raise ValueError(f"Missing required timeout keys in execution_config.json: {missing_keys}")
+
             # Build config dictionary from execution_config.json
             # Transform from execution_config format to internal config format
             config = {
@@ -821,6 +833,7 @@ class ControlServer:
                 "WAFL_DEVICE_IPS": device_ips,
                 "EXPERIMENT_NAME": exec_config.get("experiment_name", "wafl-experiment"),
                 "LOG_LEVEL": log_level,
+                "TIMEOUTS": timeouts_config,
             }
 
             self.logger.debug(f"Configuration loaded successfully ({len(device_names)} devices)")

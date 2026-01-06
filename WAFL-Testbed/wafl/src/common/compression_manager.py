@@ -83,6 +83,10 @@ class CompressionManager:
             comp_time = time.time() - start_t
             compressed_size = len(out)
             compression_ratio = compressed_size / original_size if original_size > 0 else 1.0
+            savings_percent = (1 - compression_ratio) * 100
+
+            # Log compression results for verification
+            self.logger.info(f"🗜️ Compression: {method_used} | {original_size / 1024:.1f}KB → {compressed_size / 1024:.1f}KB | ratio={compression_ratio:.3f} ({savings_percent:.1f}% saved) | time={comp_time * 1000:.1f}ms")
 
             # Record compression metrics for adaptation
             self.history.append(

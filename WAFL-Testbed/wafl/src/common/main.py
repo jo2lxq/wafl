@@ -397,7 +397,6 @@ class ModelLearningUtils:
 
                     # Enforce strict timeout using wait()
                     # return_when=ALL_COMPLETED not used because we want to stop exactly at timeout
-                    # actually wait() returns (done, not_done) after timeout
                     from concurrent.futures import wait
 
                     done, not_done = wait(futures, timeout=strict_timeout)
@@ -534,16 +533,6 @@ class ModelSharingUtils:
                     self.udp_fec_m = int(fec_m_config)
                     self.udp_adaptive_fec = False
 
-                # Load timeout configurations
-                # Common timeout for model exchange (applies to both TCP and UDP)
-                self.model_fetch_timeout = method_config.get("model_fetch_timeout", 3.0)
-
-                # UDP-specific timeouts
-                udp_timeouts = udp_config.get("timeouts", {})
-                self.udp_initial_packet_timeout = udp_timeouts.get("initial_packet", 2.0)
-                self.udp_inter_packet_timeout = udp_timeouts.get("inter_packet", 0.2)
-                self.udp_model_completion_timeout = udp_timeouts.get("model_completion", 3.0)
-
                 self.compression_enabled = comp_config.get("enabled", False)
                 self.initial_comp_method = comp_config.get("initial_method", "zlib")
 
@@ -552,12 +541,35 @@ class ModelSharingUtils:
             self.udp_enabled = False
             self.udp_fec_m = 16
             self.udp_adaptive_fec = False
-            self.model_fetch_timeout = 3.0
-            self.udp_initial_packet_timeout = 2.0
-            self.udp_inter_packet_timeout = 0.2
-            self.udp_model_completion_timeout = 3.0
             self.compression_enabled = False
             self.initial_comp_method = "zlib"
+
+        # Load timeout configurations from config.json (set by ctrl server from execution_config.json)
+        # Timeouts are REQUIRED - no defaults allowed
+        try:
+            with open("config.json", "r") as f:
+                config = json.load(f)
+                timeouts_config = config.get("timeouts")
+                if timeouts_config is None:
+                    raise ValueError("'timeouts' section is missing in config.json. Please configure timeouts in execution_config.json.")
+
+                # Validate all required timeout values
+                required_keys = ["model_fetch", "udp_initial_packet", "udp_inter_packet", "udp_model_completion"]
+                missing_keys = [k for k in required_keys if k not in timeouts_config]
+                if missing_keys:
+                    raise ValueError(f"Missing required timeout keys in config.json: {missing_keys}")
+
+                self.model_fetch_timeout = timeouts_config["model_fetch"]
+                self.udp_initial_packet_timeout = timeouts_config["udp_initial_packet"]
+                self.udp_inter_packet_timeout = timeouts_config["udp_inter_packet"]
+                self.udp_model_completion_timeout = timeouts_config["udp_model_completion"]
+
+        except FileNotFoundError:
+            raise RuntimeError("config.json not found. Timeout configuration is required.")
+        except ValueError as e:
+            raise RuntimeError(str(e))
+        except Exception as e:
+            raise RuntimeError(f"Failed to load timeout settings from config.json: {e}")
 
         # Override the constructor timeout with configurable model_fetch_timeout
         # This applies to both TCP and UDP for fairness
@@ -566,7 +578,7 @@ class ModelSharingUtils:
         # Log timeout configuration
         self.logger.info(f"⏱️ Model fetch timeout (TCP/UDP): {self.model_fetch_timeout}s")
         if self.udp_enabled:
-            self.logger.info(f"⏱️ UDP extra timeouts: inter_packet={self.udp_inter_packet_timeout}s")
+            self.logger.info(f"⏱️ UDP timeouts: initial_packet={self.udp_initial_packet_timeout}s, inter_packet={self.udp_inter_packet_timeout}s, model_completion={self.udp_model_completion_timeout}s")
 
         # Initialize UDP and Compression
         if self.udp_enabled:
@@ -595,7 +607,16 @@ class ModelSharingUtils:
 
         # Smoothed Packet Loss (EWMA) for stable Adaptive FEC
         self.smoothed_packet_loss = 0.0
-        self.packet_loss_alpha = 0.2  # EWMA weight for new observations (stabilized adaptation)
+        self.packet_loss_alpha = 0.4  # EWMA weight - Higher for faster response to changing conditions
+        self.previous_loss = 0.0  # For trend detection
+
+        # Parity Ratchet with Decay: Prevents degradation but allows recovery
+        # - max_observed_parity tracks highest needed Parity
+        # - parity_decay_counter counts epochs since last increase
+        # - After DECAY_EPOCHS, max_observed_parity decreases by 1
+        self.max_observed_parity = 12  # Start with high Parity to maintain Survival
+        self.parity_decay_counter = 0
+        self.PARITY_DECAY_EPOCHS = 5  # Reset ratchet after N stable epochs (was 3, now more conservative)
 
         # TCP traffic statistics (for when UDP is disabled)
         self.tcp_stats = {
@@ -696,11 +717,10 @@ class ModelSharingUtils:
                 command = f"{ModelSharingUtils.cMDLREQ}:src={self.addr}{other_options}\r\n"
                 self.logger.debug(f"📤 Sending MDLREQ command: {command.strip()}")
 
-                # Set per-recv timeout to 5s, but enforce overall deadline
-                per_recv_timeout = min(5.0, self.timeout)
-                s.settimeout(per_recv_timeout)
+                # Use configured timeout for connection
+                s.settimeout(self.timeout)
                 s.connect((peer_IP, self.port))
-                self.logger.debug(f"🔌 Connected to {peer_IP}:{self.port}, timeout={per_recv_timeout}s")
+                self.logger.debug(f"🔌 Connected to {peer_IP}:{self.port}, timeout={self.timeout}s")
                 s.sendall(command.encode("utf-8"))
 
                 # Overall transfer deadline - this is the key fix for TCP timeout
@@ -721,9 +741,9 @@ class ModelSharingUtils:
                     s.sendall(b"READY\r\n")
                     self.logger.debug("📤 Sent READY ack to sender")
 
-                    # Wait for UDP data
+                    # Wait for UDP data using UDP-specific timeout
                     start_wait = time.time()
-                    while time.time() - start_wait < self.timeout:
+                    while time.time() - start_wait < self.udp_model_completion_timeout:
                         with self.received_models_lock:
                             if peer_IP in self.received_models:
                                 data_or_future = self.received_models.pop(peer_IP)
@@ -992,6 +1012,27 @@ class ModelSharingUtils:
             except Exception:
                 return 0, 0
 
+    def _read_tcp_retransmit_stats(self) -> int:
+        """
+        Read TCP retransmit segment count from /proc/net/snmp.
+        Returns the total number of retransmitted TCP segments.
+        This captures TCP's 'hidden' communication cost that affects epoch duration.
+        """
+        try:
+            with open("/proc/net/snmp", "r") as f:
+                lines = f.readlines()
+            for i, line in enumerate(lines):
+                if line.startswith("Tcp:") and i + 1 < len(lines):
+                    # Header line followed by values line
+                    headers = lines[i].split()
+                    values = lines[i + 1].split()
+                    if "RetransSegs" in headers:
+                        idx = headers.index("RetransSegs")
+                        return int(values[idx])
+            return 0
+        except Exception:
+            return 0
+
     def get_epoch_metrics(self) -> dict:
         """
         Get communication and compression metrics for the current epoch.
@@ -1203,25 +1244,76 @@ class ModelSharingUtils:
         # Target k is fixed for optimal performance
         target_k = 16
 
-        # Adjust Parity based on smoothed loss
-        # Strategy: Keep overhead slightly above loss rate, with minimum safety
-        # Start conservative (high parity) when no data is available
-        if packet_loss < 0.03:
-            target_parity = 1  # ~6% overhead (Excellent/Good)
-        elif packet_loss < 0.08:
-            target_parity = 2  # ~12.5% overhead (Moderate)
-        elif packet_loss < 0.15:
-            target_parity = 4  # ~25% overhead (Fair)
-        elif packet_loss < 0.25:
-            target_parity = 8  # ~50% overhead (Poor)
-        else:
-            target_parity = 16  # ~100% overhead (Very Poor)
+        # DYNAMIC LOSS-BASED PARAMETER ADJUSTMENT
+        # Strategy:
+        # - Low loss (< 5%): Lower Parity (8) for speed, longer timeout (12s) for reliability
+        # - High loss (>= 15%): Higher Parity (16) for recovery, shorter timeout (5s) for fail-fast
+        # - Parity Ratchet: Never decrease below max_observed_parity to prevent degradation
 
-        # Conservative startup: Use minimum Parity=4 until we have reliable loss data
-        # (smoothed_packet_loss = 0 means no FEC feedback yet)
+        # Calculate target Parity based on measured loss
+        if packet_loss < 0.05:
+            # Excellent/Good: Lower overhead, higher success rate expected
+            base_parity = 8
+        elif packet_loss < 0.10:
+            # Moderate: Balanced overhead
+            base_parity = 10
+        elif packet_loss < 0.20:
+            # Fair: Higher overhead for recovery
+            base_parity = 12
+        else:
+            # Poor: Maximum redundancy
+            base_parity = 16
+
+        # TREND DETECTION: Preemptively adjust if loss is rising
+        loss_trend = packet_loss - self.previous_loss
+        if loss_trend > 0.03:  # Loss increasing by >3%
+            # Preemptively increase Parity to anticipate degradation
+            base_parity = min(16, base_parity + 2)
+            self.logger.debug(f"📈 Loss trend rising (+{loss_trend:.1%}), preemptive Parity bump to {base_parity}")
+        self.previous_loss = packet_loss
+
+        # PARITY RATCHET WITH DECAY
+        # - Never decrease below max_observed_parity (stability)
+        # - BUT: If conditions are stable, gradually reduce max_observed_parity (recovery)
+        if base_parity > self.max_observed_parity:
+            # Conditions worsening: Increase ratchet
+            self.max_observed_parity = base_parity
+            self.parity_decay_counter = 0  # Reset decay counter
+            self.logger.info(f"🔒 Parity Ratchet: Increased max to {self.max_observed_parity} (loss={packet_loss:.1%})")
+        elif base_parity < self.max_observed_parity:
+            # Conditions improving: Count towards decay
+            self.parity_decay_counter += 1
+            if self.parity_decay_counter >= self.PARITY_DECAY_EPOCHS:
+                # Decay ratchet by 1 (but not below base_parity or 10)
+                old_max = self.max_observed_parity
+                self.max_observed_parity = max(10, base_parity, self.max_observed_parity - 1)
+                self.parity_decay_counter = 0
+                if self.max_observed_parity != old_max:
+                    self.logger.info(f"🔓 Parity Ratchet Decay: {old_max} -> {self.max_observed_parity} (stable for {self.PARITY_DECAY_EPOCHS} epochs)")
+
+        target_parity = max(base_parity, self.max_observed_parity)
+
+        # Conservative startup: Use minimum Parity=8 until we have reliable loss data
         if self.smoothed_packet_loss == 0.0:
-            target_parity = max(target_parity, 4)
+            target_parity = max(target_parity, 8)
             self.logger.info(f"🛡️ Conservative FEC: No loss data yet, using Parity={target_parity}")
+
+        # DYNAMIC TIMEOUT ADJUSTMENT
+        # Low loss → longer timeout (more retries, higher success)
+        # High loss → shorter timeout (fail fast, proceed to next epoch)
+        # Note: With early exit at 80%, these act as maximum waits
+        if packet_loss < 0.05:
+            dynamic_timeout = 10.0  # Excellent/Good: Standard wait
+        elif packet_loss < 0.15:
+            dynamic_timeout = 8.0  # Moderate: Balanced
+        else:
+            dynamic_timeout = 6.0  # Fair/Poor: Fail fast
+
+        # Update UDPModelSharing timeout if changed significantly
+        current_timeout = self.udp_sharing.timeout
+        if abs(dynamic_timeout - current_timeout) > 1.0:
+            self.udp_sharing.timeout = dynamic_timeout
+            self.logger.info(f"⏱️ Dynamic Timeout: {current_timeout:.1f}s -> {dynamic_timeout:.1f}s (loss={packet_loss:.1%})")
 
         # Apply update if parity changed
         current_parity = self.udp_sharing.parity

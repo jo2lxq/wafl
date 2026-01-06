@@ -26,17 +26,11 @@
     },
     "udp": {
       "enabled": true,
-      "fec_m": "auto",
-      "timeouts": {
-        "initial_packet": 2.0,
-        "inter_packet": 0.2,
-        "model_completion": 15.0
-      }
+      "fec_m": "auto"
     },
     "compression": {
       "enabled": true,
       "initial_method": "zlib"
-    },
-    "model_fetch_timeout": 15.0
+    }
   }
 }
