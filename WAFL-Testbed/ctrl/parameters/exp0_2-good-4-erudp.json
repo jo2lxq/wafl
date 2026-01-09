@@ -1,9 +1,9 @@
 {
   "epochs": {
     "self": 8,
-    "wafl": 64
+    "wafl": 32
   },
-  "contact_pattern": "contact_pattern/rgg_n28_a1000_s04_s01.json",
+  "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -17,20 +17,29 @@
     "ssp": {
       "enabled": false
     },
+    "tcp": {
+      "enabled": false
+    },
     "udp": {
+      "enabled": false
+    },
+    "rudp": {
       "enabled": true,
-      "fec_m": "auto"
+      "mode": "erudp",
+      "aging_limit": 0.5,
+      "window_size": 64,
+      "max_retries": 20
     },
     "compression": {
       "enabled": false,
       "initial_method": "zlib"
     }
   },
-  "experiment_name": "Experiment 0: fair (UDP)",
+  "experiment_name": "Experiment 0: good (E-RUDP)",
   "network_condition": {
     "enabled": true,
-    "rate": "3mbit",
-    "delay": "30ms",
-    "loss": "8%"
+    "rate": "5mbit",
+    "delay": "15ms",
+    "loss": "5%"
   }
 }

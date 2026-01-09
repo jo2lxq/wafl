@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - UDP + FEC (M=auto)",
+  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - UDP",
   "epochs": {
     "self": 64,
     "wafl": 2048
@@ -29,7 +29,7 @@
       "fec_m": "auto"
     },
     "compression": {
-      "enabled": true,
+      "enabled": false,
       "initial_method": "zlib"
     }
   }

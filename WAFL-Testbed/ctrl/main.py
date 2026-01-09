@@ -787,7 +787,7 @@ class ControlServer:
         self.ssh_manager = SSHConnectionManager(
             user=self.config.get("USER", "denjo"),
             private_key_path="~/.ssh/id_ed25519",
-            timeout=10,
+            timeout=30,
             logger=self.logger,
         )
 
@@ -828,7 +828,8 @@ class ControlServer:
                 "USER": exec_config.get("user", "denjo"),
                 "DEPLOYMENT_LOCATION": exec_config.get("deployment_location", "/home/denjo/workspace/ktakahashi"),
                 "PROJECT_NAME": "WAFL-Testbed",
-                "WAFL_DEVICE_P2P_PORT": 10002,
+                "WAFL_DEVICE_P2P_PORT": exec_config.get("host_port_p2p", 10002),
+                "CONTAINER_PORT_CTRL": exec_config.get("container_port_ctrl", 10001),
                 "WAFL_DEVICE_NAMES": device_names,
                 "WAFL_DEVICE_IPS": device_ips,
                 "EXPERIMENT_NAME": exec_config.get("experiment_name", "wafl-experiment"),
@@ -899,7 +900,7 @@ class ControlServer:
                     try:
                         device_name = str(node["name"])
                         ip = node["physical_ip"]
-                        ctrl_port = node.get("container_port_ctrl", 10001)
+                        ctrl_port = node.get("container_port_ctrl", self.config.get("CONTAINER_PORT_CTRL", 10001))
 
                         agent = WaflAgent(
                             agent_index=node["name"],
@@ -911,8 +912,8 @@ class ControlServer:
                             experiment_id=self.experiment_id,
                             start_timestamp=self.start_timestamp,
                             container_ctrl_port=ctrl_port,
-                            host_p2p_port=node.get("host_port_p2p", 10002),
-                            container_p2p_port=node.get("container_port_p2p", 10002),  # Ensure this is passed
+                            host_p2p_port=node.get("host_port_p2p", self.config.get("WAFL_DEVICE_P2P_PORT", 10002)),
+                            container_p2p_port=node.get("container_port_p2p", self.config.get("WAFL_DEVICE_P2P_PORT", 10002)),  # Ensure this is passed
                             node_config=node,
                             ssh_manager=self.ssh_manager,
                         )
@@ -1899,6 +1900,49 @@ if __name__ == "__main__":
         print(f"   - UDP: {'Enabled' if udp_enabled else 'Disabled'}")
         if udp_enabled:
             print(f"     • FEC M: {udp_settings.get('fec_m', 9)}")
+
+        # TCP (explicit setting, defaults to True for backward compatibility)
+        tcp_settings = method.get("tcp", {})
+        tcp_enabled = tcp_settings.get("enabled", True) if tcp_settings else True
+        # TCP is only active if UDP and RUDP are disabled
+        tcp_active = tcp_enabled and not udp_enabled
+
+        # RUDP / E-RUDP
+        rudp_settings = method.get("rudp", {})
+        rudp_enabled = rudp_settings.get("enabled", False)
+        rudp_mode = rudp_settings.get("mode", "rudp")
+        if rudp_enabled:
+            tcp_active = False  # RUDP takes precedence over TCP
+            mode_display = "E-RUDP" if rudp_mode == "erudp" else "RUDP"
+            print(f"   - {mode_display}: Enabled")
+            print(f"     • Window Size: {rudp_settings.get('window_size', 16)}")
+            print(f"     • Max Retries: {rudp_settings.get('max_retries', 10)}")
+            if rudp_mode == "erudp":
+                print(f"     • Aging Limit: {rudp_settings.get('aging_limit', 0.5) * 1000:.0f}ms")
+        else:
+            print("   - RUDP: Disabled")
+
+        # Show active TCP only if it's the active protocol
+        if tcp_active:
+            print("   - TCP: Enabled (Active Transport)")
+        else:
+            print(f"   - TCP: {'Enabled' if tcp_enabled else 'Disabled'}")
+
+        # Protocol validation
+        enabled_protocols = []
+        if tcp_active:
+            enabled_protocols.append("TCP")
+        if udp_enabled:
+            enabled_protocols.append("UDP")
+        if rudp_enabled:
+            enabled_protocols.append(mode_display if rudp_mode == "erudp" else "RUDP")
+
+        if len(enabled_protocols) == 0:
+            print("\n⚠️  WARNING: No transport protocol enabled! Set tcp.enabled, udp.enabled, or rudp.enabled to true.")
+        elif len(enabled_protocols) > 1:
+            print(f"\n⚠️  WARNING: Multiple transport protocols enabled: {enabled_protocols}. Only one should be enabled.")
+        else:
+            print(f"\n✅ Active Transport Protocol: {enabled_protocols[0]}")
 
         # Compression
         comp_settings = method.get("compression", {})

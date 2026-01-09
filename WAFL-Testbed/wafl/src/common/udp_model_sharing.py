@@ -27,6 +27,7 @@ class UDPModelSharing:
     PTYPE_MCAST = 2
     PTYPE_ACK = 3
     PTYPE_END = 4  # End of Transfer (Fast NACK trigger)
+    PTYPE_MDLREQ = 5  # Model Request (UDP-based MDLREQ)
 
     MAX_RETRIES = 10  # Max NACK attempts (Increased for resilience)
     BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
@@ -46,7 +47,7 @@ class UDPModelSharing:
 
         # Pacing Control
         # Default pacing: 0.1ms per packet (~112Mbps) - Aggressive start for low-latency
-        self.pacing_delay = 0.0001
+        self.pacing_delay = 0.0
 
         self.timeout = timeout  # Model completion timeout
         self.inter_packet_timeout = inter_packet_timeout  # Time between packets (Default 0.2s by caller preferred)
@@ -97,6 +98,8 @@ class UDPModelSharing:
         self.peer_workers = {}  # {peer_ip: Thread}
         self.peer_workers_lock = threading.Lock()
         self.callback = None  # Will be set by start_listener
+        self.mdlreq_callback = None  # Callback for MDLREQ handling
+        self.mdlreq_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MDLREQ")  # Thread pool for MDLREQ callbacks
         self.stats_lock = threading.Lock()  # Protect stats from concurrent worker access
 
     def update_network_params(self, new_k: int, new_parity: int = None, new_pacing: float = None) -> None:
@@ -145,6 +148,42 @@ class UDPModelSharing:
         self.decoder = zfec.Decoder(self.k, self.m)
 
         self.logger.info(f"🔄 FEC params updated: k={old_k}→{self.k}, parity={old_parity}→{self.parity} (m={old_m}→{self.m}, redundancy={self.parity / self.m:.1%})")
+
+    def send_mdlreq(self, target_ip: str, target_port: int, requester_ip: str) -> bool:
+        """
+        Send a UDP MDLREQ (Model Request) to a peer.
+        This allows requesting a model without TCP handshake.
+
+        Args:
+            target_ip: IP address of the peer to request model from
+            target_port: Port of the peer
+            requester_ip: IP address of this node (who is requesting)
+
+        Returns:
+            True if request was sent successfully, False otherwise
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1.0)
+
+            # Pack MDLREQ packet: type(1), timestamp(8), requester_ip as bytes (padded)
+            # We encode the requester IP as a string in the payload
+            requester_bytes = requester_ip.encode("utf-8")
+            requester_bytes = requester_bytes[:32].ljust(32, b"\0")  # Pad or truncate to 32 bytes
+
+            # Header: PTYPE_MDLREQ, timestamp, 0, 0, 0, 0, 0, 0, 0, 0
+            header = struct.pack("!BdIIIIIBBB", self.PTYPE_MDLREQ, time.time(), 0, 0, 0, 0, 0, 0, 0, 0)
+            packet = header + requester_bytes
+
+            sock.sendto(packet, (target_ip, target_port))
+            sock.close()
+
+            self.logger.debug(f"📬 Sent UDP MDLREQ to {target_ip}:{target_port} from {requester_ip}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send UDP MDLREQ: {e}")
+            return False
 
     def send_model(self, model_data: bytes, target_ip: str, target_port: int) -> bool:
         """
@@ -287,6 +326,14 @@ class UDPModelSharing:
         self.thread = threading.Thread(target=self._listener_loop, args=(callback,), daemon=True)
         self.thread.start()
 
+    def set_mdlreq_callback(self, callback):
+        """
+        Set a callback function for handling UDP MDLREQ packets.
+        callback(requester_ip: str) - called when a MDLREQ is received
+        """
+        self.mdlreq_callback = callback
+        self.logger.debug("MDLREQ callback registered")
+
     def _get_or_create_peer_worker(self, peer_ip):
         """
         Get or create a dedicated worker thread and queue for a peer.
@@ -355,6 +402,23 @@ class UDPModelSharing:
                         # Queue full - drop packet (will be recovered via NACK)
                         self.logger.error(f"Queue full for {peer_ip}: {e}")
                         pass
+                    continue
+
+                # MDLREQ handling - model request received
+                if ptype == self.PTYPE_MDLREQ:
+                    # Extract requester IP from payload
+                    payload = data[self.HEADER_SIZE :]
+                    requester_ip = payload.rstrip(b"\0").decode("utf-8")
+                    self.logger.info(f"📬 UDP MDLREQ received from {peer_ip}, requester: {requester_ip}")
+
+                    # Trigger MDLREQ callback if set
+                    if hasattr(self, "mdlreq_callback") and self.mdlreq_callback:
+                        try:
+                            # Use thread pool to avoid blocking the listener
+                            self.mdlreq_executor.submit(self.mdlreq_callback, requester_ip)
+                        except Exception as e:
+                            self.logger.error(f"Error submitting MDLREQ callback: {e}")
+                    continue
 
             except socket.timeout:
                 continue
@@ -620,11 +684,11 @@ class UDPModelSharing:
         if not needed:
             return
 
-        # NACK indicates congestion/loss -> Slow down pacing
-        old_pacing = self.pacing_delay
-        self.pacing_delay = min(0.1, self.pacing_delay * 1.25)
-        if self.pacing_delay > old_pacing:
-            self.logger.debug(f"📉 NACK received, slowing pacing: {old_pacing * 1000:.2f}ms -> {self.pacing_delay * 1000:.2f}ms")
+        # DISABLED: NACK-based pacing adjustment (now using fixed pacing)
+        # old_pacing = self.pacing_delay
+        # self.pacing_delay = min(0.1, self.pacing_delay * 1.25)
+        # if self.pacing_delay > old_pacing:
+        #     self.logger.debug(f"📉 NACK received, slowing pacing: {old_pacing * 1000:.2f}ms -> {self.pacing_delay * 1000:.2f}ms")
 
         # Encode and Send using NACK thread pool (avoids thread creation overhead)
         total_chunks = len(chunks_data)
@@ -680,19 +744,16 @@ class UDPModelSharing:
             self.rtt_var = 0.75 * self.rtt_var + 0.25 * abs(self.smoothed_rtt - rtt)
             self.smoothed_rtt = 0.875 * self.smoothed_rtt + 0.125 * rtt
 
-        # Pacing Adjustment (BBR-like simple logic)
-        # If RTT is inflating (queued), slow down (increase pacing)
-        # If RTT is close to min, speed up (decrease pacing)
-
-        threshold = self.min_rtt * 1.5
-        if self.smoothed_rtt > threshold:
-            # Congestion detected
-            self.pacing_delay = min(0.1, self.pacing_delay * 1.05)
-            self.logger.debug(f"📉 Pacing slowed to {self.pacing_delay * 1000:.2f}ms (RTT {self.smoothed_rtt * 1000:.1f}ms > {threshold * 1000:.1f}ms)")
-        elif self.smoothed_rtt < self.min_rtt * 1.1:
-            # Link clear - speed up very aggressively
-            self.pacing_delay = max(0.0001, self.pacing_delay * 0.75)
-            # self.logger.debug(f"📈 Pacing sped up to {self.pacing_delay*1000:.2f}ms")
+        # DISABLED: RTT-based pacing adjustment (now using fixed pacing)
+        # Keep RTT measurement for observation only
+        # threshold = self.min_rtt * 1.5
+        # if self.smoothed_rtt > threshold:
+        #     # Congestion detected
+        #     self.pacing_delay = min(0.1, self.pacing_delay * 1.05)
+        #     self.logger.debug(f"📉 Pacing slowed to {self.pacing_delay * 1000:.2f}ms (RTT {self.smoothed_rtt * 1000:.1f}ms > {threshold * 1000:.1f}ms)")
+        # elif self.smoothed_rtt < self.min_rtt * 1.1:
+        #     # Link clear - speed up very aggressively
+        #     self.pacing_delay = max(0.0001, self.pacing_delay * 0.75)
 
     def join_multicast_group(self, group_ip):
         """Join a UDP multicast group."""

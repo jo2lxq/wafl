@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - Baseline (TCP)",
+  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - E-RUDP",
   "epochs": {
     "self": 64,
     "wafl": 2048
@@ -26,6 +26,13 @@
     },
     "udp": {
       "enabled": false
+    },
+    "rudp": {
+      "enabled": true,
+      "mode": "erudp",
+      "aging_limit": 0.5,
+      "window_size": 64,
+      "max_retries": 20
     },
     "compression": {
       "enabled": false,

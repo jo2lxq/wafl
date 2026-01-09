@@ -3,208 +3,217 @@
   "user": "denjo",
   "experiment_name": "test",
   "log_level": "debug",
+  "container_port_ctrl": 10001,
+  "host_port_ctrl": 10001,
+  "host_port_p2p": 10002,
   "nodes": [
     {
       "name": 0,
-      "physical_ip": "192.168.11.100",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.100"
     },
     {
       "name": 1,
-      "physical_ip": "192.168.11.101",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.101"
     },
     {
       "name": 2,
-      "physical_ip": "192.168.11.102",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.102"
     },
     {
       "name": 3,
-      "physical_ip": "192.168.11.103",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.103"
     },
     {
       "name": 4,
-      "physical_ip": "192.168.11.104",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.104"
     },
     {
       "name": 5,
-      "physical_ip": "192.168.11.105",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.105"
     },
     {
       "name": 6,
-      "physical_ip": "192.168.11.106",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.106"
     },
     {
       "name": 7,
-      "physical_ip": "192.168.11.107",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.107"
     },
     {
       "name": 8,
-      "physical_ip": "192.168.11.108",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.108"
     },
     {
       "name": 9,
-      "physical_ip": "192.168.11.109",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.109"
     },
     {
       "name": 10,
-      "physical_ip": "192.168.11.110",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.110"
     },
     {
       "name": 11,
-      "physical_ip": "192.168.11.111",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.111"
     },
     {
       "name": 12,
-      "physical_ip": "192.168.11.112",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.112"
     },
     {
       "name": 13,
-      "physical_ip": "192.168.11.113",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.113"
     },
     {
       "name": 14,
-      "physical_ip": "192.168.11.114",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.114"
     },
     {
       "name": 15,
-      "physical_ip": "192.168.11.115",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.115"
     },
     {
       "name": 16,
-      "physical_ip": "192.168.11.116",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.116"
     },
     {
       "name": 17,
-      "physical_ip": "192.168.11.117",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.117"
     },
     {
       "name": 18,
-      "physical_ip": "192.168.11.118",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.118"
     },
     {
       "name": 19,
-      "physical_ip": "192.168.11.119",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.119"
     },
     {
       "name": 20,
-      "physical_ip": "192.168.11.120",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.120"
     },
     {
       "name": 21,
-      "physical_ip": "192.168.11.121",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.121"
     },
     {
       "name": 22,
-      "physical_ip": "192.168.11.122",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.122"
     },
     {
       "name": 23,
-      "physical_ip": "192.168.11.123",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.123"
     },
     {
       "name": 24,
-      "physical_ip": "192.168.11.124",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.124"
     },
     {
       "name": 25,
-      "physical_ip": "192.168.11.125",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.125"
     },
     {
       "name": 26,
-      "physical_ip": "192.168.11.126",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.126"
     },
     {
       "name": 27,
-      "physical_ip": "192.168.11.127",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002
+      "physical_ip": "192.168.11.127"
+    },
+    {
+      "name": 28,
+      "physical_ip": "192.168.11.128"
+    },
+    {
+      "name": 29,
+      "physical_ip": "192.168.11.129"
+    },
+    {
+      "name": 30,
+      "physical_ip": "192.168.11.130"
+    },
+    {
+      "name": 31,
+      "physical_ip": "192.168.11.131"
+    },
+    {
+      "name": 32,
+      "physical_ip": "192.168.11.132"
+    },
+    {
+      "name": 33,
+      "physical_ip": "192.168.11.133"
+    },
+    {
+      "name": 34,
+      "physical_ip": "192.168.11.134"
+    },
+    {
+      "name": 35,
+      "physical_ip": "192.168.11.135"
+    },
+    {
+      "name": 36,
+      "physical_ip": "192.168.11.136"
+    },
+    {
+      "name": 37,
+      "physical_ip": "192.168.11.137"
+    },
+    {
+      "name": 38,
+      "physical_ip": "192.168.11.138"
+    },
+    {
+      "name": 39,
+      "physical_ip": "192.168.11.139"
+    },
+    {
+      "name": 40,
+      "physical_ip": "192.168.12.100"
+    },
+    {
+      "name": 41,
+      "physical_ip": "192.168.12.101"
+    },
+    {
+      "name": 42,
+      "physical_ip": "192.168.12.102"
+    },
+    {
+      "name": 43,
+      "physical_ip": "192.168.12.103"
+    },
+    {
+      "name": 44,
+      "physical_ip": "192.168.12.104"
+    },
+    {
+      "name": 45,
+      "physical_ip": "192.168.12.105"
+    },
+    {
+      "name": 46,
+      "physical_ip": "192.168.12.106"
+    },
+    {
+      "name": 47,
+      "physical_ip": "192.168.12.107"
+    },
+    {
+      "name": 48,
+      "physical_ip": "192.168.12.108"
+    },
+    {
+      "name": 49,
+      "physical_ip": "192.168.12.109"
     }
   ],
   "timeouts": {
-    "model_fetch": 8.0,
+    "model_fetch": 4.0,
     "udp_initial_packet": 4.0,
     "udp_inter_packet": 0.3,
-    "udp_model_completion": 8.0
+    "udp_model_completion": 8.0,
+    "rudp_connect": 2.0,
+    "rudp_send": 3.0
   }
 }

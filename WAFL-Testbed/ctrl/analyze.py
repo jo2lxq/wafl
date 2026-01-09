@@ -1368,6 +1368,182 @@ def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
     return "cumulative_sent_data.png"
 
 
+def _generate_rudp_retransmission_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate RUDP retransmission count plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "rudp_retransmissions" in df.columns:
+        # Filter to WAFL phase only
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        rudp_data = wafl_df[wafl_df["rudp_retransmissions"].notna()].copy()
+
+        if not rudp_data.empty and rudp_data["rudp_retransmissions"].sum() > 0:
+            has_meaningful_data = True
+            num_nodes = rudp_data["node"].nunique()
+            palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+            ax = sns.lineplot(
+                data=rudp_data,
+                x="epoch",
+                y="rudp_retransmissions",
+                hue="node",
+                alpha=0.4,
+                legend=False,
+                palette=palette,
+                estimator=None,
+                linewidth=1.2,
+            )
+            sns.lineplot(
+                data=rudp_data,
+                x="epoch",
+                y="rudp_retransmissions",
+                color=COLORS["mean_line"],
+                linewidth=2.5,
+                label="Mean",
+                errorbar=None,
+                ax=ax,
+            )
+            add_phase_line_func(ax, df, "epoch")
+            plt.title(f"RUDP Retransmissions - {experiment_name}")
+            plt.ylabel("Retransmissions")
+            plt.xlabel("Epoch")
+            plt.legend()
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "RUDP not enabled\n(no retransmission data)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"RUDP Retransmissions - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "rudp_retransmissions.png", dpi=150)
+    plt.close()
+    return "rudp_retransmissions.png"
+
+
+def _generate_rudp_rtt_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate RUDP average RTT plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "rudp_avg_rtt_ms" in df.columns:
+        # Filter to WAFL phase only
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        rtt_data = wafl_df[wafl_df["rudp_avg_rtt_ms"].notna()].copy()
+
+        if not rtt_data.empty and rtt_data["rudp_avg_rtt_ms"].sum() > 0:
+            has_meaningful_data = True
+            num_nodes = rtt_data["node"].nunique()
+            palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+            ax = sns.lineplot(
+                data=rtt_data,
+                x="epoch",
+                y="rudp_avg_rtt_ms",
+                hue="node",
+                alpha=0.4,
+                legend=False,
+                palette=palette,
+                estimator=None,
+                linewidth=1.2,
+            )
+            sns.lineplot(
+                data=rtt_data,
+                x="epoch",
+                y="rudp_avg_rtt_ms",
+                color=COLORS["mean_line"],
+                linewidth=2.5,
+                label="Mean",
+                errorbar=None,
+                ax=ax,
+            )
+            add_phase_line_func(ax, df, "epoch")
+            plt.title(f"RUDP Average RTT - {experiment_name}")
+            plt.ylabel("RTT [ms]")
+            plt.xlabel("Epoch")
+            plt.legend()
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "RUDP not enabled\n(no RTT data)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"RUDP Average RTT - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "rudp_rtt.png", dpi=150)
+    plt.close()
+    return "rudp_rtt.png"
+
+
+def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate E-RUDP aged packets plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "rudp_aged_packets" in df.columns:
+        # Filter to WAFL phase only
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        aging_data = wafl_df[wafl_df["rudp_aged_packets"].notna()].copy()
+
+        if not aging_data.empty and aging_data["rudp_aged_packets"].sum() > 0:
+            has_meaningful_data = True
+
+            # Aggregate by epoch
+            aging_agg = aging_data.groupby("epoch").agg({"rudp_aged_packets": "sum"}).reset_index()
+
+            ax = plt.subplot(1, 1, 1)
+            ax.bar(
+                aging_agg["epoch"],
+                aging_agg["rudp_aged_packets"],
+                color=COLORS["wasted_bar"],
+                alpha=0.8,
+                edgecolor=COLORS["wasted_bar"],
+                linewidth=0.5,
+            )
+            ax.set_ylabel("Aged Packets")
+            ax.set_xlabel("Epoch")
+            plt.title(f"E-RUDP Aged Packets - {experiment_name}")
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "E-RUDP not enabled or no packets aged\n(aging_limit not exceeded)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"E-RUDP Aged Packets - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "rudp_aging.png", dpi=150)
+    plt.close()
+    return "rudp_aging.png"
+
+
 def analyze_results(experiment_id):
     """Analyze collected results and generate plots in parallel."""
     print(f"📊 Analyzing results for: {experiment_id}")
@@ -1507,6 +1683,19 @@ def analyze_results(experiment_id):
         (
             "compute_comm_breakdown.png",
             lambda: _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir),
+        ),
+        # RUDP/E-RUDP specific plots
+        (
+            "rudp_retransmissions.png",
+            lambda: _generate_rudp_retransmission_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "rudp_rtt.png",
+            lambda: _generate_rudp_rtt_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "rudp_aging.png",
+            lambda: _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line),
         ),
     ]
 

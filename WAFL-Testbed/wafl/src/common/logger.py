@@ -22,6 +22,7 @@ class MetricsLogger:
         "epoch_duration_ms",
         "compute_time_ms",  # Pure computation time (training)
         "comm_time_ms",  # Communication time (model exchange)
+        "waiting_time_ms",  # Waiting time (parallel fetch)
         # SSP metrics
         "wasted_ms",
         "wasted_norm",
@@ -36,6 +37,16 @@ class MetricsLogger:
         "fec_recovery_fail",
         "bytes_sent",
         "bytes_received",
+        # RUDP/E-RUDP metrics
+        "rudp_retransmissions",
+        "rudp_acks_sent",
+        "rudp_acks_received",
+        "rudp_eaks_sent",
+        "rudp_eaks_received",
+        "rudp_aged_packets",
+        "rudp_connect_time_ms",
+        "rudp_avg_rtt_ms",
+        "rudp_max_retries_reached",
         # Compression metrics
         "compression_method",
         "compression_ratio",
