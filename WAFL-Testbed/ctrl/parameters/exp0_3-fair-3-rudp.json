@@ -1,7 +1,7 @@
 {
   "epochs": {
-    "self": 8,
-    "wafl": 32
+    "self": 4,
+    "wafl": 16
   },
   "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
@@ -26,8 +26,6 @@
     "rudp": {
       "enabled": true,
       "mode": "rudp",
-      "aging_limit": 0.5,
-      "window_size": 64,
       "max_retries": 20
     },
     "compression": {

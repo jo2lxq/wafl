@@ -10,6 +10,8 @@ from queue import Empty, Queue
 
 import zfec
 
+from .network_estimator import get_network_estimator
+
 
 class UDPModelSharing:
     """
@@ -40,17 +42,18 @@ class UDPModelSharing:
         # k: data packets per chunk
         # parity: redundant packets per chunk
         # m = k + parity (total packets per chunk)
-        self.k = fec_m
-        # Default parity: 75% redundancy - ensures high Survival in Excellent/Good conditions
-        self.parity = max(12, math.ceil(self.k * 0.75))
+        self.k = fec_m if fec_m > 0 else 16  # Default k=16 if not specified
+
+        # ネットワーク推定器から動的に parity を決定
+        self._network_estimator = get_network_estimator()
+        self.parity = self._network_estimator.get_recommended_fec_parity(self.k)
         self.m = self.k + self.parity
 
         # Pacing Control
-        # Default pacing: 0.1ms per packet (~112Mbps) - Aggressive start for low-latency
         self.pacing_delay = 0.0
 
-        self.timeout = timeout  # Model completion timeout
-        self.inter_packet_timeout = inter_packet_timeout  # Time between packets (Default 0.2s by caller preferred)
+        self.timeout = timeout
+        self.inter_packet_timeout = inter_packet_timeout
         self.logger = logging.getLogger("UDPModelSharing")
         self.encoder = zfec.Encoder(self.k, self.m)
         self.decoder = zfec.Decoder(self.k, self.m)
@@ -190,6 +193,16 @@ class UDPModelSharing:
         Sends serialized model data via UDP with FEC and Pacing.
         """
         try:
+            # 送信前に FEC パラメータを動的更新
+            new_parity = self._network_estimator.get_recommended_fec_parity(self.k)
+            if new_parity != self.parity:
+                old_parity = self.parity
+                self.parity = new_parity
+                self.m = self.k + self.parity
+                self.encoder = zfec.Encoder(self.k, self.m)
+                self.decoder = zfec.Decoder(self.k, self.m)
+                self.logger.info(f"🔄 FEC params updated: parity {old_parity} -> {self.parity} (m={self.m})")
+
             # Strategy: Split data into chunks of size (PAYLOAD_SIZE * k).
             # Each chunk is encoded into m packets of size PAYLOAD_SIZE.
 
@@ -293,11 +306,15 @@ class UDPModelSharing:
                     oldest = min(self.sent_models_cache.keys())
                     del self.sent_models_cache[oldest]
 
+            # 送信成功を記録
+            self._network_estimator.record_packet_result(True)
             return True
 
         except Exception as e:
             self.logger.error(f"❌ Failed to send model via UDP: {e}")
             self.stats["sent_failed"] += 1
+            # 送信失敗を記録
+            self._network_estimator.record_packet_result(False)
             return False
 
     def get_survival_rate(self) -> float:
@@ -733,6 +750,9 @@ class UDPModelSharing:
         rtt = now - echoed_ts
         if rtt < 0:
             return  # Clock skew or error
+
+        # RTT を NetworkEstimator に記録
+        self._network_estimator.record_rtt(rtt * 1000)  # ms 単位
 
         # RFC 6298 RTT estimation
         if self.min_rtt == float("inf"):

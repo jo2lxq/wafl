@@ -67,8 +67,8 @@ class ERUDPSocket(RUDPSocket):
         super().__init__(timeout=timeout, window_size=window_size, max_retries=max_retries)
         self.logger = logging.getLogger("ERUDPSocket")
 
-        # E-RUDP 固有設定
-        self._aging_limit = aging_limit
+        # E-RUDP 固有設定（aging_limit は動的に決定するためフォールバック値として保持）
+        self._base_aging_limit = aging_limit
         self._max_cumulative_acks = max_cumulative_acks
 
         # E-RUDP 統計
@@ -187,7 +187,7 @@ class ERUDPSocket(RUDPSocket):
 
     def _check_packet_aging(self, packet: Packet, current_time: float) -> bool:
         """
-        パケットが寿命切れかどうかをチェックする．
+        パケットが寿命切れかどうかをチェックする（動的 Aging）．
 
         Args:
             packet: チェック対象のパケット
@@ -197,7 +197,9 @@ class ERUDPSocket(RUDPSocket):
             寿命切れの場合 True
         """
         age = current_time - packet.created_at
-        return age > self._aging_limit
+        # 実測値から動的に寿命を決定
+        adaptive_limit = self._network_estimator.get_recommended_aging_limit()
+        return age > adaptive_limit
 
     def _calculate_dynamic_rto(self) -> float:
         """

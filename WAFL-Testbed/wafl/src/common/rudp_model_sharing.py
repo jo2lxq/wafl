@@ -13,6 +13,8 @@ import time
 from typing import Callable, Dict, Optional
 
 from .erudp_protocol import DEFAULT_AGING_LIMIT, ERUDPSocket
+from .network_estimator import get_network_estimator
+from .rudp_connection_pool import RUDPConnectionPool
 from .rudp_protocol import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT,
@@ -106,11 +108,22 @@ class RUDPModelSharing:
             "connect_time_ms": 0.0,
             "avg_rtt_ms": 0.0,
             "max_retries_reached": 0,
+            "nacks_sent": 0,  # 追加
+            "fec_recoveries": 0,  # 追加
         }
 
-        self.logger.info(f"RUDPModelSharing initialized: mode={self.mode}, port={self.port}, timeout={self.timeout}s, window={self.window_size}")
+        self.logger.info(f"RUDPModelSharing initialized: mode={self.mode}, port={self.port}, timeout={self.timeout}s")
         if self.mode == "erudp":
-            self.logger.info(f"  E-RUDP aging_limit={self.aging_limit * 1000:.0f}ms")
+            self.logger.info("  E-RUDP aging is dynamically adjusted")
+
+        # ネットワーク推定器
+        self._network_estimator = get_network_estimator()
+
+        # 接続プール
+        self._connection_pool = RUDPConnectionPool(
+            socket_factory=self._create_socket,
+            timeout=timeout,
+        )
 
     def _create_socket(self) -> RUDPSocket:
         """モードに応じたソケットを作成する．"""
@@ -281,7 +294,7 @@ class RUDPModelSharing:
 
     def send_mdlreq(self, target_ip: str, target_port: int, requester_ip: str) -> bool:
         """
-        モデル要求を送信し、モデルを受信する．
+        モデル要求を送信し、モデルを受信する（接続プール使用）．
 
         Args:
             target_ip: 送信先 IP アドレス
@@ -291,10 +304,17 @@ class RUDPModelSharing:
         Returns:
             成功した場合 True
         """
+        address = (target_ip, target_port)
         sock = None
+        success = False  # 成功フラグ初期化
         try:
-            sock = self._create_socket()
-            sock.connect((target_ip, target_port))
+            # 接続プールから接続を取得
+            sock = self._connection_pool.get_connection(address)
+            if sock is None:
+                self.logger.error(f"Failed to get connection to {target_ip}:{target_port}")
+                self.stats["timeout_models"] += 1  # 接続失敗もカウント
+                self._network_estimator.record_packet_result(False)
+                return False
 
             # MDLREQ メッセージを送信
             header = struct.pack("!BI", MSG_TYPE_MDLREQ, 0)
@@ -302,16 +322,18 @@ class RUDPModelSharing:
             self.logger.debug(f"📤 Sent RUDP MDLREQ to {target_ip}:{target_port}")
 
             # 同じ接続でモデルを受信
-            # ヘッダを受信
             response_header = sock.recv(MSG_HEADER_SIZE, timeout=self.timeout)
             if len(response_header) < MSG_HEADER_SIZE:
                 self.logger.warning(f"Incomplete header from {target_ip}")
+                self.stats["timeout_models"] += 1  # ヘッダ不完全もカウント
+                self._network_estimator.record_packet_result(False)
                 return False
 
             msg_type, msg_length = struct.unpack("!BI", response_header)
 
             if msg_type != MSG_TYPE_MODEL:
                 self.logger.warning(f"Unexpected message type {msg_type} from {target_ip}")
+                self.stats["timeout_models"] += 1  # 予期しないメッセージもカウント
                 return False
 
             # モデルデータを受信
@@ -334,6 +356,10 @@ class RUDPModelSharing:
                 sock_stats = sock.get_stats()
                 self._aggregate_stats(sock_stats)
 
+                # RTT を記録
+                if sock_stats.get("avg_rtt_ms", 0) > 0:
+                    self._network_estimator.record_rtt(sock_stats["avg_rtt_ms"])
+
                 # 受信バッファに格納
                 with self._received_models_lock:
                     self._received_models[target_ip] = data
@@ -342,29 +368,37 @@ class RUDPModelSharing:
                 if self.callback:
                     self.callback(data, target_ip)
 
+                self._network_estimator.record_packet_result(True)
+                success = True  # 成功フラグ
                 return True
             else:
                 self.logger.warning(f"Incomplete model data: {len(data)}/{msg_length}")
                 self.stats["timeout_models"] += 1
+                self._network_estimator.record_packet_result(False)
                 return False
 
         except TimeoutError:
             self.logger.warning(f"Model receive timeout from {target_ip}")
             self.stats["timeout_models"] += 1
+            self._network_estimator.record_packet_result(False)
             return False
         except Exception as e:
             self.logger.error(f"Failed to send MDLREQ: {e}")
+            self.stats["timeout_models"] += 1  # 例外もカウント
+            self._network_estimator.record_packet_result(False)
             return False
         finally:
             if sock:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+                # 成功した場合はプールに戻し、失敗した場合は破棄する
+                if success:
+                    self._connection_pool.release_connection(address)
+                else:
+                    self.logger.warning(f"Closing failed connection to {target_ip}:{target_port}")
+                    self._connection_pool.close_connection(address)
 
     def send_model(self, model_data: bytes, target_ip: str, target_port: int) -> bool:
         """
-        モデルデータを送信する．
+        モデルデータを送信する（接続プール + FEC 使用）．
 
         Args:
             model_data: シリアライズされたモデルデータ
@@ -374,25 +408,41 @@ class RUDPModelSharing:
         Returns:
             成功した場合 True
         """
+        address = (target_ip, target_port)
+        sock = None
         try:
-            sock = self._create_socket()
+            # 接続プールから接続を取得
             connect_start = time.time()
-            sock.connect((target_ip, target_port))
+            sock = self._connection_pool.get_connection(address)
+            if sock is None:
+                self.logger.error(f"Failed to get connection to {target_ip}:{target_port}")
+                self.stats["sent_failed"] += 1
+                self._network_estimator.record_packet_result(False)
+                return False
             connect_time = (time.time() - connect_start) * 1000
 
             # モデルデータメッセージを送信
             header = struct.pack("!BI", MSG_TYPE_MODEL, len(model_data))
-            sock.send(header + model_data)
+
+            # FEC 送信を使用（利用可能な場合）
+            if hasattr(sock, "send_with_fec"):
+                sock.send(header)
+                sock.send_with_fec(model_data)
+            else:
+                sock.send(header + model_data)
 
             # ソケット統計を集約
             sock_stats = sock.get_stats()
             self._aggregate_stats(sock_stats)
             self.stats["connect_time_ms"] = connect_time
 
-            sock.close()
+            # RTT を記録
+            if sock_stats.get("avg_rtt_ms", 0) > 0:
+                self._network_estimator.record_rtt(sock_stats["avg_rtt_ms"])
 
             self.stats["sent_models"] += 1
             self.stats["bytes_sent"] += len(model_data)
+            self._network_estimator.record_packet_result(True)
 
             self.logger.info(f"📡 Sent model via RUDP ({len(model_data)} bytes) to {target_ip}:{target_port} (connect: {connect_time:.1f}ms)")
             return True
@@ -400,7 +450,11 @@ class RUDPModelSharing:
         except Exception as e:
             self.logger.error(f"Failed to send model: {e}")
             self.stats["sent_failed"] += 1
+            self._network_estimator.record_packet_result(False)
             return False
+        finally:
+            if sock:
+                self._connection_pool.release_connection(address)
 
     def _aggregate_stats(self, sock_stats: dict) -> None:
         """ソケット統計を集約する．"""

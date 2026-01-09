@@ -6,6 +6,14 @@
   "container_port_ctrl": 10001,
   "host_port_ctrl": 10001,
   "host_port_p2p": 10002,
+  "timeouts": {
+    "model_fetch": 4.0,
+    "udp_initial_packet": 4.0,
+    "udp_inter_packet": 0.3,
+    "udp_model_completion": 8.0,
+    "rudp_connect": 2.0,
+    "rudp_send": 3.0
+  },
   "nodes": [
     {
       "name": 0,
@@ -207,13 +215,5 @@
       "name": 49,
       "physical_ip": "192.168.12.109"
     }
-  ],
-  "timeouts": {
-    "model_fetch": 4.0,
-    "udp_initial_packet": 4.0,
-    "udp_inter_packet": 0.3,
-    "udp_model_completion": 8.0,
-    "rudp_connect": 2.0,
-    "rudp_send": 3.0
-  }
+  ]
 }

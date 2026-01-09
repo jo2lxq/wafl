@@ -37,6 +37,7 @@ class MetricsLogger:
         "fec_recovery_fail",
         "bytes_sent",
         "bytes_received",
+        "timeout_models",  # 追加
         # RUDP/E-RUDP metrics
         "rudp_retransmissions",
         "rudp_acks_sent",
@@ -47,6 +48,8 @@ class MetricsLogger:
         "rudp_connect_time_ms",
         "rudp_avg_rtt_ms",
         "rudp_max_retries_reached",
+        "rudp_nacks_sent",  # 追加
+        "fec_recoveries",  # 追加
         # Compression metrics
         "compression_method",
         "compression_ratio",
@@ -157,6 +160,10 @@ class MetricsLogger:
             "fec_recovery_fail": metrics.get("fec_recovery_fail", 0),
             "bytes_sent": metrics.get("bytes_sent", 0),
             "bytes_received": metrics.get("bytes_received", 0),
+            "timeout_models": metrics.get("timeout_models", 0),  # 追加
+            # RUDP specific
+            "rudp_nacks_sent": metrics.get("rudp_nacks_sent", 0),
+            "fec_recoveries": metrics.get("fec_recoveries", 0),
             # Compression metrics
             "compression_method": metrics.get("compression_method", "none"),
             "compression_ratio": metrics.get("compression_ratio", 1.0),

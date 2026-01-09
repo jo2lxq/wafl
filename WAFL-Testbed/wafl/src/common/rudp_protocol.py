@@ -8,6 +8,7 @@ Selective Repeat ARQ によるパケットの信頼性確保と，スライデ�
 
 import binascii
 import logging
+import math
 import queue
 import socket
 import struct
@@ -16,6 +17,10 @@ import time
 from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import Dict, List, Optional, Tuple
+
+import zfec
+
+from .network_estimator import get_network_estimator
 
 # =============================================================================
 # 定数定義
@@ -362,6 +367,8 @@ class RUDPSocket:
             "connect_time_ms": 0.0,
             "avg_rtt_ms": 0.0,
             "max_retries_reached": 0,
+            "fec_recoveries": 0,
+            "nacks_sent": 0,
         }
 
         # Pacing control
@@ -370,6 +377,21 @@ class RUDPSocket:
         # Fast Retransmit (RFC 5681)
         self._dup_ack_count = 0
         self._last_ack_num = 0
+
+        # ネットワーク推定器
+        self._network_estimator = get_network_estimator()
+
+        # FEC 設定
+        self._fec_enabled = True
+        self._fec_k = 16  # データブロック数
+        self._fec_parity = self._network_estimator.get_recommended_fec_parity(self._fec_k)
+        self._fec_m = self._fec_k + self._fec_parity
+        self._fec_encoder = zfec.Encoder(self._fec_k, self._fec_m)
+        self._fec_decoder = zfec.Decoder(self._fec_k, self._fec_m)
+
+        # FEC 受信バッファ
+        self._fec_recv_buffer: Dict[int, Dict[int, bytes]] = {}  # msg_id -> {block_idx: data}
+        self._fec_recv_meta: Dict[int, dict] = {}  # msg_id -> metadata
 
     # =========================================================================
     # ソケット API
@@ -551,6 +573,117 @@ class RUDPSocket:
             # Simple Pacing removed (Moved to _send_packet)
 
         return total_sent
+
+    def send_with_fec(self, data: bytes) -> int:
+        """
+        FEC エンコードしてデータを送信する．
+
+        Args:
+            data: 送信するデータ
+
+        Returns:
+            送信したバイト数
+        """
+        if self._state != ConnectionState.ESTABLISHED:
+            raise RuntimeError("Connection not established")
+
+        if not self._fec_enabled:
+            return self.send(data)
+
+        # FEC パラメータを動的に更新
+        self._update_fec_params()
+
+        # ウィンドウサイズを動的に更新
+        self._update_window_size()
+
+        # データを k 個のブロックに分割
+        block_size = math.ceil(len(data) / self._fec_k)
+        padded_data = data + b"\x00" * (block_size * self._fec_k - len(data))
+
+        blocks = [padded_data[i * block_size : (i + 1) * block_size] for i in range(self._fec_k)]
+
+        # FEC エンコード
+        encoded_blocks = self._fec_encoder.encode(blocks)
+
+        # 各ブロックを送信
+        msg_id = int(time.time() * 1000) % (2**32)
+        total_sent = 0
+
+        for block_idx, block in enumerate(encoded_blocks):
+            # ペイロード: msg_id(4) + block_idx(2) + k(1) + m(1) + original_len(4) + block
+            header = struct.pack("!IHBBI", msg_id, block_idx, self._fec_k, self._fec_m, len(data))
+            payload = header + block
+
+            # ウィンドウに空きがあるまで待機
+            while self._send_seq - self._send_base >= self._window_size:
+                self._ack_event.wait(timeout=0.1)
+                self._ack_event.clear()
+                if not self._running:
+                    raise RuntimeError("Connection closed")
+
+            packet = Packet(
+                flags=PacketFlags.DATA,
+                seq_num=self._send_seq,
+                ack_num=self._recv_seq,
+                payload=payload,
+            )
+
+            with self._lock:
+                self._send_buffer[self._send_seq] = SendBufferEntry(
+                    packet=packet,
+                    sent_time=time.time(),
+                )
+                self._send_seq += 1
+
+            self._send_packet(packet)
+            self._stats["bytes_sent"] += len(payload)
+            total_sent += len(block)
+
+            # 送信結果を記録
+            self._network_estimator.record_packet_result(True)
+
+        return total_sent
+
+    def _update_fec_params(self) -> None:
+        """ネットワーク状態に基づいて FEC パラメータを更新"""
+        new_parity = self._network_estimator.get_recommended_fec_parity(self._fec_k)
+
+        if new_parity != self._fec_parity:
+            old_parity = self._fec_parity
+            self._fec_parity = new_parity
+            self._fec_m = self._fec_k + self._fec_parity
+
+            # エンコーダ/デコーダを再作成
+            self._fec_encoder = zfec.Encoder(self._fec_k, self._fec_m)
+            self._fec_decoder = zfec.Decoder(self._fec_k, self._fec_m)
+
+            self.logger.info(f"FEC params updated: parity {old_parity} -> {new_parity} (m={self._fec_m}, redundancy={self._fec_parity / self._fec_m:.1%})")
+
+    def _update_window_size(self) -> None:
+        """実測値に基づいてウィンドウサイズを動的更新"""
+        new_window = self._network_estimator.get_recommended_window_size()
+        if new_window != self._window_size:
+            old_window = self._window_size
+            self._window_size = new_window
+            self.logger.debug(f"Window size updated: {old_window} -> {new_window}")
+
+    def _send_nack(self, missing_seqs: List[int]) -> None:
+        """NACK パケットを送信（欠損シーケンス番号を通知）"""
+        if not missing_seqs or self._peer_addr is None:
+            return
+
+        # NACK ペイロード: 欠損シーケンス番号のリスト (最大16個)
+        payload = b"".join(struct.pack("!I", seq) for seq in missing_seqs[:16])
+
+        nack_packet = Packet(
+            flags=PacketFlags.EAK,  # EAK フラグを NACK として使用
+            seq_num=self._recv_seq,
+            ack_num=self._recv_seq,
+            payload=payload,
+        )
+        self._send_packet(nack_packet)
+        self._stats["nacks_sent"] += 1
+        self.logger.debug(f"Sent NACK for seqs: {missing_seqs[:16]}")
 
     def recv(self, bufsize: int = 65535, timeout: Optional[float] = None) -> bytes:
         """

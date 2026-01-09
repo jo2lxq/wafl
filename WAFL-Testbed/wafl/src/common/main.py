@@ -414,7 +414,6 @@ class ModelLearningUtils:
                             nbr = future_to_nbr[future]
                             self.logger.error(f"Error getting result from {nbr}: {e}")
 
-                    # Handle timed out futures
                     if not_done:
                         self.logger.warning(f"⚠️ Timeout waiting for {len(not_done)} neighbors (>{strict_timeout}s)")
                         for future in not_done:
@@ -423,11 +422,9 @@ class ModelLearningUtils:
                             # But we stop waiting for it.
                             self.logger.warning(f"  ❌ Cancelled fetch from {nbr} due to timeout")
                             # Count as fetch failure in stats
-                            if self.model_sharing.udp_sharing is None:
+                            if self.model_sharing.rudp_sharing is None and self.model_sharing.udp_sharing is None:
+                                # TCP モードのみここでカウント (RUDP/UDP は内部タイムアウトでカウント)
                                 self.model_sharing.tcp_stats["fetch_failed"] += 1
-                            else:
-                                # UDP モードでもタイムアウトをカウント
-                                self.model_sharing.udp_sharing.stats["timeout_models"] += 1
 
             # Aggregate received models (optimized with no_grad and in-place operations)
             n_received = len(received_models)
@@ -511,7 +508,10 @@ class ModelSharingUtils:
         self.name = name
         self.addr = addr
         self.port = port
-        self.timeout = timeout
+        if timeout is None:
+            self.timeout = 10.0  # デフォルトタイムアウト（4.0s -> 10.0s に変更してプロトコル内部タイムアウトを優先）
+        else:
+            self.timeout = timeout
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.debug("Initialized Model Sharing Utils")
 
@@ -540,10 +540,9 @@ class ModelSharingUtils:
                     self.udp_adaptive_fec = False
 
                 # RUDP/E-RUDP settings
+                # aging_limit と window_size は動的調整されるため、デフォルト値を使用
                 self.rudp_enabled = rudp_config.get("enabled", False)
                 self.rudp_mode = rudp_config.get("mode", "rudp")  # "rudp" or "erudp"
-                self.rudp_aging_limit = rudp_config.get("aging_limit", 0.5)  # 500ms default
-                self.rudp_window_size = rudp_config.get("window_size", 16)
                 self.rudp_max_retries = rudp_config.get("max_retries", 10)
 
                 self.compression_enabled = comp_config.get("enabled", False)
@@ -576,8 +575,6 @@ class ModelSharingUtils:
             self.udp_enabled = False
             self.rudp_enabled = False
             self.rudp_mode = "rudp"
-            self.rudp_aging_limit = 0.5
-            self.rudp_window_size = 16
             self.rudp_max_retries = 10
             self.udp_fec_m = 16
             self.udp_adaptive_fec = False
@@ -639,17 +636,14 @@ class ModelSharingUtils:
             rudp_send_timeout = timeouts_config.get("rudp_send", self.model_fetch_timeout)
 
             mode_display = "E-RUDP" if self.rudp_mode == "erudp" else "RUDP"
-            self.logger.info(f"🚀 {mode_display} Enabled (window={self.rudp_window_size}, max_retries={self.rudp_max_retries})")
-            if self.rudp_mode == "erudp":
-                self.logger.info(f"   Aging limit: {self.rudp_aging_limit * 1000:.0f}ms")
+            self.logger.info(f"🚀 {mode_display} Enabled (max_retries={self.rudp_max_retries}, dynamic params)")
+            self.logger.info("   Aging/Window/FEC params are dynamically adjusted based on network conditions")
 
             self.rudp_sharing = RUDPModelSharing(
                 ip=self.addr,
                 port=self.port,
                 mode=self.rudp_mode,
                 timeout=rudp_send_timeout,
-                aging_limit=self.rudp_aging_limit,
-                window_size=self.rudp_window_size,
                 max_retries=self.rudp_max_retries,
             )
             # Start listener callback for model data
@@ -1247,7 +1241,8 @@ class ModelSharingUtils:
                     "sent_models": rudp_stats.get("sent_models", 0),
                     "sent_failed": rudp_stats.get("sent_failed", 0),
                     "received_models": rudp_stats.get("received_models", 0),
-                    "fec_recovery_success": 0,  # RUDP doesn't use FEC
+                    "timeout_models": rudp_stats.get("timeout_models", 0),  # 追加
+                    "fec_recovery_success": rudp_stats.get("fec_recoveries", 0),  # RUDP FEC
                     "fec_recovery_fail": 0,
                     # RUDP-specific metrics
                     "rudp_retransmissions": rudp_stats.get("retransmissions", 0),
@@ -1259,6 +1254,7 @@ class ModelSharingUtils:
                     "rudp_connect_time_ms": rudp_stats.get("connect_time_ms", 0),
                     "rudp_avg_rtt_ms": rudp_stats.get("avg_rtt_ms", 0),
                     "rudp_max_retries_reached": rudp_stats.get("max_retries_reached", 0),
+                    "rudp_nacks_sent": rudp_stats.get("nacks_sent", 0),  # 追加
                 }
             )
         elif self.udp_sharing is not None:
@@ -1269,6 +1265,7 @@ class ModelSharingUtils:
                     "sent_models": udp_stats.get("sent_models", 0),
                     "sent_failed": udp_stats.get("sent_failed", 0),
                     "received_models": udp_stats.get("received_models", 0),
+                    "timeout_models": udp_stats.get("timeout_models", 0),  # 追加
                     "fec_recovery_success": udp_stats.get("fec_recovery_success", 0),
                     "fec_recovery_fail": udp_stats.get("fec_recovery_fail", 0),
                 }
@@ -1286,6 +1283,7 @@ class ModelSharingUtils:
                     "sent_models": self.tcp_stats.get("models_sent", 0),
                     "sent_failed": fetch_failed,
                     "received_models": fetch_success,
+                    "timeout_models": fetch_failed,  # TCP では fetch_failed = timeout
                     "fec_recovery_success": 0,
                     "fec_recovery_fail": 0,
                 }
@@ -1369,6 +1367,8 @@ class ModelSharingUtils:
                 "connect_time_ms": 0.0,
                 "avg_rtt_ms": 0.0,
                 "max_retries_reached": 0,
+                "nacks_sent": 0,  # 追加
+                "fec_recoveries": 0,  # 追加
             }
         # Reset compression stats if enabled
         if self.compression_manager is not None:

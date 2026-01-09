@@ -1719,7 +1719,11 @@ def analyze_results(experiment_id):
 
 
 def _get_experiment_groups():
-    """Group experiments by 'Experiment X:' pattern."""
+    """Group experiments by 'Experiment X:' pattern.
+
+    For Experiment 0, further group by network condition (excellent, good, fair, poor)
+    to enable separate comparison graphs for each condition.
+    """
     if not RESULTS_DIR.exists():
         return {}
 
@@ -1729,7 +1733,21 @@ def _get_experiment_groups():
             # Extract experiment group pattern like "Experiment 1:" or "Experiment 2:"
             match = re.match(r"^(Experiment \d+:)", d.name)
             if match:
-                group_name = match.group(1).strip(":")
+                base_group = match.group(1).strip(":")
+
+                # For Experiment 0, further group by network condition
+                if base_group == "Experiment 0":
+                    # Extract network condition (excellent, good, fair, poor)
+                    condition_match = re.match(r"^Experiment 0: (excellent|good|fair|poor)", d.name)
+                    if condition_match:
+                        condition = condition_match.group(1)
+                        group_name = f"Experiment 0 ({condition})"
+                    else:
+                        # Fallback if condition not found
+                        group_name = base_group
+                else:
+                    group_name = base_group
+
                 if group_name not in groups:
                     groups[group_name] = []
                 groups[group_name].append(d.name)
