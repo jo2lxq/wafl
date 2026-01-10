@@ -317,6 +317,7 @@ class RUDPModelSharing:
                 return False
 
             # MDLREQ メッセージを送信
+            transfer_start = time.time()  # 転送時間計測開始
             header = struct.pack("!BI", MSG_TYPE_MDLREQ, 0)
             sock.send(header)
             self.logger.debug(f"📤 Sent RUDP MDLREQ to {target_ip}:{target_port}")
@@ -370,6 +371,15 @@ class RUDPModelSharing:
 
                 self._network_estimator.record_packet_result(True)
                 success = True  # 成功フラグ
+
+                # 帯域を記録（ウィンドウサイズ動的調整用）- 実際の転送時間を使用
+                transfer_end = time.time()
+                transfer_duration = transfer_end - transfer_start
+                if transfer_duration > 0:
+                    bandwidth_mbps = (len(data) * 8 / 1_000_000) / transfer_duration
+                    self._network_estimator.record_transfer(len(data), transfer_duration)
+                    self.logger.info(f"📊 RUDP transfer stats: {len(data)} bytes in {transfer_duration * 1000:.1f}ms = {bandwidth_mbps:.2f} Mbps")
+
                 return True
             else:
                 self.logger.warning(f"Incomplete model data: {len(data)}/{msg_length}")
@@ -445,6 +455,15 @@ class RUDPModelSharing:
             self._network_estimator.record_packet_result(True)
 
             self.logger.info(f"📡 Sent model via RUDP ({len(model_data)} bytes) to {target_ip}:{target_port} (connect: {connect_time:.1f}ms)")
+
+            # 帯域を記録（ウィンドウサイズ動的調整用）- 実際の転送時間を使用
+            transfer_end = time.time()
+            transfer_duration = transfer_end - connect_start
+            if transfer_duration > 0:
+                bandwidth_mbps = (len(model_data) * 8 / 1_000_000) / transfer_duration
+                self._network_estimator.record_transfer(len(model_data), transfer_duration)
+                self.logger.info(f"📊 RUDP send stats: {len(model_data)} bytes in {transfer_duration * 1000:.1f}ms = {bandwidth_mbps:.2f} Mbps")
+
             return True
 
         except Exception as e:

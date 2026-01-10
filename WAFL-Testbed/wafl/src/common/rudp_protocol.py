@@ -32,10 +32,11 @@ MAX_PACKET_SIZE = 1400  # MTU を考慮した安全なサイズ
 MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE
 
 # デフォルト設定
-DEFAULT_WINDOW_SIZE = 16
-DEFAULT_TIMEOUT = 5.0
+DEFAULT_WINDOW_SIZE = 32  # Balanced start (Was 16/64)
+DEFAULT_TIMEOUT = 1.0  # 接続タイムアウト (秒) - 高速化 (Was 5.0)
 DEFAULT_MAX_RETRIES = 10
-DEFAULT_RTO = 0.1  # 初期再送タイムアウト (秒) - ロス耐性向上
+DEFAULT_RTO = 0.05  # 初期再送タイムアウト (秒) - 高速再送 (Was 0.1)
+MAX_RTO = 2.0  # 最大 RTO (秒) - スパイラル防止 (Was 10.0)
 MAX_CUMULATIVE_ACKS = 3  # 累積 ACK の最大数
 
 
@@ -347,6 +348,12 @@ class RUDPSocket:
         self._pending_acks: List[int] = []
         self._ack_timer: Optional[float] = None
 
+        # Delayed ACK settings
+        self._delayed_ack_interval = 0.005  # 5ms
+        self._ack_frequency = 4  # Send ACK every 4 packets
+        self._pending_ack_count = 0
+        self._first_pending_ack_time = 0.0
+
         # 接続受付キュー（サーバ用）
         self._accept_queue: queue.Queue = queue.Queue()
         self._pending_connections: Dict[Tuple[str, int], dict] = {}  # ペンディング接続情報
@@ -409,8 +416,8 @@ class RUDPSocket:
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)  # 16MB (Was 8MB)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB (Was 1MB)
         self._sock.bind(address)
         self._local_addr = address
         self.logger.debug(f"Bound to {address}")
@@ -464,8 +471,8 @@ class RUDPSocket:
         """
         if self._sock is None:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)  # 16MB (Was 8MB)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB (Was 1MB)
             # エフェメラルポートにバインド
             self._sock.bind(("", 0))
             self._local_addr = self._sock.getsockname()
@@ -479,8 +486,8 @@ class RUDPSocket:
         self._send_packet(syn_packet)
         self._send_seq += 1
 
-        # SYN+ACK 待機 (高速リトライ: 100ms timeout, max 20 retries = 2s)
-        handshake_timeout = 0.1  # 100ms per attempt
+        # SYN+ACK 待機 (高速リトライ: 50ms timeout, max 20 retries = 1s)
+        handshake_timeout = 0.05  # 50ms per attempt (Was 100ms)
         self._sock.settimeout(handshake_timeout)
         retries = 0
 
@@ -587,14 +594,22 @@ class RUDPSocket:
         if self._state != ConnectionState.ESTABLISHED:
             raise RuntimeError("Connection not established")
 
+        # Debug logging to verify path
+        self.logger.debug(f"send_with_fec called (fec_enabled={self._fec_enabled}, win={self._window_size})")
+
         if not self._fec_enabled:
             return self.send(data)
 
         # FEC パラメータを動的に更新
         self._update_fec_params()
 
-        # ウィンドウサイズを動的に更新
+        # ウィンドウサイズを動的に更新 (FEC バイパス前に行う)
         self._update_window_size()
+
+        # parity=0 の場合は FEC をバイパスして通常送信（オーバーヘッド削減）
+        if self._fec_parity == 0:
+            self.logger.debug("FEC bypassed (parity=0, low loss environment)")
+            return self.send(data)
 
         # データを k 個のブロックに分割
         block_size = math.ceil(len(data) / self._fec_k)
@@ -657,7 +672,7 @@ class RUDPSocket:
             self._fec_encoder = zfec.Encoder(self._fec_k, self._fec_m)
             self._fec_decoder = zfec.Decoder(self._fec_k, self._fec_m)
 
-            self.logger.info(f"FEC params updated: parity {old_parity} -> {new_parity} (m={self._fec_m}, redundancy={self._fec_parity / self._fec_m:.1%})")
+            self.logger.info(f"🔧 FEC params updated: parity {old_parity} -> {new_parity} (m={self._fec_m}, redundancy={self._fec_parity / self._fec_m * 100:.0f}%)")
 
     def _update_window_size(self) -> None:
         """実測値に基づいてウィンドウサイズを動的更新"""
@@ -665,7 +680,7 @@ class RUDPSocket:
         if new_window != self._window_size:
             old_window = self._window_size
             self._window_size = new_window
-            self.logger.debug(f"Window size updated: {old_window} -> {new_window}")
+            self.logger.info(f"Window size updated: {old_window} -> {new_window}")
 
     def _send_nack(self, missing_seqs: List[int]) -> None:
         """NACK パケットを送信（欠損シーケンス番号を通知）"""
@@ -1094,16 +1109,23 @@ class RUDPSocket:
                     self._stats["bytes_received"] += len(buffered.payload)
                     self._recv_seq += 1
 
-                # ACK 送信
-                self._send_ack()
+                # ACK 送信 (Delayed ACK)
+                self._pending_ack_count += 1
+                if self._pending_ack_count == 1:
+                    self._first_pending_ack_time = time.time()
+
+                if self._pending_ack_count >= self._ack_frequency:
+                    self._send_ack()
 
             elif seq_num > self._recv_seq:
                 # 順序外パケット: バッファに保存
                 if seq_num not in self._recv_buffer:
                     self._recv_buffer[seq_num] = packet
 
-                # EAK 送信（欠落を通知）
+                # EAK 送信（欠落を通知） - 即座に送信
                 self._send_eak()
+                # 順序外受信時は即座に ACK も返して Fast Retransmit を促す
+                self._send_ack()
 
             # seq_num < self._recv_seq の場合は重複パケット: ACK を再送して送信側に通知
             else:
@@ -1139,6 +1161,10 @@ class RUDPSocket:
             ack_num=self._recv_seq,
         )
         self._send_packet(ack_packet)
+        # Reset Delayed ACK counters
+        with self._lock:
+            self._pending_ack_count = 0
+            self._first_pending_ack_time = 0.0
 
     def _send_eak(self) -> None:
         """EAK (拡張 ACK) を送信する．"""
@@ -1160,8 +1186,17 @@ class RUDPSocket:
     def _timer_loop(self) -> None:
         """タイマースレッドのメインループ．"""
         while self._running:
-            time.sleep(0.025)  # 25ms 間隔でチェック（高速回復用）
+            time.sleep(0.002)  # 2ms 間隔でチェック (Was 25ms)
             self._check_retransmissions()
+            self._check_delayed_ack()
+
+    def _check_delayed_ack(self) -> None:
+        """遅延 ACK をチェックして送信する"""
+        with self._lock:
+            if self._pending_ack_count > 0:
+                current_time = time.time()
+                if current_time - self._first_pending_ack_time >= self._delayed_ack_interval:
+                    self._send_ack()  # _send_ack resets counters
 
     def _check_retransmissions(self) -> None:
         """再送タイムアウトをチェックする．"""
@@ -1190,7 +1225,7 @@ class RUDPSocket:
                     self.logger.debug(f"Retransmit seq {seq_num} (retry {entry.retries})")
 
                     # RFC 6298: Exponential Backoff - RTO を 2 倍にする
-                    self._rto = min(10.0, self._rto * 2)
+                    self._rto = min(MAX_RTO, self._rto * 2)
 
     def _update_rtt(self, rtt: float) -> None:
         """RTT を更新する（RFC 6298）．"""

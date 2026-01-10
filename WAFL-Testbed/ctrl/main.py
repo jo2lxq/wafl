@@ -280,35 +280,8 @@ class WaflAgent:
                             self.logger.error(f"Traceback: {traceback.format_exc()}")
                             raise RuntimeError(f"Failed to deploy agent configuration: {e}")
 
-                    # Deploy train dataset (node-specific)
-                    local_train_path = os.path.join("wafl", "dataset", str(self.agent_index), "train", "train.pkl")
-                    remote_train_path = os.path.join(train_dir, "train.pkl")
-
-                    if not os.path.exists(local_train_path):
-                        raise FileNotFoundError(f"Train dataset not found: {local_train_path}")
-
-                    train_size = os.path.getsize(local_train_path)
-                    train_size_mb = train_size / (1024 * 1024)
-                    self.logger.debug(f"📊 Deployment [2/3] - Uploading train dataset ({train_size_mb:.1f} MB)")
-                    sftp.put(local_train_path, remote_train_path)
-                    sftp.chmod(remote_train_path, 0o644)
-                    deployed_files.append("train.pkl")
-                    self.logger.debug("Deployment [2/3] - Train dataset deployed successfully")
-
-                    # Deploy test dataset (common)
-                    local_test_path = os.path.join("wafl", "dataset", "common", "test", "test.pkl")
-                    remote_test_path = os.path.join(test_dir, "test.pkl")
-
-                    if not os.path.exists(local_test_path):
-                        raise FileNotFoundError(f"Test dataset not found: {local_test_path}")
-
-                    test_size = os.path.getsize(local_test_path)
-                    test_size_mb = test_size / (1024 * 1024)
-                    self.logger.debug(f"📊 Deployment [2/3] - Uploading test dataset ({test_size_mb:.1f} MB)")
-                    sftp.put(local_test_path, remote_test_path)
-                    sftp.chmod(remote_test_path, 0o644)
-                    deployed_files.append("test.pkl")
-                    self.logger.debug("Deployment [2/3] - Test dataset deployed successfully")
+                    # NOTE: Dataset transfer (train.pkl, test.pkl) removed.
+                    # It is now handled efficiently by deploy.py using rsync.
 
                 # Verify config files only (datasets already confirmed via SFTP)
                 verification_success = True

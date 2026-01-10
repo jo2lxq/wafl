@@ -2,8 +2,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
-from concurrent.futures import (  # Used in collect_results
+from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
 )
@@ -21,6 +22,9 @@ matplotlib.use("Agg")
 # Japanese font configuration for matplotlib
 matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
 matplotlib.rcParams["axes.unicode_minus"] = False
+
+# Global seaborn theme for consistent styling across all plots
+sns.set_theme(style="whitegrid")
 
 # Configuration
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -137,6 +141,27 @@ def get_experiments_without_analysis():
     return experiments
 
 
+def get_all_experiments():
+    """Get all experiment directories."""
+    if not RESULTS_DIR.exists():
+        return []
+
+    experiments = []
+    for d in RESULTS_DIR.iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            experiments.append(d.name)
+
+    # Sort by timestamp (newest first)
+    def extract_timestamp(name):
+        try:
+            return name.split("-")[-1]
+        except IndexError:
+            return ""
+
+    experiments.sort(key=extract_timestamp, reverse=True)
+    return experiments
+
+
 def collect_results(experiment_id, config):
     """Collect results from all nodes for the given experiment ID."""
     print(f"📥 Collecting results for experiment: {experiment_id}")
@@ -197,6 +222,112 @@ def collect_results(experiment_id, config):
 
     print(f"🏁 Collection complete: {success_count}/{len(nodes)} nodes")
     return success_count > 0
+
+
+def collect_results_via_rsync(experiment_id, config, remote_host=None):
+    """Collect results from management server via rsync.
+
+    Args:
+        experiment_id: Experiment ID to collect
+        config: Configuration dictionary
+        remote_host: Remote host address (default: uses config)
+    """
+    print(f"📥 Collecting results via rsync for experiment: {experiment_id}")
+
+    # Get remote host from config if not specified
+    if remote_host is None:
+        # Try to get from management_server or use first node's IP
+        remote_host = config.get("management_server")
+        if not remote_host:
+            print("❌ No remote host specified and no management_server in config")
+            return False
+
+    user = config.get("user", "denjo")
+    deployment_location = config.get("deployment_location", "/home/denjo")
+    key_path = os.path.expanduser("~/.ssh/id_ed25519")
+
+    # Remote path
+    remote_path = f"{user}@{remote_host}:{deployment_location}/WAFL-Testbed/results/{experiment_id}/"
+    local_path = RESULTS_DIR / experiment_id
+    local_path.mkdir(parents=True, exist_ok=True)
+
+    # rsync command with SSH key
+    rsync_cmd = [
+        "rsync",
+        "-avz",
+        "--progress",
+        "-e",
+        f"ssh -i {key_path} -o StrictHostKeyChecking=no",
+        remote_path,
+        str(local_path) + "/",
+    ]
+
+    print(f"  🔄 Running: rsync from {remote_host}...")
+    try:
+        result = subprocess.run(rsync_cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0:
+            print("  ✅ rsync completed successfully")
+            # Count collected files
+            files = list(local_path.rglob("*"))
+            file_count = sum(1 for f in files if f.is_file())
+            print(f"  📁 {file_count} files collected to: {local_path}")
+            return True
+        else:
+            print(f"  ❌ rsync failed: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("  ❌ rsync timed out after 5 minutes")
+        return False
+    except Exception as e:
+        print(f"  ❌ rsync error: {e}")
+        return False
+
+
+def collect_all_experiments_via_rsync(config, remote_host=None):
+    """Collect all experiment results from management server via rsync."""
+    print("📥 Collecting all experiments via rsync...")
+
+    if remote_host is None:
+        remote_host = config.get("management_server")
+        if not remote_host:
+            print("❌ No remote host specified and no management_server in config")
+            return False
+
+    user = config.get("user", "denjo")
+    deployment_location = config.get("deployment_location", "/home/denjo")
+    key_path = os.path.expanduser("~/.ssh/id_ed25519")
+
+    # rsync entire results directory (excluding hidden files)
+    remote_path = f"{user}@{remote_host}:{deployment_location}/WAFL-Testbed/results/"
+    local_path = RESULTS_DIR
+
+    rsync_cmd = [
+        "rsync",
+        "-avz",
+        "--progress",
+        "--exclude",
+        ".*",
+        "-e",
+        f"ssh -i {key_path} -o StrictHostKeyChecking=no",
+        remote_path,
+        str(local_path) + "/",
+    ]
+
+    print(f"  🔄 Running: rsync all experiments from {remote_host}...")
+    try:
+        result = subprocess.run(rsync_cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode == 0:
+            print("  ✅ rsync completed successfully")
+            return True
+        else:
+            print(f"  ❌ rsync failed: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("  ❌ rsync timed out after 10 minutes")
+        return False
+    except Exception as e:
+        print(f"  ❌ rsync error: {e}")
+        return False
 
 
 def _load_metrics_and_resources(exp_dir):
@@ -906,56 +1037,6 @@ def _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir):
     return "compute_comm_breakdown.png"
 
 
-def _generate_cpu_usage_plot(resources_df, experiment_name, analysis_dir):
-    """Generate CPU usage plot."""
-    plt.figure(figsize=(12, 6))
-    if not resources_df.empty and "cpu_percent" in resources_df.columns:
-        num_nodes = resources_df["node"].nunique()
-        palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
-
-        ax = sns.lineplot(
-            data=resources_df,
-            x="timestamp",
-            y="cpu_percent",
-            hue="node",
-            alpha=0.4,
-            legend=False,
-            palette=palette,
-            estimator=None,
-            linewidth=1.2,
-        )
-        mean_cpu = resources_df.groupby("timestamp")["cpu_percent"].mean().reset_index()
-        sns.lineplot(
-            data=mean_cpu,
-            x="timestamp",
-            y="cpu_percent",
-            color=COLORS["mean_line"],
-            linewidth=2.5,
-            label="Mean",
-            ax=ax,
-        )
-        ax.set_ylim(0, 100)
-        plt.title(f"CPU Usage - {experiment_name}")
-        plt.ylabel("CPU Usage [%]")
-        plt.xlabel("Elapsed Time [sec]")
-        plt.legend()
-    else:
-        plt.text(
-            0.5,
-            0.5,
-            "No CPU usage data available",
-            ha="center",
-            va="center",
-            fontsize=14,
-            color=COLORS["no_data"],
-        )
-        plt.title(f"CPU Usage - {experiment_name}")
-    plt.tight_layout()
-    plt.savefig(analysis_dir / "cpu_usage.png", dpi=150)
-    plt.close()
-    return "cpu_usage.png"
-
-
 def _generate_time_to_accuracy_plot(df, experiment_name, analysis_dir):
     """Generate time-to-accuracy plot with WAFL phase start as time 0."""
     if df.empty or "test_accuracy" not in df.columns or "wafl_relative_timestamp" not in df.columns:
@@ -1299,7 +1380,7 @@ def _generate_accuracy_vs_time_plot(df, experiment_name, analysis_dir, add_phase
         ax.text(
             wafl_start,
             y_min + (y_max - y_min) * 0.05,
-            " Phase Switch",
+            " WAFL Start",
             color=COLORS["phase_line"],
             fontsize=10,
             fontweight="bold",
@@ -1315,6 +1396,89 @@ def _generate_accuracy_vs_time_plot(df, experiment_name, analysis_dir, add_phase
     plt.savefig(analysis_dir / "accuracy_vs_time.png", dpi=150)
     plt.close()
     return "accuracy_vs_time.png"
+
+
+def _generate_fec_overhead_plot(df, experiment_name, analysis_dir):
+    """Generate FEC processing overhead plot (encode + decode time)."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "fec_encode_time_ms" in df.columns and "fec_decode_time_ms" in df.columns:
+        # Filter to WAFL phase only
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        fec_data = wafl_df[(wafl_df["fec_encode_time_ms"].notna()) | (wafl_df["fec_decode_time_ms"].notna())].copy()
+
+        if not fec_data.empty:
+            # Check if there's any meaningful FEC data
+            total_encode = fec_data["fec_encode_time_ms"].fillna(0).sum()
+            total_decode = fec_data["fec_decode_time_ms"].fillna(0).sum()
+
+            if total_encode > 0 or total_decode > 0:
+                has_meaningful_data = True
+
+                # Aggregate by epoch (mean across nodes)
+                fec_agg = fec_data.groupby("epoch").agg({"fec_encode_time_ms": "mean", "fec_decode_time_ms": "mean"}).reset_index()
+                fec_agg["fec_encode_time_ms"] = fec_agg["fec_encode_time_ms"].fillna(0)
+                fec_agg["fec_decode_time_ms"] = fec_agg["fec_decode_time_ms"].fillna(0)
+
+                fig, ax = plt.subplots(figsize=(12, 6))
+                bar_width = 0.8
+
+                # Stacked bar chart: Encode (bottom) + Decode (top)
+                ax.bar(
+                    fec_agg["epoch"],
+                    fec_agg["fec_encode_time_ms"],
+                    bar_width,
+                    label="FEC Encode",
+                    color=COLORS["bar_primary"],
+                    alpha=0.9,
+                    edgecolor="none",
+                )
+                ax.bar(
+                    fec_agg["epoch"],
+                    fec_agg["fec_decode_time_ms"],
+                    bar_width,
+                    bottom=fec_agg["fec_encode_time_ms"],
+                    label="FEC Decode",
+                    color=COLORS["bar_secondary"],
+                    alpha=0.9,
+                    edgecolor="none",
+                )
+
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Time [ms]")
+                ax.legend(loc="upper right")
+
+                # Calculate average overhead for title
+                avg_encode = fec_agg["fec_encode_time_ms"].mean()
+                avg_decode = fec_agg["fec_decode_time_ms"].mean()
+                avg_total = avg_encode + avg_decode
+
+                plt.title(f"FEC Processing Overhead - {experiment_name}\n(Avg: Encode={avg_encode:.1f}ms, Decode={avg_decode:.1f}ms, Total={avg_total:.1f}ms)")
+                plt.tight_layout()
+                plt.savefig(analysis_dir / "fec_overhead.png", dpi=150)
+                plt.close()
+                return "fec_overhead.png"
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "FEC not enabled or no processing data\n(UDP with FEC disabled or TCP mode)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"FEC Processing Overhead - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "fec_overhead.png", dpi=150)
+    plt.close()
+    return "fec_overhead.png"
 
 
 def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
@@ -1544,6 +1708,193 @@ def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_
     return "rudp_aging.png"
 
 
+def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
+    """Calculate summary metrics for reporting."""
+    metrics = {}
+
+    if df.empty:
+        return metrics
+
+    # Filter to WAFL phase for most metrics
+    wafl_df = df[df["phase"] == "WAFL"].copy() if "phase" in df.columns else df.copy()
+
+    # Filter out SSP interrupted rows for accuracy-related metrics
+    clean_df = df.copy()
+    if "is_ssp_interrupted" in clean_df.columns:
+        clean_df = clean_df[~clean_df["is_ssp_interrupted"]]
+
+    wafl_clean = wafl_df.copy()
+    if "is_ssp_interrupted" in wafl_clean.columns:
+        wafl_clean = wafl_clean[~wafl_clean["is_ssp_interrupted"]]
+
+    # 1. Final Test Accuracy (last epoch mean)
+    if "test_accuracy" in clean_df.columns and not clean_df[clean_df["test_accuracy"].notna()].empty:
+        final_epoch = clean_df["epoch"].max()
+        final_acc = clean_df[clean_df["epoch"] == final_epoch]["test_accuracy"].mean()
+        metrics["final_accuracy"] = final_acc
+
+    # 2. Max Test Accuracy (WAFL phase)
+    if "test_accuracy" in wafl_clean.columns and not wafl_clean[wafl_clean["test_accuracy"].notna()].empty:
+        metrics["max_accuracy"] = wafl_clean["test_accuracy"].max()
+
+    # 3. Time to Target Accuracy (90%)
+    if "wafl_relative_timestamp" in wafl_clean.columns and "test_accuracy" in wafl_clean.columns:
+        epoch_acc = wafl_clean.groupby("epoch").agg({"test_accuracy": "mean", "wafl_relative_timestamp": "mean"}).reset_index()
+        reached = epoch_acc[epoch_acc["test_accuracy"] >= TARGET_ACCURACY]
+        if not reached.empty:
+            metrics["time_to_target"] = reached["wafl_relative_timestamp"].iloc[0]
+
+    # 4. Average Epoch Duration (WAFL phase)
+    if "epoch_duration_ms" in wafl_df.columns:
+        avg_dur = wafl_df["epoch_duration_ms"].mean() / 1000
+        metrics["avg_epoch_duration_s"] = avg_dur
+
+    # 5. Total Training Time
+    if "timestamp" in df.columns:
+        total_time = df["timestamp"].max() - df["timestamp"].min()
+        metrics["total_time_s"] = total_time
+
+    # 6. Total Traffic (bytes_sent)
+    if "bytes_sent" in wafl_df.columns:
+        total_bytes = wafl_df["bytes_sent"].sum()
+        metrics["total_traffic_mb"] = total_bytes / (1024 * 1024)
+
+    # 7. Average Survival Rate
+    if "survival_rate" in wafl_df.columns:
+        avg_survival = wafl_df["survival_rate"].mean()
+        metrics["avg_survival_rate"] = avg_survival
+
+    # 8. Average Goodput (Mbps)
+    if "bytes_received" in wafl_df.columns and "comm_time_ms" in wafl_df.columns:
+        valid = wafl_df[(wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)]
+        if not valid.empty and valid["bytes_received"].sum() > 0:
+            total_bytes = valid["bytes_received"].sum()
+            total_time_s = valid["comm_time_ms"].sum() / 1000
+            avg_goodput = (total_bytes * 8 / 1e6) / total_time_s
+            metrics["avg_goodput_mbps"] = avg_goodput
+
+    # 9. Number of Nodes
+    if "node" in df.columns:
+        metrics["num_nodes"] = df["node"].nunique()
+
+    # 10. Total Epochs
+    if "epoch" in df.columns:
+        metrics["total_epochs"] = int(df["epoch"].max())
+
+    # 11. WAFL Epochs
+    if "epoch" in wafl_df.columns and not wafl_df.empty:
+        metrics["wafl_epochs"] = int(wafl_df["epoch"].max() - wafl_df["epoch"].min() + 1)
+
+    # 12. RUDP Retransmissions (total)
+    if "rudp_retransmissions" in wafl_df.columns:
+        total_retrans = wafl_df["rudp_retransmissions"].sum()
+        if pd.notna(total_retrans) and total_retrans > 0:
+            metrics["rudp_retransmissions"] = int(total_retrans)
+
+    # 13. FEC Processing Time (encode + decode)
+    if "fec_encode_time_ms" in wafl_df.columns:
+        avg_encode = wafl_df["fec_encode_time_ms"].mean()
+        if pd.notna(avg_encode) and avg_encode > 0:
+            metrics["avg_fec_encode_ms"] = avg_encode
+    if "fec_decode_time_ms" in wafl_df.columns:
+        avg_decode = wafl_df["fec_decode_time_ms"].mean()
+        if pd.notna(avg_decode) and avg_decode > 0:
+            metrics["avg_fec_decode_ms"] = avg_decode
+
+    return metrics
+
+
+def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir, wafl_phase_start_relative=None):
+    """Generate Markdown report for a single experiment."""
+    metrics = _calculate_metrics_summary(df, wafl_phase_start_relative)
+
+    report_path = analysis_dir / "report.md"
+
+    lines = []
+    lines.append(f"# {experiment_name}")
+    lines.append("")
+    lines.append(f"**Experiment ID**: `{experiment_id}`")
+    lines.append("")
+
+    # Summary Table
+    lines.append("## Summary Metrics")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+
+    if "num_nodes" in metrics:
+        lines.append(f"| Number of Nodes | {metrics['num_nodes']} |")
+    if "total_epochs" in metrics:
+        lines.append(f"| Total Epochs | {metrics['total_epochs']} |")
+    if "wafl_epochs" in metrics:
+        lines.append(f"| WAFL Epochs | {metrics['wafl_epochs']} |")
+    if "final_accuracy" in metrics:
+        lines.append(f"| Final Test Accuracy | {metrics['final_accuracy']:.4f} ({metrics['final_accuracy'] * 100:.2f}%) |")
+    if "max_accuracy" in metrics:
+        lines.append(f"| Max Test Accuracy | {metrics['max_accuracy']:.4f} ({metrics['max_accuracy'] * 100:.2f}%) |")
+    if "time_to_target" in metrics:
+        lines.append(f"| Time to {TARGET_ACCURACY * 100:.0f}% Target | {metrics['time_to_target']:.2f} sec |")
+    if "total_time_s" in metrics:
+        lines.append(f"| Total Training Time | {metrics['total_time_s']:.2f} sec |")
+    if "avg_epoch_duration_s" in metrics:
+        lines.append(f"| Avg Epoch Duration (WAFL) | {metrics['avg_epoch_duration_s']:.2f} sec |")
+    if "total_traffic_mb" in metrics:
+        lines.append(f"| Total Traffic (WAFL) | {metrics['total_traffic_mb']:.2f} MB |")
+    if "avg_survival_rate" in metrics:
+        lines.append(f"| Avg Survival Rate | {metrics['avg_survival_rate']:.4f} ({metrics['avg_survival_rate'] * 100:.2f}%) |")
+    if "avg_goodput_mbps" in metrics:
+        lines.append(f"| Avg Goodput | {metrics['avg_goodput_mbps']:.2f} Mbps |")
+    if "rudp_retransmissions" in metrics:
+        lines.append(f"| RUDP Retransmissions | {metrics['rudp_retransmissions']} |")
+    if "avg_fec_encode_ms" in metrics:
+        lines.append(f"| Avg FEC Encode Time | {metrics['avg_fec_encode_ms']:.2f} ms |")
+    if "avg_fec_decode_ms" in metrics:
+        lines.append(f"| Avg FEC Decode Time | {metrics['avg_fec_decode_ms']:.2f} ms |")
+    if "avg_fec_encode_ms" in metrics and "avg_fec_decode_ms" in metrics:
+        total_fec = metrics["avg_fec_encode_ms"] + metrics["avg_fec_decode_ms"]
+        lines.append(f"| Avg Total FEC Overhead | {total_fec:.2f} ms |")
+
+    lines.append("")
+
+    # Generated Graphs Section
+    lines.append("## Generated Graphs")
+    lines.append("")
+
+    graph_descriptions = {
+        "accuracy_mean.png": "Train and Test Accuracy (Mean ± SD)",
+        "accuracy_nodes.png": "Node-wise Test Accuracy",
+        "accuracy_vs_time.png": "Test Accuracy vs Elapsed Time",
+        "loss_mean.png": "Train and Test Loss (Mean ± SD)",
+        "loss_nodes.png": "Node-wise Test Loss",
+        "time_to_accuracy.png": f"Time to Target Accuracy ({TARGET_ACCURACY * 100:.0f}%)",
+        "epoch_duration.png": "Wall-clock Time per Epoch",
+        "idle_time_ratio.png": "Idle Time Ratio (Sync Wait)",
+        "compute_comm_breakdown.png": "Compute vs Communication Time",
+        "survival_rate.png": "Survival Rate (UDP/FEC)",
+        "goodput.png": "Throughput (Sent vs Goodput)",
+        "traffic_volume.png": "Traffic Volume per Epoch",
+        "total_transfer_time.png": "Transfer Time Breakdown",
+        "wasted_computation.png": "Wasted Computation (SSP)",
+        "fec_overhead.png": "FEC Processing Overhead (Encode + Decode)",
+        "rudp_retransmissions.png": "RUDP Retransmissions",
+        "rudp_rtt.png": "RUDP Average RTT",
+        "rudp_aging.png": "E-RUDP Aged Packets",
+    }
+
+    for graph_file, description in graph_descriptions.items():
+        if (analysis_dir / graph_file).exists():
+            lines.append(f"### {description}")
+            lines.append("")
+            lines.append(f"![{description}]({graph_file})")
+            lines.append("")
+
+    # Write report
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return report_path
+
+
 def analyze_results(experiment_id):
     """Analyze collected results and generate plots in parallel."""
     print(f"📊 Analyzing results for: {experiment_id}")
@@ -1573,6 +1924,12 @@ def analyze_results(experiment_id):
 
     if df.empty:
         print("⚠️  No metrics data found.")
+        # If no data found, remove the analysis directory so it's not marked as "analyzed"
+        try:
+            analysis_dir.rmdir()
+            print("  🗑️ Removed empty analysis folder")
+        except OSError:
+            pass  # Directory not empty or other error
         return
 
     # Add WAFL-relative timestamp (time since WAFL phase start)
@@ -1583,9 +1940,6 @@ def analyze_results(experiment_id):
     else:
         # Fallback: use timestamp as-is (backward compatibility)
         df["wafl_relative_timestamp"] = df["timestamp"]
-
-    # Set theme
-    sns.set_theme(style="darkgrid")
 
     # Helper to add phase switch line
     def add_phase_line(ax, data, x_col="epoch", text_position="top"):
@@ -1619,7 +1973,7 @@ def analyze_results(experiment_id):
         ax.text(
             wafl_start,
             y_pos,
-            " Phase Switch",
+            " WAFL Start",
             color=COLORS["phase_line"],
             va=va,
             fontsize=10,
@@ -1684,6 +2038,11 @@ def analyze_results(experiment_id):
             "compute_comm_breakdown.png",
             lambda: _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir),
         ),
+        # FEC overhead plot (UDP with FEC)
+        (
+            "fec_overhead.png",
+            lambda: _generate_fec_overhead_plot(df, experiment_name, analysis_dir),
+        ),
         # RUDP/E-RUDP specific plots
         (
             "rudp_retransmissions.png",
@@ -1700,7 +2059,11 @@ def analyze_results(experiment_id):
     ]
 
     # Execute plot generation sequentially
+    # Note: ThreadPoolExecutor was removed due to matplotlib global state issues
+    # causing corrupted/transparent images in parallel execution
     generated_plots = []
+    print(f"  🔧 Generating {len(plot_tasks)} plots...")
+
     for task_name, task_func in plot_tasks:
         try:
             result = task_func()
@@ -1710,7 +2073,11 @@ def analyze_results(experiment_id):
         except Exception as e:
             print(f"  ❌ Failed to generate {task_name}: {e}")
 
-    print(f"✨ Analysis complete. {len(generated_plots)} plots generated in: {analysis_dir}")
+    # Generate Markdown report
+    print("  📝 Generating Markdown report...")
+    _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir, wafl_phase_start_relative)
+
+    print(f"✨ Analysis complete. {len(generated_plots)} plots + report generated in: {analysis_dir}")
 
 
 # =============================================================================
@@ -1812,7 +2179,6 @@ def _get_short_name(experiment_id):
 
 def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
     """Generate accuracy comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     phase_switch_epoch = None
 
@@ -1859,7 +2225,7 @@ def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
         ax.text(
             phase_switch_epoch,
             y_min + (y_max - y_min) * 0.05,
-            " Phase Switch",
+            " WAFL Start",
             color=COLORS["phase_line"],
             fontsize=10,
             fontweight="bold",
@@ -1888,7 +2254,6 @@ def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
 
 def _generate_loss_comparison(experiments_data, group_name, output_dir):
     """Generate loss comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     phase_switch_epoch = None
 
@@ -1935,7 +2300,7 @@ def _generate_loss_comparison(experiments_data, group_name, output_dir):
         ax.text(
             phase_switch_epoch,
             y_max * 0.95,
-            " Phase Switch",
+            " WAFL Start",
             color=COLORS["phase_line"],
             fontsize=10,
             fontweight="bold",
@@ -1954,7 +2319,6 @@ def _generate_loss_comparison(experiments_data, group_name, output_dir):
 
 def _generate_duration_comparison(experiments_data, group_name, output_dir):
     """Generate epoch duration comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     phase_switch_epoch = None
 
@@ -1999,7 +2363,7 @@ def _generate_duration_comparison(experiments_data, group_name, output_dir):
         ax.text(
             phase_switch_epoch,
             y_max * 0.95,
-            " Phase Switch",
+            " WAFL Start",
             color=COLORS["phase_line"],
             fontsize=10,
             fontweight="bold",
@@ -2082,7 +2446,6 @@ def _generate_time_to_accuracy_comparison(experiments_data, group_name, output_d
 
 def _generate_survival_rate_comparison(experiments_data, group_name, output_dir):
     """Generate survival rate comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     has_data = False
 
@@ -2123,7 +2486,6 @@ def _generate_survival_rate_comparison(experiments_data, group_name, output_dir)
 
 def _generate_throughput_comparison(experiments_data, group_name, output_dir):
     """Generate throughput comparison plot (WAFL phase only)."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     has_data = False
 
@@ -2166,7 +2528,6 @@ def _generate_throughput_comparison(experiments_data, group_name, output_dir):
 
 def _generate_accuracy_vs_time_comparison(experiments_data, group_name, output_dir):
     """Generate test accuracy vs time comparison plot (WAFL phase, aligned at WAFL start)."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
 
     for i, (exp_id, df) in enumerate(experiments_data.items()):
@@ -2242,7 +2603,6 @@ def _generate_cumulative_sent_data_comparison(experiments_data, group_name, outp
 
     cumulative_df = pd.DataFrame(cumulative_data)
 
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     bars = plt.bar(
         cumulative_df["experiment"],
@@ -2275,7 +2635,6 @@ def _generate_cumulative_sent_data_comparison(experiments_data, group_name, outp
 
 def _generate_idle_time_comparison(experiments_data, group_name, output_dir):
     """Generate idle time ratio comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     has_data = False
 
@@ -2340,7 +2699,6 @@ def _generate_wasted_computation_comparison(experiments_data, group_name, output
 
     wasted_df = pd.DataFrame(wasted_data)
 
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     bars = plt.bar(
         wasted_df["experiment"],
@@ -2372,7 +2730,6 @@ def _generate_wasted_computation_comparison(experiments_data, group_name, output
 
 def _generate_goodput_comparison(experiments_data, group_name, output_dir):
     """Generate goodput comparison plot (WAFL phase only)."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     has_data = False
 
@@ -2414,7 +2771,6 @@ def _generate_goodput_comparison(experiments_data, group_name, output_dir):
 
 def _generate_traffic_volume_comparison(experiments_data, group_name, output_dir):
     """Generate traffic volume per epoch comparison plot."""
-    sns.set_theme(style="darkgrid")
     plt.figure(figsize=(12, 6))
     has_data = False
 
@@ -2517,6 +2873,122 @@ def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
     return "compute_comm_comparison.png"
 
 
+def _generate_comparison_report(experiments_data, group_name, group_dir):
+    """Generate Markdown comparison report for a group of experiments."""
+    report_path = group_dir / "report.md"
+
+    lines = []
+    lines.append(f"# Comparison Report: {group_name}")
+    lines.append("")
+
+    # Experiments list
+    lines.append("## Experiments")
+    lines.append("")
+    for exp_id in experiments_data.keys():
+        lines.append(f"- {_get_short_name(exp_id)}")
+    lines.append("")
+
+    # Calculate metrics for each experiment
+    lines.append("## Comparison Table")
+    lines.append("")
+
+    # Build detailed comparison table - Accuracy & Convergence
+    lines.append("### Accuracy & Convergence")
+    lines.append("")
+    headers1 = ["Experiment", "Final Acc", "Max Acc", "Time to 90%", "Total Epochs", "WAFL Epochs"]
+    lines.append("| " + " | ".join(headers1) + " |")
+    lines.append("| " + " | ".join(["---"] * len(headers1)) + " |")
+
+    all_metrics = {}
+    for exp_id, df in experiments_data.items():
+        metrics = _calculate_metrics_summary(df)
+        all_metrics[exp_id] = metrics
+        short_name = _get_short_name(exp_id)
+        row = [short_name]
+        row.append(f"{metrics.get('final_accuracy', 0) * 100:.2f}%" if "final_accuracy" in metrics else "N/A")
+        row.append(f"{metrics.get('max_accuracy', 0) * 100:.2f}%" if "max_accuracy" in metrics else "N/A")
+        row.append(f"{metrics.get('time_to_target', 0):.2f}s" if "time_to_target" in metrics else "N/A")
+        row.append(f"{metrics.get('total_epochs', 0)}" if "total_epochs" in metrics else "N/A")
+        row.append(f"{metrics.get('wafl_epochs', 0)}" if "wafl_epochs" in metrics else "N/A")
+        lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+
+    # Build detailed comparison table - Performance
+    lines.append("### Performance & Timing")
+    lines.append("")
+    headers2 = ["Experiment", "Avg Epoch (s)", "Total Time (s)", "Compute Time", "Comm Time"]
+    lines.append("| " + " | ".join(headers2) + " |")
+    lines.append("| " + " | ".join(["---"] * len(headers2)) + " |")
+
+    for exp_id, df in experiments_data.items():
+        metrics = all_metrics[exp_id]
+        short_name = _get_short_name(exp_id)
+        row = [short_name]
+        row.append(f"{metrics.get('avg_epoch_duration_s', 0):.2f}" if "avg_epoch_duration_s" in metrics else "N/A")
+        row.append(f"{metrics.get('total_time_s', 0):.1f}" if "total_time_s" in metrics else "N/A")
+
+        # Calculate avg compute and comm time
+        wafl_df = df[df["phase"] == "WAFL"] if "phase" in df.columns else df
+        avg_compute = wafl_df["compute_time_ms"].mean() / 1000 if "compute_time_ms" in wafl_df.columns else None
+        avg_comm = wafl_df["comm_time_ms"].mean() / 1000 if "comm_time_ms" in wafl_df.columns else None
+        row.append(f"{avg_compute:.2f}s" if avg_compute else "N/A")
+        row.append(f"{avg_comm:.2f}s" if avg_comm else "N/A")
+        lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+
+    # Build detailed comparison table - Communication
+    lines.append("### Communication & Network")
+    lines.append("")
+    headers3 = ["Experiment", "Total Traffic (MB)", "Avg Goodput (Mbps)", "Avg Survival", "RUDP Retrans"]
+    lines.append("| " + " | ".join(headers3) + " |")
+    lines.append("| " + " | ".join(["---"] * len(headers3)) + " |")
+
+    for exp_id in experiments_data.keys():
+        metrics = all_metrics[exp_id]
+        short_name = _get_short_name(exp_id)
+        row = [short_name]
+        row.append(f"{metrics.get('total_traffic_mb', 0):.2f}" if "total_traffic_mb" in metrics else "N/A")
+        row.append(f"{metrics.get('avg_goodput_mbps', 0):.2f}" if "avg_goodput_mbps" in metrics else "N/A")
+        row.append(f"{metrics.get('avg_survival_rate', 0) * 100:.1f}%" if "avg_survival_rate" in metrics else "N/A")
+        row.append(f"{metrics.get('rudp_retransmissions', 0)}" if "rudp_retransmissions" in metrics else "N/A")
+        lines.append("| " + " | ".join(row) + " |")
+
+    lines.append("")
+
+    # Generated Graphs Section
+    lines.append("## Comparison Graphs")
+    lines.append("")
+
+    graph_descriptions = {
+        "accuracy_comparison.png": "Test Accuracy Comparison",
+        "loss_comparison.png": "Test Loss Comparison",
+        "epoch_duration_comparison.png": "Epoch Duration Comparison",
+        "time_to_accuracy_comparison.png": "Time to Target Accuracy",
+        "survival_rate_comparison.png": "Survival Rate Comparison",
+        "throughput_comparison.png": "Throughput Comparison",
+        "accuracy_vs_time_comparison.png": "Accuracy vs Time Comparison",
+        "cumulative_sent_data_comparison.png": "Cumulative Sent Data",
+        "idle_time_comparison.png": "Idle Time Comparison",
+        "wasted_computation_comparison.png": "Wasted Computation",
+        "goodput_comparison.png": "Goodput Comparison",
+        "traffic_volume_comparison.png": "Traffic Volume Comparison",
+        "compute_comm_comparison.png": "Compute vs Communication Time",
+    }
+
+    for graph_file, description in graph_descriptions.items():
+        if (group_dir / graph_file).exists():
+            lines.append(f"### {description}")
+            lines.append("")
+            lines.append(f"![{description}]({graph_file})")
+            lines.append("")
+
+    # Write report
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return report_path
+
+
 def compare_experiments():
     """Compare experiments grouped by 'Experiment X:' pattern."""
     groups = _get_experiment_groups()
@@ -2573,7 +3045,11 @@ def compare_experiments():
             ("compute_comm_comparison.png", _generate_compute_comm_comparison),
         ]
 
+        # Execute comparison plot generation sequentially
+        # Note: ThreadPoolExecutor was removed due to matplotlib global state issues
         generated = []
+        print(f"  🔧 Generating {len(plots)} comparison plots...")
+
         for plot_name, plot_func in plots:
             try:
                 result = plot_func(experiments_data, group_name, group_dir)
@@ -2583,15 +3059,18 @@ def compare_experiments():
             except Exception as e:
                 print(f"  ❌ Failed to generate {plot_name}: {e}")
 
-        print(f"  📈 {len(generated)} comparison plots generated in: {group_dir}")
+        # Generate comparison Markdown report
+        print("  📝 Generating comparison report...")
+        _generate_comparison_report(experiments_data, group_name, group_dir)
+
+        print(f"  📈 {len(generated)} comparison plots + report generated in: {group_dir}")
 
     print(f"\n🎉 Comparison complete! Results in: {comparison_dir}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Collect and analyze WAFL results")
+    parser = argparse.ArgumentParser(description="Analyze WAFL experiment results (local)")
     parser.add_argument("--id", help="Experiment ID (default: latest)")
-    parser.add_argument("--skip-collect", action="store_true", help="Skip collection, only analyze")
     parser.add_argument(
         "--all",
         action="store_true",
@@ -2602,33 +3081,61 @@ def main():
         action="store_true",
         help="Generate comparison graphs for experiments grouped by 'Experiment X:' pattern",
     )
+    parser.add_argument(
+        "--collect",
+        action="store_true",
+        help="Collect results from nodes",
+    )
     args = parser.parse_args()
 
-    config = load_config()
+    # Note: This script now performs LOCAL analysis only.
+    # Use mise.toml tasks or rsync manually to collect data from management server.
+
+    if args.collect:
+        config = load_config()
+        targets = []
+        if args.id:
+            targets = [args.id]
+        elif args.all:
+            targets = get_all_experiments()
+        else:
+            targets = get_experiments_without_analysis()
+
+        if not targets:
+            print("✨ No experiments need collection.")
+        else:
+            print(f"📥 Collecting results for {len(targets)} experiments...")
+            for exp_id in targets:
+                collect_results(exp_id, config)
 
     if args.compare:
         # Cross-experiment comparison mode
         compare_experiments()
     elif args.all:
-        # Find all experiments without analysis folder
-        experiments = get_experiments_without_analysis()
+        # Find all experiments and re-analyze them
+        experiments = get_all_experiments()
         if not experiments:
-            print("✅ All experiments already have analysis folders.")
+            print("❌ No experiments found.")
             return
 
-        print(f"📋 Found {len(experiments)} experiments without analysis folder:")
+        print(f"📋 Found {len(experiments)} experiments to analyze:")
         for exp_id in experiments:
             print(f"   - {exp_id}")
         print()
 
-        # Process each experiment
+        # Process each experiment, removing existing analysis first
+        import shutil
+
         for i, exp_id in enumerate(experiments):
             print(f"\n{'=' * 60}")
             print(f"[{i + 1}/{len(experiments)}] Processing: {exp_id}")
             print(f"{'=' * 60}")
 
-            if not args.skip_collect:
-                collect_results(exp_id, config)
+            # Remove existing analysis folder to force re-generation
+            analysis_dir = RESULTS_DIR / exp_id / "analysis"
+            if analysis_dir.exists():
+                shutil.rmtree(analysis_dir)
+                print("  🗑️ Removed existing analysis folder")
 
             analyze_results(exp_id)
 
@@ -2639,10 +3146,6 @@ def main():
         if not exp_id:
             print("❌ No experiment ID found.")
             sys.exit(1)
-
-        if not args.skip_collect:
-            collect_results(exp_id, config)
-
         analyze_results(exp_id)
 
 

@@ -301,9 +301,79 @@ check_parallel_results "phase4"
 echo ""
 
 # ==========================================
+# Phase 5: Docker Registry Setup
+# ==========================================
+echo -e "${CYAN}=========================================${NC}"
+echo -e "${CYAN}Phase 5: Docker Registry Setup${NC}"
+echo -e "${CYAN}=========================================${NC}"
+echo ""
+
+# Get management server IP from environment (set by mise or .env)
+REGISTRY_HOST="${REGISTRY_HOST:-${DEPLOY_CTRL_SERVER_HOST:-localhost}}"
+REGISTRY_PORT="5000"
+REGISTRY_URL="${REGISTRY_HOST}:${REGISTRY_PORT}"
+
+echo -e "${BLUE}📦 Setting up Docker Registry on management server (${REGISTRY_HOST})...${NC}"
+
+# Start Registry container on management server (localhost)
+REGISTRY_CMD="
+    if ! docker ps --format '{{.Names}}' | grep -q '^registry$'; then
+        docker run -d -p ${REGISTRY_PORT}:5000 --restart=always --name registry registry:2
+        echo 'Registry started'
+    else
+        echo 'Registry already running'
+    fi
+"
+if ! eval "$REGISTRY_CMD" 2>/dev/null; then
+    echo -e "${RED}Failed to start Registry on management server${NC}"
+    exit 1
+fi
+echo -e "${GREEN}  ✅ Registry running on ${REGISTRY_URL}${NC}"
+
+echo -e "${BLUE}⏳ Configuring insecure-registries on ${#HOSTS[@]} hosts...${NC}"
+
+for HOST in "${HOSTS[@]}"; do
+    (
+        REMOTE_CMDS="
+            # Configure insecure registry
+            DAEMON_JSON='/etc/docker/daemon.json'
+            REGISTRY_URL='${REGISTRY_URL}'
+            
+            if [ -f \"\$DAEMON_JSON\" ]; then
+                # Check if already configured
+                if grep -q \"\$REGISTRY_URL\" \"\$DAEMON_JSON\" 2>/dev/null; then
+                    echo 'Already configured'
+                    exit 0
+                fi
+                # Merge with existing config
+                EXISTING=\$(cat \"\$DAEMON_JSON\")
+                echo \"\$EXISTING\" | jq '. + {\"insecure-registries\": ([\"'\$REGISTRY_URL'\"] + (.\"insecure-registries\" // []))}' | sudo tee \"\$DAEMON_JSON\" > /dev/null
+            else
+                # Create new config
+                echo '{\"insecure-registries\": [\"'\$REGISTRY_URL'\"]}' | sudo tee \"\$DAEMON_JSON\" > /dev/null
+            fi
+            
+            # Restart Docker to apply changes
+            sudo systemctl restart docker
+        "
+
+        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS" 2>"$TEMP_DIR/phase5_${HOST}_error"; then
+            rm -f "$TEMP_DIR/phase5_${HOST}_failed"
+        else
+            touch "$TEMP_DIR/phase5_${HOST}_failed"
+        fi
+    ) &
+done
+
+wait
+check_parallel_results "phase5"
+echo ""
+
+# ==========================================
 # 完了
 # ==========================================
 echo -e "${GREEN}=========================================${NC}"
 echo -e "${GREEN}✅ All setup tasks completed successfully!${NC}"
+echo -e "${GREEN}  Registry URL: ${REGISTRY_URL}${NC}"
 echo -e "${GREEN}=========================================${NC}"
 echo ""

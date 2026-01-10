@@ -6,17 +6,9 @@ uv = "0.7.13"
 mise.file = ".env"
 
 [tasks.rsync]
+description = "Sync project files to management server (optimized single rsync call)"
 run = [
-  "rsync -arhvz --delete ./.env ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./mise.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./uv.lock ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./pyproject.toml ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./Dockerfile ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./.dockerignore ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./ctrl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./wafl ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./data ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
-  "rsync -arhvz --delete ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}",
+  "rsync -arhvz --progress --delete --inplace ./.env ./mise.toml ./uv.lock ./pyproject.toml ./Dockerfile ./.dockerignore ./ctrl ./wafl ./data ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/",
 ]
 
 [tasks.setup]
@@ -35,49 +27,67 @@ run = [
 ]
 
 [tasks.deploy]
+description = "Build Docker image on management server and push to registry, then pull on all nodes"
 depends = ["rsync"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/uv venv --clear && source .venv/bin/activate && ~/.local/bin/uv sync && python -u ctrl/deploy.py\"",
+  "echo '📦 Setting up Python environment on management server...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && ~/.local/bin/uv venv --clear && source .venv/bin/activate && ~/.local/bin/uv sync\"",
+  "echo '🏗️  Building Docker image on management server...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && DOCKER_BUILDKIT=1 docker build -t wafl-node:latest .\"",
+  "echo '📤 Pushing Docker image to registry...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"docker tag wafl-node:latest localhost:5000/wafl-node:latest && docker push localhost:5000/wafl-node:latest\"",
+  "echo '🚀 Pulling image and syncing files on all nodes...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && set -a && source .env && set +a && .venv/bin/python -u ctrl/deploy.py\"",
+  "echo '🧹 Cleaning up...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"docker image prune -f\"",
+  "echo '🎉 Deployment completed!'",
 ]
 
 [tasks.start]
 depends = ["deploy"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/main.py'\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/main.py'\"",
 ]
 
 [tasks.experiments]
 description = "Run all experiments from ctrl/parameters/ sequentially"
 depends = ["deploy"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/run_experiments.py'\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/run_experiments.py'\"",
 ]
 
 [tasks.analyze]
+description = "Analyze experiment results on management server and collect results"
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/analyze.py --all\"",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/analyze.py --compare\"",
-  "rsync -arhvz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
+  "echo '📊 Preparing analysis...'",
+  "echo '📥 Collecting results from all nodes...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --collect\"",
+  "echo '📊 Running analysis on management server...'",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --all\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --compare\"",
+  "echo '📥 Downloading analysis results...'",
+  "rsync -arhvz --progress ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
+  "echo '✨ Analysis complete!'",
 ]
 
 [tasks.sumo]
 description = "Complete mobility preprocessing pipeline (unified script)"
 run = [
-  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/ --epochs 2200",
-  ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
+  ".venv/bin/python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo/ --epochs 2200",
+  ".venv/bin/python -u utils/visualize_sumo_results.py --trace data/sumo/mobility_trace.csv --contact data/sumo/contact_pattern_mobility.json --conditions data/sumo/network_conditions_mobility.json --mode all --output-dir data/sumo/visuals/",
 ]
 
 [tasks.sumo-osm]
 description = "Mobility preprocessing with OSM real-world map"
 run = [
-  ". .venv/bin/activate && python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo_real/ --osm data/osm/map.osm --epochs 2200",
-  ". .venv/bin/activate && python -u utils/visualize_sumo_results.py --trace data/sumo_real/mobility_trace.csv --contact data/sumo_real/contact_pattern_mobility.json --conditions data/sumo_real/network_conditions_mobility.json --network data/sumo_real/network.net.xml --mode all --output-dir data/sumo_real/visuals/",
+  ".venv/bin/python -u utils/prepare_mobility.py --config ctrl/execution_config.json --pathloss data/sumo/path_loss_model.json --output-dir data/sumo_real/ --osm data/osm/map.osm --epochs 2200",
+  ".venv/bin/python -u utils/visualize_sumo_results.py --trace data/sumo_real/mobility_trace.csv --contact data/sumo_real/contact_pattern_mobility.json --conditions data/sumo_real/network_conditions_mobility.json --network data/sumo_real/network.net.xml --mode all --output-dir data/sumo_real/visuals/",
 ]
 
 [tasks.verify]
 description = "Run both verification and benchmarks"
 depends = ["deploy"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && source .venv/bin/activate && python -u ctrl/verify.py --all\"",
-  "rsync -arhvz ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/verify.py --all\"",
+  "rsync -arhvz --progress --inplace ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
 ]

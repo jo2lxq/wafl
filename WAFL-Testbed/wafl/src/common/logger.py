@@ -35,6 +35,8 @@ class MetricsLogger:
         "received_models",
         "fec_recovery_success",
         "fec_recovery_fail",
+        "fec_encode_time_ms",  # FEC エンコード処理時間
+        "fec_decode_time_ms",  # FEC デコード処理時間
         "bytes_sent",
         "bytes_received",
         "timeout_models",  # 追加
@@ -158,6 +160,8 @@ class MetricsLogger:
             "received_models": metrics.get("received_models", 0),
             "fec_recovery_success": metrics.get("fec_recovery_success", 0),
             "fec_recovery_fail": metrics.get("fec_recovery_fail", 0),
+            "fec_encode_time_ms": metrics.get("fec_encode_time_ms", 0),
+            "fec_decode_time_ms": metrics.get("fec_decode_time_ms", 0),
             "bytes_sent": metrics.get("bytes_sent", 0),
             "bytes_received": metrics.get("bytes_received", 0),
             "timeout_models": metrics.get("timeout_models", 0),  # 追加

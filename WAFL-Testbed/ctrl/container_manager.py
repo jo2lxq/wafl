@@ -151,7 +151,7 @@ class ContainerManager:
 
         # Mounts
         target_path = f"{self.deployment_location}/{self.project_name}"
-        mounts = f"-v {target_path}/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"  # noqa: E501
+        mounts = f"-v {target_path}/wafl/dataset:/app/dataset -v {target_path}/config/config.json:/app/config.json -v {target_path}/config/contact_pattern.json:/app/contact_pattern.json -v {target_path}/results:/app/results -v {target_path}/wafl/src:/app/wafl/src -v {target_path}/ctrl/parameters.json:/app/ctrl/parameters.json"  # noqa: E501
 
         # No resource limits at startup - CPU limits applied at WAFL phase start
         resource_flags = ""

@@ -1265,9 +1265,11 @@ class ModelSharingUtils:
                     "sent_models": udp_stats.get("sent_models", 0),
                     "sent_failed": udp_stats.get("sent_failed", 0),
                     "received_models": udp_stats.get("received_models", 0),
-                    "timeout_models": udp_stats.get("timeout_models", 0),  # 追加
+                    "timeout_models": udp_stats.get("timeout_models", 0),
                     "fec_recovery_success": udp_stats.get("fec_recovery_success", 0),
                     "fec_recovery_fail": udp_stats.get("fec_recovery_fail", 0),
+                    "fec_encode_time_ms": udp_stats.get("fec_encode_time_ms", 0),
+                    "fec_decode_time_ms": udp_stats.get("fec_decode_time_ms", 0),
                 }
             )
         else:
@@ -1348,6 +1350,8 @@ class ModelSharingUtils:
                 "timeout_models": 0,
                 "bytes_sent": 0,
                 "bytes_received": 0,
+                "fec_encode_time_ms": 0.0,
+                "fec_decode_time_ms": 0.0,
             }
         # Reset RUDP stats if enabled
         if self.rudp_sharing is not None:

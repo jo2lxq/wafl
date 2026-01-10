@@ -67,14 +67,21 @@ class RUDPConnectionPool:
                 conn_info = self._connections[address]
                 sock = conn_info["socket"]
 
-                # 接続が生きているか確認
-                if sock._state == ConnectionState.ESTABLISHED:
+                # 接続が生きているか確認（ESTABLISHED 状態のみ再利用可能）
+                # CLOSE_WAIT 状態は相手側から FIN を受信済みで送信不可のため再利用しない
+                is_healthy = sock._state == ConnectionState.ESTABLISHED and sock._running and sock.get_stats().get("max_retries_reached", 0) == 0
+
+                if is_healthy:
                     conn_info["last_used"] = time.time()
-                    self.logger.debug(f"Reusing connection to {address}")
+                    self.logger.debug(f"Reusing connection to {address} (state={sock._state})")
                     return sock
                 else:
-                    # 接続が切れている場合は削除
-                    self.logger.debug(f"Stale connection to {address}, removing")
+                    # 接続が不健全な場合は削除して新規作成
+                    self.logger.info(f"Unhealthy connection to {address}, recreating (state={sock._state}, running={sock._running})")
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
                     del self._connections[address]
 
         # 新規接続を作成
@@ -135,24 +142,39 @@ class RUDPConnectionPool:
         self.logger.debug(f"Evicted oldest connection to {oldest_addr}")
 
     def _cleanup_loop(self) -> None:
-        """アイドル接続をクリーンアップするスレッド"""
+        """アイドル接続および不健全な接続をクリーンアップするスレッド"""
         while self._running:
-            time.sleep(60)  # 1分ごとにチェック
+            time.sleep(5)  # 5秒ごとにチェック (監視強化)
 
             current_time = time.time()
             to_close = []
 
             with self._lock:
                 for addr, conn_info in list(self._connections.items()):
+                    sock = conn_info["socket"]
                     idle_time = current_time - conn_info["last_used"]
-                    if idle_time > self.IDLE_TIMEOUT:
-                        to_close.append((addr, conn_info["socket"]))
+
+                    # 接続健全性チェック
+                    is_healthy = sock._state == ConnectionState.ESTABLISHED and sock._running and sock.get_stats().get("max_retries_reached", 0) == 0
+
+                    should_close = False
+                    reason = ""
+
+                    if not is_healthy:
+                        should_close = True
+                        reason = f"unhealthy (state={sock._state})"
+                    elif idle_time > self.IDLE_TIMEOUT:
+                        should_close = True
+                        reason = f"idle ({idle_time:.1f}s)"
+
+                    if should_close:
+                        to_close.append((addr, sock, reason))
                         del self._connections[addr]
 
-            for addr, sock in to_close:
+            for addr, sock, reason in to_close:
                 try:
                     sock.close()
-                    self.logger.debug(f"Closed idle connection to {addr}")
+                    self.logger.debug(f"Closed connection to {addr}: {reason}")
                 except Exception:
                     pass
 
@@ -175,3 +197,19 @@ class RUDPConnectionPool:
                 "active_connections": len(self._connections),
                 "addresses": list(self._connections.keys()),
             }
+
+    def warm_up(self, addresses: list) -> int:
+        """
+        【廃止】プリウォーミング機能は廃止された．
+
+        この関数は後方互換性のために残されているが，何も行わない．
+        接続は必要時にオンデマンドで確立される．
+
+        Args:
+            addresses: [(ip, port), ...] のリスト（無視される）
+
+        Returns:
+            常に 0
+        """
+        self.logger.debug("warm_up() is deprecated and does nothing")
+        return 0

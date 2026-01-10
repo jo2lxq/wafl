@@ -1,5 +1,5 @@
-import hashlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -12,6 +12,11 @@ CTRL_DIR = PROJECT_ROOT / "ctrl"
 CONFIG_FILE = CTRL_DIR / "execution_config.json"
 RESULTS_DIR = PROJECT_ROOT / "results" / ".deploy"
 LOG_FILE = RESULTS_DIR / "ctrl.log"
+
+# Registry URL (management server runs registry on port 5000)
+# Use REGISTRY_HOST from .env (loaded by mise)
+REGISTRY_HOST = os.environ.get("REGISTRY_HOST", "localhost")
+REGISTRY_URL = f"{REGISTRY_HOST}:5000"
 
 # SSH Settings
 SSH_OPTS = [
@@ -81,50 +86,8 @@ def run_command(cmd, shell=False):
         return False
 
 
-def get_build_context_hash():
-    """Generate hash of files that affect Docker build."""
-    h = hashlib.sha256()
-    # Hash files that affect Docker build
-    for path in ["Dockerfile", "pyproject.toml", "uv.lock"]:
-        full_path = PROJECT_ROOT / path
-        if full_path.exists():
-            h.update(full_path.read_bytes())
-
-    # Hash wafl directory (all Python files and config files)
-    wafl_dir = PROJECT_ROOT / "wafl"
-    if wafl_dir.exists():
-        for file_path in sorted(wafl_dir.rglob("*")):
-            if file_path.is_file() and not file_path.name.startswith("."):
-                try:
-                    h.update(file_path.read_bytes())
-                except (OSError, IOError):
-                    pass
-
-    # Hash data directory (all files that will be copied to container)
-    data_dir = PROJECT_ROOT / "data"
-    if data_dir.exists():
-        for file_path in sorted(data_dir.rglob("*")):
-            if file_path.is_file() and not file_path.name.startswith("."):
-                try:
-                    h.update(file_path.read_bytes())
-                except (OSError, IOError):
-                    pass
-
-    # Hash utils directory (all files that will be copied to container)
-    utils_dir = PROJECT_ROOT / "utils"
-    if utils_dir.exists():
-        for file_path in sorted(utils_dir.rglob("*")):
-            if file_path.is_file() and not file_path.name.startswith("."):
-                try:
-                    h.update(file_path.read_bytes())
-                except (OSError, IOError):
-                    pass
-
-    return h.hexdigest()[:16]
-
-
-def deploy_to_node(node, deployment_location, user):
-    """Deploy and build Docker image on a single node."""
+def deploy_to_node(node, deployment_location, user, registry_url):
+    """Deploy Docker image to a single node via registry pull."""
     device_name = node["name"]
     ip = node["physical_ip"]
     host = f"{user}@{ip}"
@@ -133,116 +96,89 @@ def deploy_to_node(node, deployment_location, user):
     log(f"🔗 Connecting to {device_name} ({ip})", device=device_name)
 
     # Create remote directories
-    setup_cmd = f"mkdir -p {target_dir}"
+    setup_cmd = f"mkdir -p {target_dir}/wafl/dataset"
     if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, setup_cmd]):
         log(f"❌ Failed to setup directories on {device_name}", device=device_name)
         return False
 
-    # Sync project files (Build Context) - OPTIMIZED: batch rsync with better compression
-    log(f"📤 Syncing project files to {device_name}...", device=device_name)
-    sync_items = [
-        "Dockerfile",
-        ".dockerignore",
-        "pyproject.toml",
-        "uv.lock",
-        "wafl",
-        "data",
-        "utils",
-        "ctrl",
-    ]
-
-    # Collect existing source paths
-    sources = [str(PROJECT_ROOT / item) for item in sync_items if (PROJECT_ROOT / item).exists()]
-
-    # Single optimized rsync command with all files
-    rsync_cmd = [
+    # Step 1: Sync wafl source code (excluding dataset)
+    log(f"📤 Syncing source files to {device_name}...", device=device_name)
+    rsync_wafl_cmd = [
         "rsync",
-        "-a",  # Archive mode (preserves permissions, timestamps, etc.)
-        "--compress",  # Enable compression
-        "--compress-level=6",  # Good balance between speed and compression
+        "-a",
+        "--delete",
+        "--inplace",
+        "--partial",
+        "--compress",
+        "--compress-level=6",
         "-e",
         "ssh " + " ".join(SSH_OPTS + MUX_OPTS),
-        *sources,
+        str(PROJECT_ROOT / "wafl" / "src"),
+        str(PROJECT_ROOT / "wafl" / "__init__.py"),
+        f"{host}:{target_dir}/wafl/",
+    ]
+    if not run_command(rsync_wafl_cmd):
+        log(f"❌ Failed to sync wafl source to {device_name}", device=device_name)
+        return False
+
+    # Step 2: Sync data, utils, ctrl to target directory
+    other_items = ["data", "utils", "ctrl"]
+    other_sources = [str(PROJECT_ROOT / item) for item in other_items if (PROJECT_ROOT / item).exists()]
+    rsync_other_cmd = [
+        "rsync",
+        "-a",
+        "--delete",
+        "--inplace",
+        "--partial",
+        "--compress",
+        "--compress-level=6",
+        "-e",
+        "ssh " + " ".join(SSH_OPTS + MUX_OPTS),
+        *other_sources,
         f"{host}:{target_dir}/",
     ]
-    if not run_command(rsync_cmd):
-        log(f"❌ Failed to sync files to {device_name}", device=device_name)
+    if not run_command(rsync_other_cmd):
+        log(f"❌ Failed to sync data/utils/ctrl to {device_name}", device=device_name)
         return False
 
-    # Check if Docker build is needed by comparing hashes
-    local_hash = get_build_context_hash()
-    hash_file = f"{target_dir}/.build_hash"
+    # Step 3: Sync node-specific dataset only (node's number + common)
+    log(f"📊 Syncing dataset for node {device_name}...", device=device_name)
+    dataset_dir = PROJECT_ROOT / "wafl" / "dataset"
+    node_dataset = dataset_dir / str(device_name)
+    common_dataset = dataset_dir / "common"
 
-    check_hash_cmd = f"cat {hash_file} 2>/dev/null || echo ''"
-    try:
-        result = subprocess.run(
-            ["ssh"] + SSH_OPTS + MUX_OPTS + [host, check_hash_cmd],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        remote_hash = result.stdout.strip()
-    except subprocess.CalledProcessError:
-        remote_hash = ""
+    dataset_sources = []
+    if node_dataset.exists():
+        dataset_sources.append(str(node_dataset) + "/")
+    if common_dataset.exists():
+        dataset_sources.append(str(common_dataset) + "/")
 
-    # Check if Docker image exists
-    check_image_cmd = "docker images -q wafl-node:latest 2>/dev/null | head -1"
-    try:
-        result = subprocess.run(
-            ["ssh"] + SSH_OPTS + MUX_OPTS + [host, check_image_cmd],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        image_exists = bool(result.stdout.strip())
-    except subprocess.CalledProcessError:
-        image_exists = False
+    if dataset_sources:
+        rsync_dataset_cmd = [
+            "rsync",
+            "-a",
+            "--delete",
+            "--inplace",
+            "--partial",
+            "--compress",
+            "--compress-level=6",
+            "-e",
+            "ssh " + " ".join(SSH_OPTS + MUX_OPTS),
+            *dataset_sources,
+            f"{host}:{target_dir}/wafl/dataset/",
+        ]
+        if not run_command(rsync_dataset_cmd):
+            log(f"❌ Failed to sync dataset to {device_name}", device=device_name)
+            return False
 
-    # Skip build if hash matches AND image exists
-    if local_hash == remote_hash and image_exists:
-        log(
-            f"⏭️  Docker image unchanged, skipping build on {device_name}",
-            device=device_name,
-        )
-        log(f"✅ Successfully deployed to {device_name}", device=device_name)
-        return True
-
-    # Build Docker image on remote node with persistent cache
-    log(f"🏗️  Building Docker image on {device_name}...", device=device_name)
-
-    # Create persistent cache directory on host for BuildKit cache
-    cache_dir = f"/home/{user}/.cache/docker-buildx"
-    mkdir_cache_cmd = f"mkdir -p {cache_dir}"
-    if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, mkdir_cache_cmd]):
-        log(
-            f"⚠️  Warning: Failed to create cache directory on {device_name}",
-            device=device_name,
-        )
-
-    # Setup buildx builder with docker-container driver for advanced caching
-    # Optimized: only create if not exists, then use
-    setup_buildx_cmd = """
-if ! docker buildx inspect wafl-builder > /dev/null 2>&1; then
-    docker buildx create --name wafl-builder --driver docker-container
-fi
-docker buildx use wafl-builder
-"""
-    run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, setup_buildx_cmd])
-
-    # Build with Buildx and persistent local cache
-    # --cache-from: Load cache from host directory (speeds up subsequent builds)
-    # --cache-to: Save cache to host directory (persists for future builds)
-    # mode=max: Cache all layers (not just final image layers)
-    build_cmd = f"cd {target_dir} && docker buildx build --builder wafl-builder --cache-from type=local,src={cache_dir} --cache-to type=local,dest={cache_dir},mode=max --load -t wafl-node:latest ."
-    if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, build_cmd]):
-        log(f"❌ Failed to build Docker image on {device_name}", device=device_name)
+    # Step 4: Pull Docker image from registry (layer-based differential transfer)
+    log(f"📦🐳 Pulling Docker image on {device_name}...", device=device_name)
+    pull_cmd = f"docker pull {registry_url}/wafl-node:latest && docker tag {registry_url}/wafl-node:latest wafl-node:latest"
+    if not run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, pull_cmd]):
+        log(f"❌ Failed to pull Docker image on {device_name}", device=device_name)
         return False
 
-    # Save build hash for future comparison
-    save_hash_cmd = f"echo '{local_hash}' > {hash_file}"
-    run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, save_hash_cmd])
-
-    # Prune Docker images
+    # Step 5: Prune old Docker images
     prune_cmd = "docker image prune -f"
     run_command(["ssh"] + SSH_OPTS + MUX_OPTS + [host, prune_cmd])
 
@@ -262,15 +198,16 @@ def main():
         log("❌ No nodes defined in configuration")
         sys.exit(1)
 
-    log(f"🚀 Starting deployment to {len(nodes)} nodes (parallel build on each node)")
+    log(f"🚀 Starting deployment to {len(nodes)} nodes (registry pull mode)")
+    log(f"📦 Registry: {REGISTRY_URL}")
 
-    # Deploy and build on all nodes in parallel
+    # Deploy to all nodes in parallel
     threads = []
     results = []
     lock = threading.Lock()
 
     def thread_target(node):
-        success = deploy_to_node(node, deployment_location, user)
+        success = deploy_to_node(node, deployment_location, user, REGISTRY_URL)
         with lock:
             results.append(success)
 

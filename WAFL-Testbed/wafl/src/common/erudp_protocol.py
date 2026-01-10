@@ -145,6 +145,15 @@ class ERUDPSocket(RUDPSocket):
                     continue
 
                 packet = entry.packet
+                packet_age = current_time - packet.created_at
+                aging_limit = self._network_estimator.get_recommended_aging_limit()
+
+                # 早期タイムアウト: aging limit の 70% でスキップ（スループット維持）
+                if packet_age > aging_limit * 0.7:
+                    aged_seqs.append(seq_num)
+                    self._stats["aged_packets"] += 1
+                    self.logger.debug(f"Packet seq {seq_num} early-aged (age: {packet_age:.3f}s > 70% of {aging_limit}s)")
+                    continue
 
                 # Aging チェック: パケット寿命が切れているか
                 if self._check_packet_aging(packet, current_time):

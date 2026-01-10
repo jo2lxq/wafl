@@ -1,6 +1,5 @@
-# Optimized Dockerfile for faster builds with BuildKit cache
-
 # syntax=docker/dockerfile:1
+# Optimized Dockerfile for faster builds with BuildKit cache
 FROM python:3.11-slim AS base
 
 # Set environment variables
@@ -22,6 +21,7 @@ FROM base AS system-deps
 # Use --mount=type=cache for apt cache
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
     apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -52,7 +52,7 @@ COPY wafl/__init__.py ./wafl/__init__.py
 COPY wafl/src/__init__.py ./wafl/src/__init__.py
 
 # Install dependencies with cache mount for uv
-RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
+RUN --mount=type=cache,id=wafl-uv-cache,target=/root/.cache/uv,sharing=locked \
     uv sync --frozen --no-dev --compile-bytecode
 
 # ==========================================
@@ -62,9 +62,9 @@ FROM python-deps AS final
 
 # Copy the rest of the application
 # This layer changes frequently, so keep it last
+# NOTE: data/ is NOT copied - it's transferred via rsync and mounted at runtime
 COPY wafl/ ./wafl/
 COPY utils/ ./utils/
-COPY data/ ./data/
 
 # Expose ports
 # 10001: Control Port

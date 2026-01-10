@@ -52,11 +52,21 @@ class UDPModelSharing:
         # Pacing Control
         self.pacing_delay = 0.0
 
-        self.timeout = timeout
-        self.inter_packet_timeout = inter_packet_timeout
+        # Adaptive Timeout: Use RTT-based values if available
+        metrics = self._network_estimator.get_metrics()
+        rtt_sec = metrics.rtt_ms / 1000 if metrics.rtt_ms > 0 else 0.1
+        self.timeout = max(timeout, rtt_sec * 10)  # At least 10x RTT
+        self.inter_packet_timeout = max(inter_packet_timeout, rtt_sec * 3)  # At least 3x RTT
+
         self.logger = logging.getLogger("UDPModelSharing")
-        self.encoder = zfec.Encoder(self.k, self.m)
-        self.decoder = zfec.Decoder(self.k, self.m)
+
+        # FEC encoder/decoder (handle parity=0 case)
+        if self.parity > 0:
+            self.encoder = zfec.Encoder(self.k, self.m)
+            self.decoder = zfec.Decoder(self.k, self.m)
+        else:
+            self.encoder = None  # No FEC
+            self.decoder = None
 
         # FEC and Survival Rate Statistics
         self.stats = {
@@ -70,6 +80,8 @@ class UDPModelSharing:
             "timeout_models": 0,  # Models that failed due to timeout
             "bytes_sent": 0,
             "bytes_received": 0,
+            "fec_encode_time_ms": 0.0,  # FEC エンコード処理時間（累積）
+            "fec_decode_time_ms": 0.0,  # FEC デコード処理時間（累積）
         }
 
         # Monotonically increasing model sequence number with thread lock
@@ -199,9 +211,26 @@ class UDPModelSharing:
                 old_parity = self.parity
                 self.parity = new_parity
                 self.m = self.k + self.parity
-                self.encoder = zfec.Encoder(self.k, self.m)
-                self.decoder = zfec.Decoder(self.k, self.m)
+                if self.parity > 0:
+                    self.encoder = zfec.Encoder(self.k, self.m)
+                    self.decoder = zfec.Decoder(self.k, self.m)
+                else:
+                    self.encoder = None
+                    self.decoder = None
                 self.logger.info(f"🔄 FEC params updated: parity {old_parity} -> {self.parity} (m={self.m})")
+
+            # Adaptive Timeout & Pacing: Update based on current RTT and Loss
+            metrics = self._network_estimator.get_metrics()
+            if metrics.rtt_ms > 0:
+                rtt_sec = metrics.rtt_ms / 1000
+                self.inter_packet_timeout = max(0.1, rtt_sec * 3)
+
+            # Update pacing delay
+            self.pacing_delay = self._network_estimator.get_recommended_pacing_delay()
+
+            # ====== FEC BYPASS MODE (parity=0) ======
+            if self.parity == 0:
+                return self._send_model_no_fec(model_data, target_ip, target_port)
 
             # Strategy: Split data into chunks of size (PAYLOAD_SIZE * k).
             # Each chunk is encoded into m packets of size PAYLOAD_SIZE.
@@ -227,7 +256,7 @@ class UDPModelSharing:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
             # Increase socket buffer to avoid local drops during pacing sleep if any
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)  # 1MB
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB (Was 1MB)
 
             # Multicast TTL if target is multicast
             if self._is_multicast(target_ip):
@@ -241,23 +270,26 @@ class UDPModelSharing:
 
             # Track actual bytes sent (including FEC redundancy and headers)
             actual_bytes_sent = 0
+            fec_encode_start = time.time()  # FEC エンコード時間計測開始
 
-            # Parallel Encoding using ThreadPoolExecutor
-            # zfec releases GIL during encoding so this should speed up CPU-bound tasks
-            from concurrent.futures import ThreadPoolExecutor
+            # Parallel Encoding with Pipeline Parallelism
+            # Send packets as soon as encoding completes (don't wait for all chunks)
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            num_workers = min(4, total_chunks) if total_chunks > 0 else 1
+            num_workers = min(8, total_chunks) if total_chunks > 0 else 1  # 8 workers (Was 4)
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                # Submit all encoding tasks
-                futures = []
+                # Submit all encoding tasks with chunk metadata
+                future_to_chunk = {}
                 for chunk_idx, blocks_in, original_len in chunks_data:
-                    futures.append(executor.submit(self.encoder.encode, blocks_in))
+                    future = executor.submit(self.encoder.encode, blocks_in)
+                    future_to_chunk[future] = (chunk_idx, original_len)
 
-                # Send loop with BATCH PACING (send multiple packets, then sleep once)
+                # Send loop with BATCH PACING and Pipeline Parallelism
+                # Use as_completed to send packets as soon as encoding finishes
                 packets_sent_in_batch = 0
-                for i, future in enumerate(futures):
-                    chunk_idx, _, original_len = chunks_data[i]
+                for future in as_completed(future_to_chunk):
+                    chunk_idx, original_len = future_to_chunk[future]
                     blocks_out = future.result()
 
                     for block_idx, block in enumerate(blocks_out):
@@ -274,10 +306,36 @@ class UDPModelSharing:
                             time.sleep(self.pacing_delay * self.BATCH_SIZE)
                             packets_sent_in_batch = 0
 
+            # FEC エンコード時間計測終了（送信時間を除く純粋なエンコード時間は並列処理のため概算）
+            fec_encode_time_ms = (time.time() - fec_encode_start) * 1000
+            self.stats["fec_encode_time_ms"] += fec_encode_time_ms
+
             # Send END packet for Fast NACK trigger
             # Header: PTYPE_END, ts, seq, 0, 0, 0, 0, 0, 0, 0
             end_header = struct.pack("!BdIIIIIBBB", self.PTYPE_END, time.time(), current_seq, 0, 0, 0, 0, self.k, self.m, 0)
             sock.sendto(end_header, (target_ip, target_port))
+
+            # ====== PROACTIVE REDUNDANCY ======
+            # For high-loss conditions (loss > 1%), send extra parity packets proactively
+            # This reduces NACK round-trip latency
+            loss_rate = metrics.packet_loss_rate if metrics.packet_loss_rate > 0 else 0.0
+            if loss_rate > 0.01 and self.parity > 0:
+                import random
+
+                extra_redundancy = min(self.parity, 4)  # Send up to 4 extra packets per chunk
+                for chunk_idx, blocks_in, original_len in chunks_data:
+                    # Re-encode this chunk to get parity blocks
+                    blocks_out = self.encoder.encode(blocks_in)
+                    # Send random parity blocks (indices k to m-1)
+                    parity_indices = list(range(self.k, self.m))
+                    random.shuffle(parity_indices)
+                    for block_idx in parity_indices[:extra_redundancy]:
+                        block = blocks_out[block_idx]
+                        header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, self.m, 0)
+                        packet = header + block
+                        sock.sendto(packet, (target_ip, target_port))
+                        actual_bytes_sent += len(packet)
+                self.logger.debug(f"📦 Proactive redundancy: sent {extra_redundancy} extra blocks/chunk for {total_chunks} chunks")
 
             sock.close()
 
@@ -314,6 +372,86 @@ class UDPModelSharing:
             self.logger.error(f"❌ Failed to send model via UDP: {e}")
             self.stats["sent_failed"] += 1
             # 送信失敗を記録
+            self._network_estimator.record_packet_result(False)
+            return False
+
+    def _send_model_no_fec(self, model_data: bytes, target_ip: str, target_port: int) -> bool:
+        """
+        Send model without FEC encoding (zero overhead mode).
+        Used when network conditions are excellent (loss < 1%).
+
+        IMPORTANT: This mode still uses the same packet structure as FEC mode
+        but with k=m (no redundancy). Receiver handles k=m case by skipping FEC decode.
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB (Was 1MB)
+
+            # Increment model sequence
+            with self.seq_lock:
+                self.model_seq += 1
+                current_seq = self.model_seq
+
+            # Use same chunk structure as FEC mode for compatibility
+            # Split data into chunks of size (PAYLOAD_SIZE * k), then split each chunk into k blocks
+            chunk_size = self.PAYLOAD_SIZE * self.k
+            total_chunks = math.ceil(len(model_data) / chunk_size)
+            actual_bytes_sent = 0
+
+            # Batch pacing counter
+            packets_sent_in_batch = 0
+
+            for chunk_idx in range(total_chunks):
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = min(chunk_start + chunk_size, len(model_data))
+                chunk = model_data[chunk_start:chunk_end]
+
+                # Split chunk into k blocks (same as FEC mode)
+                block_size = math.ceil(len(chunk) / self.k)
+                chunk_padded = chunk + b"\0" * (block_size * self.k - len(chunk))
+
+                for block_idx in range(self.k):
+                    block = chunk_padded[block_idx * block_size : (block_idx + 1) * block_size]
+
+                    # Header: type, timestamp, model_seq, chunk_idx, total_chunks, block_idx, original_len, k, m, pad
+                    header = struct.pack(
+                        "!BdIIIIIBBB",
+                        self.PTYPE_DATA,
+                        time.time(),
+                        current_seq,
+                        chunk_idx,  # Correct chunk index
+                        total_chunks,  # Correct total chunks
+                        block_idx,  # Block index within chunk
+                        len(chunk),  # Original chunk length
+                        self.k,
+                        self.k,  # m = k (no parity)
+                        0,
+                    )
+                    packet = header + block
+                    sock.sendto(packet, (target_ip, target_port))
+                    actual_bytes_sent += len(packet)
+                    packets_sent_in_batch += 1
+
+                    # BATCH PACING: Sleep after every BATCH_SIZE packets
+                    if self.pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
+                        time.sleep(self.pacing_delay * self.BATCH_SIZE)
+                        packets_sent_in_batch = 0
+
+            # Send END packet
+            end_header = struct.pack("!BdIIIIIBBB", self.PTYPE_END, time.time(), current_seq, 0, total_chunks, 0, 0, self.k, self.k, 0)
+            sock.sendto(end_header, (target_ip, target_port))
+
+            sock.close()
+
+            self.logger.info(f"📡 Sent model via UDP (NO-FEC) ({len(model_data)} bytes, {total_chunks} chunks, {total_chunks * self.k} packets) to {target_ip}:{target_port}")
+            self.stats["sent_models"] += 1
+            self.stats["bytes_sent"] += actual_bytes_sent
+            self._network_estimator.record_packet_result(True)
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send model via UDP (NO-FEC): {e}")
+            self.stats["sent_failed"] += 1
             self._network_estimator.record_packet_result(False)
             return False
 
@@ -377,8 +515,8 @@ class UDPModelSharing:
         self.sock.bind(("0.0.0.0", self.port))
         self.sock.settimeout(2.0)
 
-        # Increase receive buffer to 8MB to avoid OS-level drops
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+        # Increase receive buffer to 16MB to avoid OS-level drops
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)  # 16MB (Was 8MB)
 
         self.logger.info(f"UDP Listener (dispatcher) started on port {self.port}")
 
@@ -607,13 +745,31 @@ class UDPModelSharing:
             sender_k = state.get("sender_k", self.k)
             sender_m = state.get("sender_m", self.m)
 
-            # Create a decoder with sender's FEC params
-            decoder = zfec.Decoder(sender_k, sender_m)
-
             full_data = b""
             chunks_recovered_with_fec = 0
 
             sorted_chunk_indices = sorted(chunks.keys())
+
+            # ====== NO-FEC MODE (k=m): Skip FEC decode ======
+            if sender_k == sender_m:
+                self.logger.debug(f"NO-FEC mode detected (k=m={sender_k}), skipping FEC decode")
+                for i in sorted_chunk_indices:
+                    blocks_map = chunks[i]
+                    # Sort blocks by index and concatenate
+                    sorted_blocks = [blocks_map[b_idx] for b_idx in sorted(blocks_map.keys())]
+                    chunk_data = b"".join(sorted_blocks)
+                    original_len = meta[i]["len"]
+                    chunk_data = chunk_data[:original_len]
+                    full_data += chunk_data
+
+                self.logger.debug(f"✅ Reassembled model (NO-FEC) ({len(full_data)} bytes)")
+                return full_data
+
+            # ====== FEC MODE (k<m): Use FEC decode ======
+            # Create a decoder with sender's FEC params
+            decoder = zfec.Decoder(sender_k, sender_m)
+            fec_decode_start = time.time()  # FEC デコード時間計測開始
+
             for i in sorted_chunk_indices:
                 blocks_map = chunks[i]
                 blocks = []
@@ -635,13 +791,18 @@ class UDPModelSharing:
                 chunk_data = chunk_data[:original_len]
                 full_data += chunk_data
 
+            # FEC デコード時間計測終了
+            fec_decode_time_ms = (time.time() - fec_decode_start) * 1000
+            with self.stats_lock:
+                self.stats["fec_decode_time_ms"] += fec_decode_time_ms
+
             # Stats are tracked by _peer_worker_loop with proper locking
             if chunks_recovered_with_fec > 0:
                 with self.stats_lock:
                     self.stats["fec_recovery_success"] += chunks_recovered_with_fec
-                self.logger.info(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - FEC recovered {chunks_recovered_with_fec}/{len(sorted_chunk_indices)} chunks")
+                self.logger.info(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - FEC recovered {chunks_recovered_with_fec}/{len(sorted_chunk_indices)} chunks, decode={fec_decode_time_ms:.1f}ms")
             else:
-                self.logger.debug(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - no FEC recovery needed")
+                self.logger.debug(f"✅ Reassembled model ({len(full_data)} bytes, k={sender_k}, m={sender_m}) - no FEC recovery needed, decode={fec_decode_time_ms:.1f}ms")
 
             return full_data
         except Exception as e:

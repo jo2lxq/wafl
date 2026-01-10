@@ -30,8 +30,6 @@
     "rudp": {
       "enabled": true,
       "mode": "rudp",
-      "aging_limit": 0.5,
-      "window_size": 64,
       "max_retries": 20
     },
     "compression": {

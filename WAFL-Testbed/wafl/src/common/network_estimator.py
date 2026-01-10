@@ -50,7 +50,7 @@ class NetworkEstimator:
         # 平滑化されたメトリクス
         self._smoothed_loss_rate = 0.0
         self._smoothed_rtt = 100.0
-        self._smoothed_bandwidth = 10.0
+        self._smoothed_bandwidth = 5.0  # Balanced start (Was 10.0 -> 2.0 -> 5.0)
 
         # EMA (指数移動平均) 係数
         self._alpha = 0.2  # 新しい値の重み
@@ -121,6 +121,7 @@ class NetworkEstimator:
         """推奨 FEC parity 値を計算
 
         パケットロス率に基づいて冗長性を動的に決定する．
+        NACK ベースの動的調整を考慮し、最小限の冗長性で高い信頼性を実現する。
 
         Args:
             k: データパケット数
@@ -133,23 +134,38 @@ class NetworkEstimator:
 
         # パケットロス率に応じた冗長性
         # 目標: k 個のパケットで復元できる確率を 99% 以上に
-        if loss < 0.02:
-            # excellent: 25% 冗長性
-            parity_ratio = 0.25
+        # NOTE: parity=0 は NACK 再送のみに依存するため、最小 parity=1 を維持
+        if loss < 0.002:
+            # excellent (nearly perfect < 0.2%): 最小 FEC (1パケットのみ)
+            parity = 1
+        elif loss < 0.005:
+            # excellent (very low loss < 0.5%): 6.25% 冗長性 (1/16)
+            parity_ratio = 0.0625
+            parity = max(1, int(k * parity_ratio))
+        elif loss < 0.01:
+            # excellent/good boundary: 6.25% 冗長性
+            parity_ratio = 0.0625
+            parity = max(1, int(k * parity_ratio))
+        elif loss < 0.02:
+            # good: 12.5% 冗長性
+            parity_ratio = 0.125
+            parity = max(2, int(k * parity_ratio))
         elif loss < 0.05:
-            # good: 40% 冗長性
-            parity_ratio = 0.40
+            # good/fair: 25% 冗長性
+            parity_ratio = 0.25
+            parity = max(4, int(k * parity_ratio))
         elif loss < 0.10:
-            # fair: 60% 冗長性
-            parity_ratio = 0.60
+            # fair: 50% 冗長性
+            parity_ratio = 0.50
+            parity = max(8, int(k * parity_ratio))
         elif loss < 0.20:
-            # poor: 85% 冗長性
-            parity_ratio = 0.85
+            # poor: 75% 冗長性
+            parity_ratio = 0.75
+            parity = max(12, int(k * parity_ratio))
         else:
             # very poor: 100% 冗長性
             parity_ratio = 1.0
-
-        parity = max(2, int(k * parity_ratio))
+            parity = max(16, int(k * parity_ratio))
 
         # zfec の制約: k + parity <= 256
         if k + parity > 256:
@@ -173,8 +189,13 @@ class NetworkEstimator:
         packet_size = 1400
         window = int(bdp_bytes / packet_size)
 
-        # 制約: 4 <= window <= 128
-        return max(4, min(128, window))
+        # 制約: 4 <= window <= 4096 (Was 128)
+        final_window = max(4, min(4096, window))
+
+        # ログ出力 (計算過程を可視化)
+        self.logger.info(f"📈 Window size calc: BW={metrics.bandwidth_mbps:.2f}Mbps, RTT={metrics.rtt_ms:.1f}ms, BDP={bdp_bytes / 1024:.1f}KB -> window={final_window}")
+
+        return final_window
 
     def get_recommended_aging_limit(self) -> float:
         """推奨 Aging 制限を計算
@@ -188,6 +209,36 @@ class NetworkEstimator:
 
         # 上限: 10秒
         return min(10.0, aging_limit)
+
+    def get_recommended_pacing_delay(self) -> float:
+        """推奨パケットペーシング遅延を計算 (秒)
+
+        パケットロス率と帯域幅に基づいて決定．
+        バースト転送による輻輳を回避する．
+        """
+        metrics = self.get_metrics()
+        loss = metrics.packet_loss_rate
+        # bandwidth = metrics.bandwidth_mbps  # Unused for now
+
+        # Base pacing calculation:
+        # Prevent saturating the link instantaneously.
+        # Use a small sleep if loss rate is high.
+
+        if loss < 0.005:
+            # Excellent: No pacing (Full speed)
+            return 0.0
+        elif loss < 0.02:
+            # Good: Very slight pacing (0.1ms)
+            return 0.0001
+        elif loss < 0.05:
+            # Fair: Moderate pacing (0.5ms)
+            return 0.0005
+        else:
+            # Poor: Aggressive pacing (1ms - 2ms)
+            # Adjust based on bandwidth? Lower bandwidth needs more pacing?
+            # Actually, if bandwidth is low, we naturally block on socket buffer,
+            # but pacing helps avoid buffer bloat.
+            return 0.001 + (0.001 * loss * 10)  # Max ~2ms
 
 
 # グローバルインスタンス (シングルトン)
