@@ -10,7 +10,7 @@ import logging
 import struct
 import threading
 import time
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Set, Tuple
 
 from .erudp_protocol import DEFAULT_AGING_LIMIT, ERUDPSocket
 from .network_estimator import get_network_estimator
@@ -33,6 +33,10 @@ MSG_TYPE_ACK = 0x03  # 確認応答
 
 # メッセージヘッダサイズ: type(1) + length(4) = 5 bytes
 MSG_HEADER_SIZE = 5
+
+# RUDP recv() is implemented as a "read exactly N bytes" loop.
+# Requesting very large sizes can cause unnecessary blocking and timeouts.
+MODEL_RECV_CHUNK_SIZE = 4096
 
 
 # =============================================================================
@@ -125,6 +129,52 @@ class RUDPModelSharing:
             timeout=timeout,
         )
 
+        # Epoch-scoped connection management
+        # Requirement: reuse connections across epochs when possible; close only if unusable.
+        self._current_epoch: Optional[int] = None
+        self._epoch_addresses: Set[Tuple[str, int]] = set()
+
+    def begin_epoch(self, epoch_number: int) -> None:
+        """Epoch 開始通知（ログ・統計用）。
+
+        接続の剪定は contact pattern に基づく next epoch の接続予定が必要なため、
+        prune_for_next_epoch() を使用すること。
+        """
+        if self._current_epoch == epoch_number:
+            return
+        self._current_epoch = epoch_number
+        self._epoch_addresses.clear()
+        self.logger.info(f"🧭 RUDP epoch set to {epoch_number}")
+
+    def prune_for_next_epoch(self, *, next_epoch: int, keep_peer_ips: list[str]) -> dict:
+        """次 epoch の接続予定に合わせて接続プールを剪定する。
+
+        - 不健全な接続は常に閉じる
+        - 次 epoch で接続しないノードとの接続は（健全でも）閉じる
+        - 次 epoch で接続するノードの接続は可能なら維持する
+        """
+        uniq_keep_ips = sorted({ip for ip in keep_peer_ips if ip})
+        keep_addresses = {(ip, self.port) for ip in uniq_keep_ips}
+        stats = self._connection_pool.prune_for_next_epoch(keep_addresses)
+
+        keep_ip_sample = uniq_keep_ips[:5]
+        self.logger.info(
+            f"🧹 RUDP prune for next_epoch={next_epoch}: keep={len(keep_addresses)} (sample={keep_ip_sample}), "
+            f"before={stats.get('before')}, after={stats.get('after')}, closed_unhealthy={stats.get('closed_unhealthy')}, closed_unneeded={stats.get('closed_unneeded')}, "
+            f"kept_sample={stats.get('kept_sample')}, closed_unhealthy_sample={stats.get('closed_unhealthy_sample')}, closed_unneeded_sample={stats.get('closed_unneeded_sample')}"
+        )
+        self._current_epoch = next_epoch
+        self._epoch_addresses.clear()
+        return stats
+
+    def get_connection_pool_stats(self) -> dict:
+        return self._connection_pool.get_stats()
+
+    def _track_epoch_address(self, address: Tuple[str, int]) -> None:
+        if self._current_epoch is None:
+            return
+        self._epoch_addresses.add(address)
+
     def _create_socket(self) -> RUDPSocket:
         """モードに応じたソケットを作成する．"""
         if self.mode == "erudp":
@@ -193,20 +243,36 @@ class RUDPModelSharing:
     def _handle_connection(self, sock: RUDPSocket, peer_ip: str) -> None:
         """接続を処理する．"""
         try:
-            # メッセージヘッダを受信
-            header_data = sock.recv(MSG_HEADER_SIZE, timeout=self.timeout)
-            if len(header_data) < MSG_HEADER_SIZE:
-                return
+            # Keep the connection open to allow client-side connection pooling.
+            # The requester may reuse the same RUDP connection across epochs.
+            while self.running:
+                try:
+                    # Use a longer idle timeout than the per-packet timeout.
+                    # This improves connection reuse across epochs while still freeing resources.
+                    idle_timeout = max(float(self.timeout), 30.0)
+                    header_data = sock.recv(MSG_HEADER_SIZE, timeout=idle_timeout)
+                except TimeoutError:
+                    # Idle timeout: close the connection to free resources.
+                    break
 
-            msg_type, msg_length = struct.unpack("!BI", header_data)
+                if len(header_data) < MSG_HEADER_SIZE:
+                    break
 
-            if msg_type == MSG_TYPE_MDLREQ:
-                # モデル要求を処理
-                self._handle_mdlreq(sock, peer_ip)
+                msg_type, msg_length = struct.unpack("!BI", header_data)
 
-            elif msg_type == MSG_TYPE_MODEL:
-                # モデルデータを受信
-                self._handle_model_data(sock, peer_ip, msg_length)
+                if msg_type == MSG_TYPE_MDLREQ:
+                    # モデル要求を処理
+                    self._handle_mdlreq(sock, peer_ip)
+                    continue
+
+                if msg_type == MSG_TYPE_MODEL:
+                    # モデルデータを受信
+                    self._handle_model_data(sock, peer_ip, msg_length)
+                    continue
+
+                # Unknown message type: close to avoid desync.
+                self.logger.warning(f"Unexpected message type {msg_type} from {peer_ip}")
+                break
 
         except Exception as e:
             self.logger.error(f"Connection handler error: {e}")
@@ -251,20 +317,27 @@ class RUDPModelSharing:
         """モデルデータを受信する．"""
         try:
             # モデルデータを受信
-            data = b""
+            transfer_start = time.time()
+            data = bytearray()
             remaining = msg_length
 
             while remaining > 0:
-                chunk = sock.recv(min(remaining, 65535), timeout=self.timeout)
+                chunk = sock.recv(min(remaining, MODEL_RECV_CHUNK_SIZE), timeout=self.timeout)
                 if not chunk:
                     break
-                data += chunk
+                data.extend(chunk)
                 remaining -= len(chunk)
 
             if len(data) == msg_length:
-                self.logger.info(f"📦 Received model from {peer_ip} ({len(data)} bytes)")
+                payload = bytes(data)
+                self.logger.info(f"📦 Received model from {peer_ip} ({len(payload)} bytes)")
                 self.stats["received_models"] += 1
-                self.stats["bytes_received"] += len(data)
+                self.stats["bytes_received"] += len(payload)
+
+                # Receive-side transfer measurement for bandwidth estimation.
+                transfer_duration = time.time() - transfer_start
+                if transfer_duration > 0:
+                    self._network_estimator.record_transfer(len(payload), transfer_duration)
 
                 # ソケット統計を集約
                 sock_stats = sock.get_stats()
@@ -272,7 +345,7 @@ class RUDPModelSharing:
 
                 # コールバック呼び出し
                 if self.callback:
-                    self.callback(data, peer_ip)
+                    self.callback(payload, peer_ip)
             else:
                 self.logger.warning(f"Incomplete model data: {len(data)}/{msg_length}")
                 self.stats["timeout_models"] += 1
@@ -305,6 +378,7 @@ class RUDPModelSharing:
             成功した場合 True
         """
         address = (target_ip, target_port)
+        self._track_epoch_address(address)
         sock = None
         success = False  # 成功フラグ初期化
         try:
@@ -338,20 +412,21 @@ class RUDPModelSharing:
                 return False
 
             # モデルデータを受信
-            data = b""
+            data = bytearray()
             remaining = msg_length
 
             while remaining > 0:
-                chunk = sock.recv(min(remaining, 65535), timeout=self.timeout)
+                chunk = sock.recv(min(remaining, MODEL_RECV_CHUNK_SIZE), timeout=self.timeout)
                 if not chunk:
                     break
-                data += chunk
+                data.extend(chunk)
                 remaining -= len(chunk)
 
             if len(data) == msg_length:
-                self.logger.info(f"📦 Received model from {target_ip} ({len(data)} bytes) via MDLREQ response")
+                payload = bytes(data)
+                self.logger.info(f"📦 Received model from {target_ip} ({len(payload)} bytes) via MDLREQ response")
                 self.stats["received_models"] += 1
-                self.stats["bytes_received"] += len(data)
+                self.stats["bytes_received"] += len(payload)
 
                 # ソケット統計を集約
                 sock_stats = sock.get_stats()
@@ -363,11 +438,11 @@ class RUDPModelSharing:
 
                 # 受信バッファに格納
                 with self._received_models_lock:
-                    self._received_models[target_ip] = data
+                    self._received_models[target_ip] = payload
 
                 # コールバック呼び出し
                 if self.callback:
-                    self.callback(data, target_ip)
+                    self.callback(payload, target_ip)
 
                 self._network_estimator.record_packet_result(True)
                 success = True  # 成功フラグ
@@ -376,9 +451,9 @@ class RUDPModelSharing:
                 transfer_end = time.time()
                 transfer_duration = transfer_end - transfer_start
                 if transfer_duration > 0:
-                    bandwidth_mbps = (len(data) * 8 / 1_000_000) / transfer_duration
-                    self._network_estimator.record_transfer(len(data), transfer_duration)
-                    self.logger.info(f"📊 RUDP transfer stats: {len(data)} bytes in {transfer_duration * 1000:.1f}ms = {bandwidth_mbps:.2f} Mbps")
+                    bandwidth_mbps = (len(payload) * 8 / 1_000_000) / transfer_duration
+                    self._network_estimator.record_transfer(len(payload), transfer_duration)
+                    self.logger.info(f"📊 RUDP transfer stats: {len(payload)} bytes in {transfer_duration * 1000:.1f}ms = {bandwidth_mbps:.2f} Mbps")
 
                 return True
             else:
@@ -419,6 +494,7 @@ class RUDPModelSharing:
             成功した場合 True
         """
         address = (target_ip, target_port)
+        self._track_epoch_address(address)
         sock = None
         try:
             # 接続プールから接続を取得
@@ -431,6 +507,8 @@ class RUDPModelSharing:
                 return False
             connect_time = (time.time() - connect_start) * 1000
 
+            transfer_start = time.time()
+
             # モデルデータメッセージを送信
             header = struct.pack("!BI", MSG_TYPE_MODEL, len(model_data))
 
@@ -440,6 +518,9 @@ class RUDPModelSharing:
                 sock.send_with_fec(model_data)
             else:
                 sock.send(header + model_data)
+
+            transfer_end = time.time()
+            transfer_duration = transfer_end - transfer_start
 
             # ソケット統計を集約
             sock_stats = sock.get_stats()
@@ -457,8 +538,6 @@ class RUDPModelSharing:
             self.logger.info(f"📡 Sent model via RUDP ({len(model_data)} bytes) to {target_ip}:{target_port} (connect: {connect_time:.1f}ms)")
 
             # 帯域を記録（ウィンドウサイズ動的調整用）- 実際の転送時間を使用
-            transfer_end = time.time()
-            transfer_duration = transfer_end - connect_start
             if transfer_duration > 0:
                 bandwidth_mbps = (len(model_data) * 8 / 1_000_000) / transfer_duration
                 self._network_estimator.record_transfer(len(model_data), transfer_duration)

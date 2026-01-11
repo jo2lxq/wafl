@@ -55,12 +55,59 @@ class NetworkEstimator:
         # EMA (指数移動平均) 係数
         self._alpha = 0.2  # 新しい値の重み
 
+    def seed_metrics(self, *, loss_rate: float, rtt_ms: float, bandwidth_mbps: float) -> None:
+        """静的なネットワーク条件で推定器を初期化する。
+
+        ctrl 側が把握している rate/delay/loss をノード側に反映し、
+        起動直後から pacing/FEC/window の推奨値を現実の条件に合わせる。
+
+        Args:
+            loss_rate: パケットロス率 (0.0-1.0)
+            rtt_ms: RTT (ms)
+            bandwidth_mbps: 帯域 (Mbps)
+        """
+        # Sanitize
+        loss_rate = max(0.0, min(1.0, float(loss_rate)))
+        rtt_ms = max(1.0, float(rtt_ms))
+        bandwidth_mbps = max(0.01, float(bandwidth_mbps))
+
+        with self._lock:
+            self._smoothed_loss_rate = loss_rate
+            self._smoothed_rtt = rtt_ms
+            self._smoothed_bandwidth = bandwidth_mbps
+
+            # Seed short histories so get_metrics() jitter computation won't misbehave
+            self._packet_sent.clear()
+            self._packet_success.clear()
+            # Seed with WINDOW_SIZE/10 samples to avoid overweighting a single point
+            seed_n = max(5, min(20, self.WINDOW_SIZE // 5))
+            for _ in range(seed_n):
+                self._packet_sent.append(1)
+                self._packet_success.append(int(round((1.0 - loss_rate))))
+                self._rtt_samples.append(rtt_ms)
+                self._bandwidth_samples.append(bandwidth_mbps)
+
+        self.logger.info(f"📌 Seeded network metrics: loss={loss_rate * 100:.1f}%, RTT={rtt_ms:.1f}ms, BW={bandwidth_mbps:.2f}Mbps")
+
     def record_packet_result(self, success: bool) -> None:
         """パケット送信結果を記録"""
         with self._lock:
             self._packet_sent.append(1)
             self._packet_success.append(1 if success else 0)
             self._update_loss_rate()
+
+    def record_loss_rate_sample(self, loss_rate: float) -> None:
+        """パケットロス率の観測値を直接取り込む。
+
+        FEC 統計など、パケット単位の成功/失敗とは異なる集計から得られた
+        loss 観測値を推定器にフィードバックするために使う。
+
+        Args:
+            loss_rate: パケットロス率 (0.0-1.0)
+        """
+        loss_rate = max(0.0, min(1.0, float(loss_rate)))
+        with self._lock:
+            self._smoothed_loss_rate = self._alpha * loss_rate + (1 - self._alpha) * self._smoothed_loss_rate
 
     def record_rtt(self, rtt_ms: float) -> None:
         """RTT を記録"""
@@ -218,27 +265,35 @@ class NetworkEstimator:
         """
         metrics = self.get_metrics()
         loss = metrics.packet_loss_rate
-        # bandwidth = metrics.bandwidth_mbps  # Unused for now
+        bandwidth = metrics.bandwidth_mbps
 
         # Base pacing calculation:
         # Prevent saturating the link instantaneously.
         # Use a small sleep if loss rate is high.
 
+        # Loss-based baseline (keeps behavior similar to current implementation)
         if loss < 0.005:
-            # Excellent: No pacing (Full speed)
-            return 0.0
+            loss_based = 0.0
         elif loss < 0.02:
-            # Good: Very slight pacing (0.1ms)
-            return 0.0001
+            loss_based = 0.0001
         elif loss < 0.05:
-            # Fair: Moderate pacing (0.5ms)
-            return 0.0005
+            loss_based = 0.0005
         else:
-            # Poor: Aggressive pacing (1ms - 2ms)
-            # Adjust based on bandwidth? Lower bandwidth needs more pacing?
-            # Actually, if bandwidth is low, we naturally block on socket buffer,
-            # but pacing helps avoid buffer bloat.
-            return 0.001 + (0.001 * loss * 10)  # Max ~2ms
+            loss_based = 0.001 + (0.001 * loss * 10)  # Max ~2ms at loss~0.1
+
+        # Bandwidth-based pacing (avoid bursting far above rate limit)
+        # Approx packet time on the wire (assume ~1400B UDP packet)
+        # Use a conservative fraction to allow some kernel buffering but reduce bloat.
+        if bandwidth <= 0:
+            bw_based = 0.0
+        else:
+            packet_bits = 1400 * 8
+            packet_time = packet_bits / (bandwidth * 1_000_000)
+            bw_based = packet_time * 0.5
+
+        pacing = max(loss_based, bw_based)
+        # Clamp for safety
+        return max(0.0, min(0.02, pacing))
 
 
 # グローバルインスタンス (シングルトン)

@@ -128,6 +128,104 @@ class RUDPConnectionPool:
                     pass
                 self.logger.debug(f"Connection to {address} closed")
 
+    def close_unhealthy(self, addresses: list[Tuple[str, int]]) -> int:
+        """指定したアドレス群について、不健全な接続のみを閉じる。
+
+        epoch 境界などで「使えるなら使い回し、使えないなら閉じる」を実現するために利用。
+
+        Args:
+            addresses: [(ip, port), ...]
+
+        Returns:
+            閉じた接続数
+        """
+        to_close: list[Tuple[Tuple[str, int], RUDPSocket, str]] = []
+        with self._lock:
+            for addr in addresses:
+                if addr not in self._connections:
+                    continue
+                conn_info = self._connections[addr]
+                sock: RUDPSocket = conn_info["socket"]
+
+                is_healthy = sock._state == ConnectionState.ESTABLISHED and sock._running and sock.get_stats().get("max_retries_reached", 0) == 0
+
+                if not is_healthy:
+                    reason = f"unhealthy (state={sock._state}, running={sock._running})"
+                    to_close.append((addr, sock, reason))
+                    del self._connections[addr]
+
+        for addr, sock, reason in to_close:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            self.logger.debug(f"Closed connection to {addr}: {reason}")
+
+        return len(to_close)
+
+    def prune_for_next_epoch(self, keep_addresses: set[Tuple[str, int]]) -> dict:
+        """次 epoch で接続しないノードの接続を閉じ、併せて不健全な接続を閉じる。
+
+        「使える」= 次 epoch でも同じノードに接続する（= keep_addresses に含まれる）こと。
+        keep_addresses に含まれない接続は、健全であっても次 epoch で不要なので閉じる。
+
+        Args:
+            keep_addresses: 次 epoch で接続を維持したい (ip, port) の集合
+
+        Returns:
+            dict: {"kept": int, "closed_unhealthy": int, "closed_unneeded": int, "before": int, "after": int}
+        """
+        SAMPLE_SIZE = 5
+        to_close: list[Tuple[Tuple[str, int], RUDPSocket, str]] = []
+        kept_sample: list[str] = []
+        closed_unhealthy_sample: list[str] = []
+        closed_unneeded_sample: list[str] = []
+
+        with self._lock:
+            before = len(self._connections)
+            for addr, conn_info in list(self._connections.items()):
+                sock: RUDPSocket = conn_info["socket"]
+                is_healthy = sock._state == ConnectionState.ESTABLISHED and sock._running and sock.get_stats().get("max_retries_reached", 0) == 0
+
+                if not is_healthy:
+                    reason = f"unhealthy (state={sock._state}, running={sock._running})"
+                    to_close.append((addr, sock, reason))
+                    if len(closed_unhealthy_sample) < SAMPLE_SIZE:
+                        closed_unhealthy_sample.append(f"{addr[0]}:{addr[1]}")
+                    del self._connections[addr]
+                    continue
+
+                if addr not in keep_addresses:
+                    to_close.append((addr, sock, "unneeded for next epoch"))
+                    if len(closed_unneeded_sample) < SAMPLE_SIZE:
+                        closed_unneeded_sample.append(f"{addr[0]}:{addr[1]}")
+                    del self._connections[addr]
+
+            after = len(self._connections)
+            for addr in list(self._connections.keys())[:SAMPLE_SIZE]:
+                kept_sample.append(f"{addr[0]}:{addr[1]}")
+
+        closed_unhealthy = sum(1 for _, _, r in to_close if r.startswith("unhealthy"))
+        closed_unneeded = len(to_close) - closed_unhealthy
+
+        for addr, sock, reason in to_close:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            self.logger.debug(f"Pruned connection to {addr}: {reason}")
+
+        return {
+            "before": before,
+            "after": after,
+            "kept": after,
+            "closed_unhealthy": closed_unhealthy,
+            "closed_unneeded": closed_unneeded,
+            "kept_sample": kept_sample,
+            "closed_unhealthy_sample": closed_unhealthy_sample,
+            "closed_unneeded_sample": closed_unneeded_sample,
+        }
+
     def _evict_oldest(self) -> None:
         """最も古い接続を削除（ロック保持中に呼び出すこと）"""
         if not self._connections:

@@ -1,7 +1,7 @@
 {
   "epochs": {
-    "self": 4,
-    "wafl": 16
+    "self": 2,
+    "wafl": 8
   },
   "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
@@ -18,7 +18,8 @@
       "enabled": false
     },
     "udp": {
-      "enabled": true
+      "enabled": true,
+      "fec_m": "auto"
     },
     "compression": {
       "enabled": false,

@@ -21,7 +21,9 @@
       "enabled": false
     },
     "udp": {
-      "enabled": false
+      "enabled": false,
+      "fec_m": 16,
+      "max_packet_size": 1400
     },
     "rudp": {
       "enabled": true,

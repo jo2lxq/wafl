@@ -1,7 +1,7 @@
 {
   "epochs": {
-    "self": 4,
-    "wafl": 16
+    "self": 2,
+    "wafl": 8
   },
   "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
@@ -28,11 +28,11 @@
       "initial_method": "zlib"
     }
   },
-  "experiment_name": "Experiment 0: fair (TCP)",
+  "experiment_name": "Experiment 0: excellent (TCP)",
   "network_condition": {
     "enabled": true,
-    "rate": "3mbit",
-    "delay": "30ms",
-    "loss": "8%"
+    "rate": "10mbit",
+    "delay": "5ms",
+    "loss": "2%"
   }
 }

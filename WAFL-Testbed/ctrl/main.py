@@ -1545,6 +1545,12 @@ echo "TC applied successfully with peer filters"
                         self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
                     else:
                         self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
+
+                    # Verification-friendly snapshot (compact, with samples)
+                    running_sample = [f"{a.name}@{epochs_completed[a.name] + 1}" for a in self.agents if agent_status[a.name] == "RUNNING"][:5]
+                    idle_sample = [f"{a.name}@{epochs_completed[a.name]}" for a in self.agents if agent_status[a.name] == "IDLE"][:5]
+                    error_sample = [a.name for a in self.agents if agent_status[a.name] == "ERROR"][:5]
+                    self.logger.info(f"📍 Snapshot: min_epoch={min_epoch}, max_epoch={max_epoch}, RUNNING={running_count} (sample={running_sample}), IDLE={idle_count} (sample={idle_sample}), ERROR={error_count} (sample={error_sample})")
                     last_progress_log = elapsed_time
 
                 time.sleep(0.5)

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pickle
+import re
 import socket
 import threading
 import time
@@ -20,8 +21,20 @@ import torch.optim as optim
 from .compression_manager import CompressionManager
 from .logger import MetricsLogger
 from .net import Net
+from .network_estimator import get_network_estimator
 from .rudp_model_sharing import RUDPModelSharing
 from .udp_model_sharing import UDPModelSharing
+
+
+def _get_measured_network_quality() -> str:
+    """Return network quality based on per-node measured metrics.
+
+    IMPORTANT: Must not rely on ctrl-provided static network conditions.
+    """
+    try:
+        return get_network_estimator().get_metrics().get_quality_level()
+    except Exception:
+        return "poor"
 
 
 def background_deserialize(data: bytes, use_compression: bool) -> Any:
@@ -355,6 +368,55 @@ class ModelLearningUtils:
             n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
 
+            # Resolve current epoch peers (for connection management + logging)
+            peer_ips: list[str] = []
+            missing_ip_neighbours: list[int] = []
+            for n in neighbours:
+                ip = self.ctrl_tcp.get_device_ip(n)
+                if ip:
+                    peer_ips.append(ip)
+                else:
+                    missing_ip_neighbours.append(n)
+
+            # Resolve next epoch peers from contact pattern (if available)
+            next_peer_ips: list[str] = []
+            next_missing_ip_neighbours: list[int] = []
+            try:
+                cur_idx = int(five_digit_number_str)
+                next_idx = cur_idx + 1
+                if isinstance(self.neighbour_map, list) and 0 <= next_idx < len(self.neighbour_map):
+                    next_neighbours = self.neighbour_map[next_idx].get(str(self.model_sharing.agent_index), [])
+                    for n in next_neighbours:
+                        ip = self.ctrl_tcp.get_device_ip(n)
+                        if ip:
+                            next_peer_ips.append(ip)
+                        else:
+                            next_missing_ip_neighbours.append(n)
+            except Exception as e:
+                self.logger.debug(f"Failed to resolve next epoch neighbours: {e}")
+
+            # Measured network metrics (per-node)
+            try:
+                m = get_network_estimator().get_metrics()
+                q = m.get_quality_level()
+                self.logger.info(
+                    f"🧭 Epoch plan: idx={five_digit_number_str}, neighbours={n_nbr}, peers_resolved={len(peer_ips)}, missing_ip={len(missing_ip_neighbours)}, "
+                    f"next_peers={len(next_peer_ips)}, measured(q={q}, loss={m.packet_loss_rate * 100:.2f}%, rtt={m.rtt_ms:.1f}ms, bw={m.bandwidth_mbps:.2f}Mbps)"
+                )
+            except Exception:
+                self.logger.info(f"🧭 Epoch plan: idx={five_digit_number_str}, neighbours={n_nbr}, peers_resolved={len(peer_ips)}, missing_ip={len(missing_ip_neighbours)}, next_peers={len(next_peer_ips)}")
+
+            if missing_ip_neighbours:
+                self.logger.warning(f"⚠️ Neighbours with missing IP mapping (first 5): {missing_ip_neighbours[:5]}")
+            if next_missing_ip_neighbours:
+                self.logger.warning(f"⚠️ Next-epoch neighbours with missing IP mapping (first 5): {next_missing_ip_neighbours[:5]}")
+
+            # Epoch start hook (for RUDP logging only)
+            try:
+                self.model_sharing.on_epoch_start(epoch=display_epoch, planned_peer_ips=peer_ips)
+            except Exception as e:
+                self.logger.debug(f"on_epoch_start hook failed: {e}")
+
             # Measure communication time for model exchange
             # Includes overhead, waiting time, and processing
             comm_start_time = time.time()
@@ -388,7 +450,7 @@ class ModelLearningUtils:
 
                 # Use the configured timeout from ModelSharingUtils
                 # This ensures we don't wait longer than the allowed epoch timeout
-                strict_timeout = self.model_sharing.timeout
+                strict_timeout = self.model_sharing.get_parallel_fetch_timeout()
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     future_to_nbr = {executor.submit(fetch_from_peer, n): n for n in neighbours}
@@ -453,6 +515,13 @@ class ModelLearningUtils:
 
             if not SELF_LEARN_FLAG:
                 raise Exception("SELF-LEARNING ERROR")
+
+            # Epoch end: prune RUDP connections based on next epoch planned peers.
+            try:
+                self.model_sharing.on_epoch_end(epoch=display_epoch, next_epoch_peer_ips=next_peer_ips)
+            except Exception as e:
+                self.logger.debug(f"on_epoch_end hook failed: {e}")
+
             self.logger.info(f"✅ Completed the WAFL-Learning Epoch: {display_epoch}")
             SUCCESS = True
         except Exception as exc:
@@ -524,19 +593,26 @@ class ModelSharingUtils:
                 udp_config = method_config.get("udp", {})
                 rudp_config = method_config.get("rudp", {})
                 comp_config = method_config.get("compression", {})
+                net_cond_config = params.get("network_condition", {})
 
                 # TCP is enabled by default if no explicit config (backward compatibility)
                 self.tcp_enabled = tcp_config.get("enabled", True) if tcp_config else True
 
                 self.udp_enabled = udp_config.get("enabled", False)
                 fec_m_config = udp_config.get("fec_m", 16)
+                self.udp_max_packet_size = udp_config.get("max_packet_size", None)
 
-                # Support "auto" or fixed integer value for fec_m
-                if fec_m_config == "auto":
-                    self.udp_fec_m = 16  # Optimal fixed value for all conditions
+                # UDP mode is supported only with adaptive settings.
+                # Enforce "auto" to avoid mismatched behavior (fixed values still drift due to estimator-based updates).
+                if self.udp_enabled:
+                    if fec_m_config != "auto":
+                        raise ValueError('UDP requires udp.fec_m="auto". Fixed UDP fec_m values are not supported.')
+
+                    # "auto" mode: keep k fixed and adjust parity/pacing dynamically.
+                    self.udp_fec_m = 16
                     self.udp_adaptive_fec = True
                 else:
-                    self.udp_fec_m = int(fec_m_config)
+                    self.udp_fec_m = 16
                     self.udp_adaptive_fec = False
 
                 # RUDP/E-RUDP settings
@@ -565,6 +641,60 @@ class ModelSharingUtils:
 
                 self.active_protocol = enabled_protocols[0]
                 self.logger.info(f"🔌 Active transport protocol: {self.active_protocol}")
+
+                # Seed NetworkEstimator from static network condition (initialization only).
+                # This avoids cold-start misconfiguration for UDP/RUDP adaptive parameters.
+                try:
+                    if isinstance(net_cond_config, dict) and net_cond_config.get("enabled", False):
+                        rate = str(net_cond_config.get("rate", "")).strip().lower()
+                        delay = str(net_cond_config.get("delay", "")).strip().lower()
+                        loss = str(net_cond_config.get("loss", "")).strip().lower()
+
+                        def _parse_rate_mbps(s: str) -> float:
+                            m = re.match(r"^\s*([0-9.]+)\s*(kbit|mbit|gbit)\s*$", s)
+                            if not m:
+                                return 0.0
+                            v = float(m.group(1))
+                            unit = m.group(2)
+                            if unit == "kbit":
+                                return v / 1000.0
+                            if unit == "mbit":
+                                return v
+                            if unit == "gbit":
+                                return v * 1000.0
+                            return 0.0
+
+                        def _parse_delay_ms(s: str) -> float:
+                            m = re.match(r"^\s*([0-9.]+)\s*ms\s*$", s)
+                            if m:
+                                return float(m.group(1))
+                            m = re.match(r"^\s*([0-9.]+)\s*s\s*$", s)
+                            if m:
+                                return float(m.group(1)) * 1000.0
+                            return 0.0
+
+                        def _parse_loss_rate(s: str) -> float:
+                            m = re.match(r"^\s*([0-9.]+)\s*%\s*$", s)
+                            if m:
+                                return float(m.group(1)) / 100.0
+                            try:
+                                v = float(s)
+                                # allow either 0-1 or 0-100
+                                return v / 100.0 if v > 1.0 else v
+                            except Exception:
+                                return 0.0
+
+                        bw = _parse_rate_mbps(rate)
+                        one_way_ms = _parse_delay_ms(delay)
+                        # Assume delay is one-way; RTT ~ 2x
+                        rtt_ms = max(1.0, one_way_ms * 2.0) if one_way_ms > 0 else 0.0
+                        loss_rate = _parse_loss_rate(loss)
+
+                        if bw > 0 and rtt_ms > 0:
+                            get_network_estimator().seed_metrics(loss_rate=loss_rate, rtt_ms=rtt_ms, bandwidth_mbps=bw)
+                            self.logger.info(f"🧪 Seeded estimator from network_condition: rate={rate}, delay={delay}, loss={loss}")
+                except Exception as e:
+                    self.logger.debug(f"Failed to seed NetworkEstimator: {e}")
 
         except ValueError as e:
             # Re-raise protocol validation errors
@@ -620,9 +750,15 @@ class ModelSharingUtils:
 
         # Initialize UDP and Compression
         if self.udp_enabled:
-            mode_str = "Auto" if self.udp_adaptive_fec else "Fixed"
-            self.logger.info(f"🚀 UDP Enabled (FEC M={self.udp_fec_m}, Mode={mode_str})")
-            self.udp_sharing = UDPModelSharing(self.addr, self.port, fec_m=self.udp_fec_m, timeout=self.udp_model_completion_timeout, inter_packet_timeout=self.udp_inter_packet_timeout)
+            self.logger.info(f"🚀 UDP Enabled (FEC M={self.udp_fec_m}, Mode=Auto)")
+            self.udp_sharing = UDPModelSharing(
+                self.addr,
+                self.port,
+                fec_m=self.udp_fec_m,
+                timeout=self.udp_model_completion_timeout,
+                inter_packet_timeout=self.udp_inter_packet_timeout,
+                max_packet_size=self.udp_max_packet_size,
+            )
             # Start listener callback for model data
             self.udp_sharing.start_listener(self._on_udp_model_received)
             # Register MDLREQ callback for pure UDP model requests
@@ -633,7 +769,13 @@ class ModelSharingUtils:
         # Initialize RUDP/E-RUDP
         if self.rudp_enabled:
             # Load RUDP timeouts from config (use model_fetch timeout if not specified)
-            rudp_send_timeout = timeouts_config.get("rudp_send", self.model_fetch_timeout)
+            # NOTE: WAFL parallel model fetch uses a strict ThreadPool wait() timeout.
+            # If RUDP timeout is smaller than the model-completion budget, in-flight
+            # transfers get cancelled mid-flight and inflate timeout_models.
+            rudp_send_timeout = max(
+                float(timeouts_config.get("rudp_send", self.model_fetch_timeout)),
+                float(self.udp_model_completion_timeout),
+            )
 
             mode_display = "E-RUDP" if self.rudp_mode == "erudp" else "RUDP"
             self.logger.info(f"🚀 {mode_display} Enabled (max_retries={self.rudp_max_retries}, dynamic params)")
@@ -660,12 +802,29 @@ class ModelSharingUtils:
             self.logger.info(f"🗜️ Compression Enabled (Initial: {self.initial_comp_method})")
             self.compression_manager = CompressionManager(initial_method=self.initial_comp_method)
         else:
-            self.logger.info("Compression Disabled")
-            self.compression_manager = None
+            # Auto-enable compression (compression-only; no quantization) for low-quality networks
+            # This is intentionally limited to UDP/RUDP where bandwidth dominates and where we
+            # want UDP/RUDP to outperform TCP under fair/poor conditions.
+            auto_enable = False
+            try:
+                measured_quality = _get_measured_network_quality()
+                if (self.udp_enabled or self.rudp_enabled) and (measured_quality in ("fair", "poor")):
+                    auto_enable = True
+            except Exception:
+                auto_enable = False
+
+            if auto_enable:
+                self.initial_comp_method = "adaptive" if self.initial_comp_method == "zlib" else self.initial_comp_method
+                self.logger.info(f"🗜️ Compression Auto-Enabled for {self.active_protocol} (measured_quality={_get_measured_network_quality()}, initial={self.initial_comp_method})")
+                self.compression_manager = CompressionManager(initial_method=self.initial_comp_method)
+            else:
+                self.logger.info("Compression Disabled")
+                self.compression_manager = None
 
         # UDP Received models buffer
         self.received_models = {}  # {ip: data}
         self.received_models_lock = threading.Lock()
+        self.received_models_cv = threading.Condition(self.received_models_lock)
 
         # Async Deserialization Executor
         self.executor = ProcessPoolExecutor(max_workers=2)
@@ -725,8 +884,9 @@ class ModelSharingUtils:
         # Submit deserialization task to background process
         future = self.executor.submit(background_deserialize, data, use_compression)
 
-        with self.received_models_lock:
+        with self.received_models_cv:
             self.received_models[source_ip] = future
+            self.received_models_cv.notify_all()
 
     def _on_udp_mdlreq(self, requester_ip: str):
         """
@@ -771,8 +931,9 @@ class ModelSharingUtils:
         # Submit deserialization task to background process
         future = self.executor.submit(background_deserialize, data, use_compression)
 
-        with self.received_models_lock:
+        with self.received_models_cv:
             self.received_models[source_ip] = future
+            self.received_models_cv.notify_all()
 
     def _on_rudp_mdlreq(self, requester_ip: str) -> bytes:
         """
@@ -859,29 +1020,35 @@ class ModelSharingUtils:
 
                 self.logger.debug(f"📡 UDP MDLREQ sent to {peer_IP}, waiting for UDP model...")
 
-                # Wait for UDP data using configured timeout
+                # Wait for UDP data using configured timeout (no busy-wait)
                 start_wait = time.time()
-                while time.time() - start_wait < self.udp_model_completion_timeout:
-                    with self.received_models_lock:
-                        if peer_IP in self.received_models:
-                            data_or_future = self.received_models.pop(peer_IP)
-                            elapsed = time.time() - start_wait
-                            self.logger.debug(f"📥 UDP model received from {peer_IP} in {elapsed:.2f}s, deserializing...")
+                deadline = start_wait + float(self.udp_model_completion_timeout)
+                data_or_future = None
+                with self.received_models_cv:
+                    while peer_IP not in self.received_models:
+                        remaining = deadline - time.time()
+                        if remaining <= 0:
+                            break
+                        self.received_models_cv.wait(timeout=min(0.2, remaining))
+                    if peer_IP in self.received_models:
+                        data_or_future = self.received_models.pop(peer_IP)
 
-                            # Handle async deserialization (Future) or raw bytes
-                            if isinstance(data_or_future, (bytes, bytearray)):
-                                return True, self._deserialize_model(data_or_future)
-                            else:
-                                try:
-                                    deserialized_output = data_or_future.result(timeout=10.0)
-                                    if isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR"):
-                                        self.logger.error("Async deserialization returned ERROR")
-                                        return False, b"ERROR"
-                                    return True, deserialized_output
-                                except Exception as e:
-                                    self.logger.error(f"Async deserialization failed or timed out: {e}")
-                                    return False, b"ERROR"
-                    time.sleep(0.02)  # 20ms polling for faster response
+                if data_or_future is not None:
+                    elapsed = time.time() - start_wait
+                    self.logger.debug(f"📥 UDP model received from {peer_IP} in {elapsed:.2f}s, deserializing...")
+
+                    # Handle async deserialization (Future) or raw bytes
+                    if isinstance(data_or_future, (bytes, bytearray)):
+                        return True, self._deserialize_model(data_or_future)
+                    try:
+                        deserialized_output = data_or_future.result(timeout=10.0)
+                        if isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR"):
+                            self.logger.error("Async deserialization returned ERROR")
+                            return False, b"ERROR"
+                        return True, deserialized_output
+                    except Exception as e:
+                        self.logger.error(f"Async deserialization failed or timed out: {e}")
+                        return False, b"ERROR"
 
                 # Timeout waiting for UDP model - NO TCP fallback
                 self.logger.warning(f"⚠️ UDP MDLREQ timeout waiting for {peer_IP} (>{self.udp_model_completion_timeout}s)")
@@ -904,32 +1071,42 @@ class ModelSharingUtils:
 
                 self.logger.debug(f"📡 {mode_name} MDLREQ sent to {peer_IP}, waiting for model...")
 
-                # Wait for RUDP data using configured timeout
+                # Wait for RUDP data using configured timeout (no busy-wait)
                 start_wait = time.time()
-                while time.time() - start_wait < self.model_fetch_timeout:
-                    with self.received_models_lock:
-                        if peer_IP in self.received_models:
-                            data_or_future = self.received_models.pop(peer_IP)
-                            elapsed = time.time() - start_wait
-                            self.logger.debug(f"📥 {mode_name} model received from {peer_IP} in {elapsed:.2f}s, deserializing...")
+                # NOTE: RUDPModelSharing.send_mdlreq() performs the full request/response exchange
+                # and uses its own completion timeout. Keep this wait aligned to avoid artificial
+                # failures when model_fetch_timeout is shorter than the transport budget.
+                transport_timeout = float(getattr(self.rudp_sharing, "timeout", 0.0) or 0.0)
+                deadline = start_wait + max(float(self.model_fetch_timeout), transport_timeout)
+                data_or_future = None
+                with self.received_models_cv:
+                    while peer_IP not in self.received_models:
+                        remaining = deadline - time.time()
+                        if remaining <= 0:
+                            break
+                        self.received_models_cv.wait(timeout=min(0.2, remaining))
+                    if peer_IP in self.received_models:
+                        data_or_future = self.received_models.pop(peer_IP)
 
-                            # Handle async deserialization (Future) or raw bytes
-                            if isinstance(data_or_future, (bytes, bytearray)):
-                                return True, self._deserialize_model(data_or_future)
-                            else:
-                                try:
-                                    deserialized_output = data_or_future.result(timeout=10.0)
-                                    if isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR"):
-                                        self.logger.error("Async deserialization returned ERROR")
-                                        return False, b"ERROR"
-                                    return True, deserialized_output
-                                except Exception as e:
-                                    self.logger.error(f"Async deserialization failed or timed out: {e}")
-                                    return False, b"ERROR"
-                    time.sleep(0.02)  # 20ms polling for faster response
+                if data_or_future is not None:
+                    elapsed = time.time() - start_wait
+                    self.logger.debug(f"📥 {mode_name} model received from {peer_IP} in {elapsed:.2f}s, deserializing...")
+
+                    # Handle async deserialization (Future) or raw bytes
+                    if isinstance(data_or_future, (bytes, bytearray)):
+                        return True, self._deserialize_model(data_or_future)
+                    try:
+                        deserialized_output = data_or_future.result(timeout=10.0)
+                        if isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR"):
+                            self.logger.error("Async deserialization returned ERROR")
+                            return False, b"ERROR"
+                        return True, deserialized_output
+                    except Exception as e:
+                        self.logger.error(f"Async deserialization failed or timed out: {e}")
+                        return False, b"ERROR"
 
                 # Timeout waiting for RUDP model - NO TCP fallback
-                self.logger.warning(f"⚠️ {mode_name} MDLREQ timeout waiting for {peer_IP} (>{self.model_fetch_timeout}s)")
+                self.logger.warning(f"⚠️ {mode_name} MDLREQ timeout waiting for {peer_IP} (>{max(float(self.model_fetch_timeout), transport_timeout):.1f}s)")
                 return False, b"ERROR"
 
             except Exception as e:
@@ -951,7 +1128,8 @@ class ModelSharingUtils:
                 s.sendall(command.encode("utf-8"))
 
                 # Overall transfer deadline
-                transfer_deadline = time.time() + self.timeout
+                # Keep a single strict deadline for fairness across transports.
+                transfer_deadline = time.time() + float(self.timeout)
 
                 # Receive model data via TCP
                 data = []
@@ -975,9 +1153,9 @@ class ModelSharingUtils:
                         bytes_received_in_loop += len(packet)
                     except socket.timeout:
                         if time.time() > transfer_deadline:
-                            self.logger.warning(f"⏱️ TCP deadline exceeded during recv ({bytes_received_in_loop} bytes received)")
+                            self.logger.warning(f"⏱️ TCP strict deadline exceeded during recv ({bytes_received_in_loop} bytes received)")
                             raise TimeoutError(f"TCP transfer deadline exceeded ({self.timeout}s)")
-                        raise TimeoutError(f"TCP recv timeout, aborting transfer ({bytes_received_in_loop} bytes received)")
+                        continue
 
                 data = b"".join(data)
                 self.tcp_stats["bytes_received"] += len(data)
@@ -1112,6 +1290,26 @@ class ModelSharingUtils:
                     time.sleep(1.0)
             self.logger.info("P2P listener thread has been terminated.")
 
+    def get_parallel_fetch_timeout(self) -> float:
+        """Return the strict timeout used by the WAFL ThreadPool wait().
+
+        This must be >= the transport's own completion/receive timeout; otherwise
+        the WAFL loop cancels in-flight UDP/RUDP transfers and survival/timeout
+        metrics become artificially worse.
+        """
+        base = float(self.timeout) if self.timeout is not None else 0.0
+
+        if self.udp_enabled and self.udp_sharing is not None:
+            udp_timeout = float(getattr(self.udp_sharing, "timeout", 0.0) or 0.0)
+            udp_completion = float(getattr(self, "udp_model_completion_timeout", 0.0) or 0.0)
+            return max(base, udp_timeout, udp_completion)
+
+        if self.rudp_enabled and self.rudp_sharing is not None:
+            rudp_timeout = float(getattr(self.rudp_sharing, "timeout", 0.0) or 0.0)
+            return max(base, rudp_timeout)
+
+        return base
+
     def update_model_instance(self, LE_model: Any, metadata: str = "", epoch_number: int = 0) -> None:
         """
         Updates the WAFL model instance that is
@@ -1126,7 +1324,94 @@ class ModelSharingUtils:
         self.vMODEL_INSTANCE_CACHE = None
         self.vMODEL_METADATA = metadata
         self.vMODEL_EPOCH = epoch_number
+
+        # Epoch hook: ensure RUDP reuses connections within the same epoch only.
+        if self.rudp_enabled and self.rudp_sharing is not None:
+            try:
+                self.rudp_sharing.begin_epoch(epoch_number)
+            except Exception as e:
+                self.logger.warning(f"Failed to notify RUDP epoch boundary: {e}")
         self.logger.debug(f"Updated model instance (epoch={epoch_number})")
+
+    def on_epoch_start(self, *, epoch: int, planned_peer_ips: list[str]) -> None:
+        """Epoch開始時の検証用ログと、プロトコル層への通知。"""
+        try:
+            m = get_network_estimator().get_metrics()
+            self.logger.info(
+                f"📣 Epoch start: epoch={epoch}, protocol={self.active_protocol}, planned_peers={len(planned_peer_ips)}, measured(q={m.get_quality_level()}, loss={m.packet_loss_rate * 100:.2f}%, rtt={m.rtt_ms:.1f}ms, bw={m.bandwidth_mbps:.2f}Mbps)"
+            )
+        except Exception:
+            self.logger.info(f"📣 Epoch start: epoch={epoch}, protocol={self.active_protocol}, planned_peers={len(planned_peer_ips)}")
+
+        if self.udp_enabled and self.udp_sharing is not None:
+            try:
+                self.logger.info(f"📶 UDP runtime: pacing={self.udp_sharing.pacing_delay * 1000:.2f}ms, k={self.udp_sharing.k}, m={self.udp_sharing.m}, parity={self.udp_sharing.parity}, payload={self.udp_sharing.PAYLOAD_SIZE}B")
+            except Exception:
+                pass
+
+        if self.rudp_enabled and self.rudp_sharing is not None:
+            try:
+                pool_stats = self.rudp_sharing.get_connection_pool_stats()
+                addrs = pool_stats.get("addresses", []) or []
+                addr_sample = [f"{a[0]}:{a[1]}" for a in addrs[:5]]
+                self.logger.info(f"📶 RUDP pool (pre-epoch): active={pool_stats.get('active_connections', 0)}, sample={addr_sample}")
+            except Exception:
+                pass
+
+        if self.compression_manager is not None:
+            try:
+                cstats = self.compression_manager.get_stats()
+                self.logger.info(f"🗜️ Compression runtime: method={cstats.get('method')}, ratio={cstats.get('compression_ratio'):.3f}, bw_est={cstats.get('bandwidth_est_mbps'):.2f}MB/s")
+            except Exception:
+                pass
+
+    def on_epoch_end(self, *, epoch: int, next_epoch_peer_ips: list[str]) -> None:
+        """Epoch終了時の検証用ログと、次epochに向けた接続剪定（RUDP）。"""
+        if self.rudp_enabled and self.rudp_sharing is not None:
+            try:
+                prune_stats = self.rudp_sharing.prune_for_next_epoch(next_epoch=epoch + 1, keep_peer_ips=next_epoch_peer_ips)
+                pool_stats = self.rudp_sharing.get_connection_pool_stats()
+                keep_sample = sorted({ip for ip in next_epoch_peer_ips if ip})[:5]
+                self.logger.info(
+                    f"📦 RUDP epoch end: epoch={epoch}, next_keep={len(next_epoch_peer_ips)} (sample={keep_sample}), "
+                    f"before={prune_stats.get('before')}, after={prune_stats.get('after')}, kept={prune_stats.get('kept')}, "
+                    f"closed_unhealthy={prune_stats.get('closed_unhealthy')} (sample={prune_stats.get('closed_unhealthy_sample')}), "
+                    f"closed_unneeded={prune_stats.get('closed_unneeded')} (sample={prune_stats.get('closed_unneeded_sample')}), "
+                    f"pool_after={pool_stats.get('active_connections', 0)} (kept_sample={prune_stats.get('kept_sample')})"
+                )
+            except Exception as e:
+                self.logger.warning(f"RUDP prune_for_next_epoch failed: {e}")
+
+        # Emit compact per-epoch protocol summary for verification
+        try:
+            if self.udp_enabled and self.udp_sharing is not None:
+                s = self.udp_sharing.stats
+                self.logger.info(
+                    f"📊 UDP summary: sent={s.get('sent_models')}, failed={s.get('sent_failed')}, received={s.get('received_models')}, "
+                    f"timeout_models={s.get('timeout_models')}, fec_ok={s.get('fec_recovery_success')}, fec_fail={s.get('fec_recovery_fail')}, chunks_decoded={s.get('chunks_decoded')}, bytes_sent={s.get('bytes_sent')}, bytes_recv={s.get('bytes_received')}"
+                )
+            elif self.rudp_enabled and self.rudp_sharing is not None:
+                s = self.rudp_sharing.get_stats()
+                self.logger.info(
+                    f"📊 RUDP summary: sent={s.get('sent_models')}, failed={s.get('sent_failed')}, received={s.get('received_models')}, "
+                    f"timeout_models={s.get('timeout_models')}, retrans={s.get('retransmissions')}, max_retries_reached={s.get('max_retries_reached')}, bytes_sent={s.get('bytes_sent')}, bytes_recv={s.get('bytes_received')}"
+                )
+            else:
+                s = self.tcp_stats
+                self.logger.info(f"📊 TCP summary: sent_models={s.get('models_sent')}, recv_models={s.get('models_received')}, fetch_failed={s.get('fetch_failed')}, bytes_sent={s.get('bytes_sent')}, bytes_recv={s.get('bytes_received')}")
+        except Exception:
+            pass
+
+        if self.compression_manager is not None:
+            try:
+                estats = self.compression_manager.get_epoch_stats()
+                cstats = self.compression_manager.get_stats()
+                self.logger.info(
+                    f"🗜️ Compression epoch summary: method={cstats.get('method')}, ratio={estats.get('ratio', 1.0):.3f}, "
+                    f"count={estats.get('compression_count', 0)}, orig={estats.get('original_size', 0)}, comp={estats.get('compressed_size', 0)}, time_ms={estats.get('time_ms', 0):.1f}"
+                )
+            except Exception:
+                pass
 
     def request_model_from_peer(self, peer_IP: str, other_options: str = "", max_retries: int = 1) -> Any:
         """
@@ -1319,8 +1604,9 @@ class ModelSharingUtils:
             packet_loss = self._calculate_packet_loss()
             if packet_loss > 0:
                 self.logger.info(f"📊 Epoch packet loss: {packet_loss:.1%}")
-            # DISABLED: Dynamic parameter adjustment
-            # self._update_adaptive_fec(packet_loss)
+            # Dynamic parameter adjustment is only enabled for UDP adaptive-FEC mode.
+            if getattr(self, "udp_adaptive_fec", False):
+                self._update_adaptive_fec(packet_loss)
 
         # Reset epoch-level statistics after collecting
         self._reset_epoch_stats()
@@ -1346,6 +1632,7 @@ class ModelSharingUtils:
                 "fec_recovery_success": 0,
                 "fec_recovery_fail": 0,
                 "total_chunks_received": 0,
+                "chunks_decoded": 0,
                 "failed_chunks": 0,
                 "timeout_models": 0,
                 "bytes_sent": 0,
@@ -1397,7 +1684,9 @@ class ModelSharingUtils:
             return 0.0
 
         stats = self.udp_sharing.stats
-        total_chunks = stats.get("total_chunks_received", 0)
+        # NOTE: UDPModelSharing historically incremented total_chunks_received per packet.
+        # Use chunk-level counter when available for a meaningful denominator.
+        total_chunks = stats.get("chunks_decoded", 0) or stats.get("total_chunks_received", 0)
         fec_success = stats.get("fec_recovery_success", 0)  # Chunks recovered via FEC
         fec_fail = stats.get("fec_recovery_fail", 0)  # Chunks that failed FEC decode
         timeout_models = stats.get("timeout_models", 0)  # Complete model timeouts
@@ -1450,91 +1739,26 @@ class ModelSharingUtils:
         if not self.udp_adaptive_fec or self.udp_sharing is None:
             return
 
-        # Adaptive Logic based on Loss Tiers
-        # Goal: Maintain recovery despite packet loss
-        #
-        # CRITICAL OPTIMIZATION: Disable tier switching to prevent Pacing oscillation.
-        # Use fixed high-efficiency FEC (k=16, parity=2, ~12.5% overhead).
-        # RTT CC and NACK-based ARQ handle congestion and packet loss.
-        # This ensures stable Pacing and maximum throughput.
+        # Feed epoch-level loss observation into the shared NetworkEstimator.
+        # This keeps a single source of truth for parity/pacing/window recommendations.
+        get_network_estimator().record_loss_rate_sample(packet_loss)
 
-        # Fixed optimal parameters for all conditions
-
-        # Call update with both k and parity
-        # Ensure parity is at least 1
-
-        # Simplified Adaptive FEC: k is fixed, only adjust Parity based on Loss.
-        # This prevents oscillation and ensures efficiency.
-
-        # Note: packet_loss argument is already smoothed by _calculate_packet_loss
-
-        # Target k is fixed for optimal performance
+        # In auto mode we keep k fixed and allow parity/pacing to follow estimator recommendations.
         target_k = 16
-
-        # DYNAMIC LOSS-BASED PARAMETER ADJUSTMENT
-        # Strategy:
-        # - Low loss (< 5%): Lower Parity (8) for speed, longer timeout (12s) for reliability
-        # - High loss (>= 15%): Higher Parity (16) for recovery, shorter timeout (5s) for fail-fast
-        # - Parity Ratchet: Never decrease below max_observed_parity to prevent degradation
-
-        # Calculate target Parity based on measured loss
-        if packet_loss < 0.05:
-            # Excellent/Good: Lower overhead, higher success rate expected
-            base_parity = 8
-        elif packet_loss < 0.10:
-            # Moderate: Balanced overhead
-            base_parity = 10
-        elif packet_loss < 0.20:
-            # Fair: Higher overhead for recovery
-            base_parity = 12
-        else:
-            # Poor: Maximum redundancy
-            base_parity = 16
-
-        # TREND DETECTION: Preemptively adjust if loss is rising
-        loss_trend = packet_loss - self.previous_loss
-        if loss_trend > 0.03:  # Loss increasing by >3%
-            # Preemptively increase Parity to anticipate degradation
-            base_parity = min(16, base_parity + 2)
-            self.logger.debug(f"📈 Loss trend rising (+{loss_trend:.1%}), preemptive Parity bump to {base_parity}")
-        self.previous_loss = packet_loss
-
-        # PARITY RATCHET WITH DECAY
-        # - Never decrease below max_observed_parity (stability)
-        # - BUT: If conditions are stable, gradually reduce max_observed_parity (recovery)
-        if base_parity > self.max_observed_parity:
-            # Conditions worsening: Increase ratchet
-            self.max_observed_parity = base_parity
-            self.parity_decay_counter = 0  # Reset decay counter
-            self.logger.info(f"🔒 Parity Ratchet: Increased max to {self.max_observed_parity} (loss={packet_loss:.1%})")
-        elif base_parity < self.max_observed_parity:
-            # Conditions improving: Count towards decay
-            self.parity_decay_counter += 1
-            if self.parity_decay_counter >= self.PARITY_DECAY_EPOCHS:
-                # Decay ratchet by 1 (but not below base_parity or 10)
-                old_max = self.max_observed_parity
-                self.max_observed_parity = max(10, base_parity, self.max_observed_parity - 1)
-                self.parity_decay_counter = 0
-                if self.max_observed_parity != old_max:
-                    self.logger.info(f"🔓 Parity Ratchet Decay: {old_max} -> {self.max_observed_parity} (stable for {self.PARITY_DECAY_EPOCHS} epochs)")
-
-        target_parity = max(base_parity, self.max_observed_parity)
-
-        # Conservative startup: Use minimum Parity=8 until we have reliable loss data
-        if self.smoothed_packet_loss == 0.0:
-            target_parity = max(target_parity, 8)
-            self.logger.info(f"🛡️ Conservative FEC: No loss data yet, using Parity={target_parity}")
+        m = get_network_estimator().get_metrics()
+        target_parity = get_network_estimator().get_recommended_fec_parity(target_k)
 
         # DYNAMIC TIMEOUT ADJUSTMENT
-        # Low loss → longer timeout (more retries, higher success)
-        # High loss → shorter timeout (fail fast, proceed to next epoch)
-        # Note: With early exit at 80%, these act as maximum waits
+        # Keep timeout consistent with estimator RTT to avoid premature cancellation.
         if packet_loss < 0.05:
-            dynamic_timeout = 10.0  # Excellent/Good: Standard wait
+            dynamic_timeout = 10.0
         elif packet_loss < 0.15:
-            dynamic_timeout = 8.0  # Moderate: Balanced
+            dynamic_timeout = 8.0
         else:
-            dynamic_timeout = 6.0  # Fair/Poor: Fail fast
+            dynamic_timeout = 6.0
+
+        rtt_sec = (m.rtt_ms / 1000.0) if m.rtt_ms > 0 else 0.1
+        dynamic_timeout = max(dynamic_timeout, rtt_sec * 10)
 
         # Update UDPModelSharing timeout if changed significantly
         current_timeout = self.udp_sharing.timeout
@@ -1543,12 +1767,10 @@ class ModelSharingUtils:
             self.udp_model_completion_timeout = dynamic_timeout  # Also update local timeout
             self.logger.info(f"⏱️ Dynamic Timeout: {current_timeout:.1f}s -> {dynamic_timeout:.1f}s (loss={packet_loss:.1%})")
 
-        # Apply update if parity changed
+        # Sync parity to estimator recommendation (optional but makes changes visible immediately).
         current_parity = self.udp_sharing.parity
-
         if target_parity != current_parity:
-            self.logger.info(f"📊 Adaptive FEC: Loss={self.smoothed_packet_loss:.1%} -> Parity {current_parity}->{target_parity} (k={target_k})")
-            # Don't reset pacing, let RTT CC handle it
+            self.logger.info(f"📊 Adaptive UDP (auto): loss={packet_loss:.1%}, q={m.get_quality_level()}, RTT={m.rtt_ms:.1f}ms, BW={m.bandwidth_mbps:.2f}Mbps -> parity {current_parity}->{target_parity} (k={target_k})")
             self.udp_sharing.update_network_params(target_k, new_parity=target_parity)
             self.udp_fec_m = target_k
 

@@ -25,7 +25,8 @@
       "enabled": false
     },
     "udp": {
-      "enabled": true
+      "enabled": true,
+      "fec_m": "auto"
     },
     "compression": {
       "enabled": false,

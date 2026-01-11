@@ -18,10 +18,11 @@ class UDPModelSharing:
     Handles UDP-based model sharing with Forward Error Correction (FEC).
     """
 
-    MAX_PACKET_SIZE = 1400  # Safe MTU size
+    DEFAULT_MAX_PACKET_SIZE = 1400  # Safe MTU size
     # Header: type(1), timestamp(8), model_seq(4), chunk_idx(4), total_chunks(4), block_idx(4), original_len(4), k(1), m(1), pad(1) = 32 bytes
     HEADER_SIZE = 32
-    PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE
+    # NOTE: MAX_PACKET_SIZE/PAYLOAD_SIZE are instance-configurable to allow reducing packet count
+    # while keeping fragmentation risk under control.
 
     # Packet Types
     PTYPE_DATA = 0
@@ -34,9 +35,17 @@ class UDPModelSharing:
     MAX_RETRIES = 10  # Max NACK attempts (Increased for resilience)
     BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
 
-    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float):
+    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float, max_packet_size: int = None):
         self.ip = ip
         self.port = port
+
+        # Packet sizing
+        if max_packet_size is None:
+            max_packet_size = self.DEFAULT_MAX_PACKET_SIZE
+        # Clamp to a conservative range to avoid fragmentation on common paths
+        max_packet_size = int(max(800, min(1472, max_packet_size)))
+        self.MAX_PACKET_SIZE = max_packet_size
+        self.PAYLOAD_SIZE = self.MAX_PACKET_SIZE - self.HEADER_SIZE
 
         # FEC Settings
         # k: data packets per chunk
@@ -76,6 +85,7 @@ class UDPModelSharing:
             "fec_recovery_success": 0,
             "fec_recovery_fail": 0,
             "total_chunks_received": 0,
+            "chunks_decoded": 0,
             "failed_chunks": 0,  # Chunks that failed due to timeout (insufficient packets)
             "timeout_models": 0,  # Models that failed due to timeout
             "bytes_sent": 0,
@@ -102,7 +112,15 @@ class UDPModelSharing:
         # Multicast Settings
         self.mcast_ttl = 2
 
-        self.logger.info(f"UDPModelSharing initialized: k={self.k}, m={self.m} (parity={self.parity}), timeout={self.timeout}s, pacing={self.pacing_delay * 1000:.2f}ms")
+        self.logger.info(f"UDPModelSharing initialized: max_packet={self.MAX_PACKET_SIZE}B, payload={self.PAYLOAD_SIZE}B, k={self.k}, m={self.m} (parity={self.parity}), timeout={self.timeout}s, pacing={self.pacing_delay * 1000:.2f}ms")
+
+        # Encode cache (single-entry): the same model bytes are typically sent to multiple peers per epoch.
+        # Keyed by (id(model_data), k, m, payload_size).
+        self._last_encoded_model_id = None
+        self._last_encoded_params = None
+        self._last_encoded_chunks = None  # list[tuple[int, int, list[bytes]]]: (chunk_idx, original_len, blocks_out)
+        self._encode_cache_hits = 0
+        self._encode_cache_misses = 0
 
         # NACK Thread Pool (persistent, avoids thread creation overhead)
         self.nack_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="NACK")
@@ -179,7 +197,8 @@ class UDPModelSharing:
         """
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(1.0)
+            # Best-effort RTT probe; keep this short to avoid slowing fetch.
+            sock.settimeout(0.2)
 
             # Pack MDLREQ packet: type(1), timestamp(8), requester_ip as bytes (padded)
             # We encode the requester IP as a string in the payload
@@ -187,10 +206,25 @@ class UDPModelSharing:
             requester_bytes = requester_bytes[:32].ljust(32, b"\0")  # Pad or truncate to 32 bytes
 
             # Header: PTYPE_MDLREQ, timestamp, 0, 0, 0, 0, 0, 0, 0, 0
-            header = struct.pack("!BdIIIIIBBB", self.PTYPE_MDLREQ, time.time(), 0, 0, 0, 0, 0, 0, 0, 0)
+            req_ts = time.time()
+            header = struct.pack("!BdIIIIIBBB", self.PTYPE_MDLREQ, req_ts, 0, 0, 0, 0, 0, 0, 0, 0)
             packet = header + requester_bytes
 
             sock.sendto(packet, (target_ip, target_port))
+
+            # RTT probe: receiver echoes req_ts immediately via PTYPE_ACK.
+            # This measures real network RTT (not model completion time).
+            try:
+                data, _ = sock.recvfrom(self.MAX_PACKET_SIZE)
+                if len(data) >= self.HEADER_SIZE:
+                    ack_header = data[: self.HEADER_SIZE]
+                    ptype, echoed_ts, model_seq, *_ = struct.unpack("!BdIIIIIBBB", ack_header)
+                    if ptype == self.PTYPE_ACK and abs(echoed_ts - req_ts) < 0.5:
+                        rtt_sec = time.time() - echoed_ts
+                        if 0 < rtt_sec < 5.0:
+                            self._network_estimator.record_rtt(rtt_sec * 1000)
+            except socket.timeout:
+                pass
             sock.close()
 
             self.logger.debug(f"📬 Sent UDP MDLREQ to {target_ip}:{target_port} from {requester_ip}")
@@ -205,6 +239,7 @@ class UDPModelSharing:
         Sends serialized model data via UDP with FEC and Pacing.
         """
         try:
+            transfer_start = time.time()
             # 送信前に FEC パラメータを動的更新
             new_parity = self._network_estimator.get_recommended_fec_parity(self.k)
             if new_parity != self.parity:
@@ -270,7 +305,15 @@ class UDPModelSharing:
 
             # Track actual bytes sent (including FEC redundancy and headers)
             actual_bytes_sent = 0
-            fec_encode_start = time.time()  # FEC エンコード時間計測開始
+            fec_encode_time_ms = 0.0
+
+            cache_key = (id(model_data), int(self.k), int(self.m), int(self.PAYLOAD_SIZE))
+            use_cache = self._last_encoded_model_id == cache_key[0] and self._last_encoded_params == cache_key[1:] and self._last_encoded_chunks is not None
+
+            if use_cache:
+                self._encode_cache_hits += 1
+            else:
+                self._encode_cache_misses += 1
 
             # Parallel Encoding with Pipeline Parallelism
             # Send packets as soon as encoding completes (don't wait for all chunks)
@@ -278,37 +321,65 @@ class UDPModelSharing:
 
             num_workers = min(8, total_chunks) if total_chunks > 0 else 1  # 8 workers (Was 4)
 
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                # Submit all encoding tasks with chunk metadata
-                future_to_chunk = {}
-                for chunk_idx, blocks_in, original_len in chunks_data:
-                    future = executor.submit(self.encoder.encode, blocks_in)
-                    future_to_chunk[future] = (chunk_idx, original_len)
+            encoded_chunks = None
+            if use_cache:
+                encoded_chunks = self._last_encoded_chunks
+            else:
 
-                # Send loop with BATCH PACING and Pipeline Parallelism
-                # Use as_completed to send packets as soon as encoding finishes
+                def _encode_task(chunk_idx: int, blocks_in: list[bytes], original_len: int):
+                    t0 = time.time()
+                    blocks_out = self.encoder.encode(blocks_in)
+                    return chunk_idx, original_len, blocks_out, (time.time() - t0) * 1000
+
+                encoded_by_idx = {}
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    # Submit all encoding tasks with chunk metadata
+                    future_to_chunk = {}
+                    for chunk_idx, blocks_in, original_len in chunks_data:
+                        future = executor.submit(_encode_task, chunk_idx, blocks_in, original_len)
+                        future_to_chunk[future] = chunk_idx
+
+                    # Send loop with BATCH PACING and Pipeline Parallelism
+                    packets_sent_in_batch = 0
+                    for future in as_completed(future_to_chunk):
+                        chunk_idx, original_len, blocks_out, enc_ms = future.result()
+                        fec_encode_time_ms += float(enc_ms)
+                        encoded_by_idx[chunk_idx] = (original_len, blocks_out)
+
+                        for block_idx, block in enumerate(blocks_out):
+                            header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, self.m, 0)
+                            packet = header + block
+                            sock.sendto(packet, (target_ip, target_port))
+                            actual_bytes_sent += len(packet)
+                            packets_sent_in_batch += 1
+
+                            # BATCH PACING: Sleep after every BATCH_SIZE packets
+                            if self.pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
+                                time.sleep(self.pacing_delay * self.BATCH_SIZE)
+                                packets_sent_in_batch = 0
+
+                encoded_chunks = [(i, encoded_by_idx[i][0], encoded_by_idx[i][1]) for i in range(total_chunks) if i in encoded_by_idx]
+                self._last_encoded_model_id = cache_key[0]
+                self._last_encoded_params = cache_key[1:]
+                self._last_encoded_chunks = encoded_chunks
+
+            if use_cache:
+                # Send cached blocks in chunk order.
                 packets_sent_in_batch = 0
-                for future in as_completed(future_to_chunk):
-                    chunk_idx, original_len = future_to_chunk[future]
-                    blocks_out = future.result()
-
+                for chunk_idx, original_len, blocks_out in encoded_chunks:
                     for block_idx, block in enumerate(blocks_out):
-                        # Header: type(1), timestamp(8), model_seq(4), chunk_idx(4), total_chunks(4), block_idx(4), original_len(4), k(1), m(1), pad(1)
-                        # Padding last byte with 0
                         header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, self.m, 0)
                         packet = header + block
                         sock.sendto(packet, (target_ip, target_port))
                         actual_bytes_sent += len(packet)
                         packets_sent_in_batch += 1
 
-                        # BATCH PACING: Sleep after every BATCH_SIZE packets
                         if self.pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
                             time.sleep(self.pacing_delay * self.BATCH_SIZE)
                             packets_sent_in_batch = 0
 
-            # FEC エンコード時間計測終了（送信時間を除く純粋なエンコード時間は並列処理のため概算）
-            fec_encode_time_ms = (time.time() - fec_encode_start) * 1000
-            self.stats["fec_encode_time_ms"] += fec_encode_time_ms
+            # Record encode-only time (excludes send/pacing)
+            self.stats["fec_encode_time_ms"] += float(fec_encode_time_ms)
 
             # Send END packet for Fast NACK trigger
             # Header: PTYPE_END, ts, seq, 0, 0, 0, 0, 0, 0, 0
@@ -319,25 +390,31 @@ class UDPModelSharing:
             # For high-loss conditions (loss > 1%), send extra parity packets proactively
             # This reduces NACK round-trip latency
             loss_rate = metrics.packet_loss_rate if metrics.packet_loss_rate > 0 else 0.0
-            if loss_rate > 0.01 and self.parity > 0:
+            # NOTE: avoid expensive re-encoding; if enabled, duplicate already-encoded parity blocks.
+            # Keep this conservative: excellent/good should rely on estimator-selected parity.
+            if loss_rate > 0.08 and self.parity > 0 and encoded_chunks is not None:
                 import random
 
-                extra_redundancy = min(self.parity, 4)  # Send up to 4 extra packets per chunk
-                for chunk_idx, blocks_in, original_len in chunks_data:
-                    # Re-encode this chunk to get parity blocks
-                    blocks_out = self.encoder.encode(blocks_in)
-                    # Send random parity blocks (indices k to m-1)
-                    parity_indices = list(range(self.k, self.m))
-                    random.shuffle(parity_indices)
-                    for block_idx in parity_indices[:extra_redundancy]:
+                extra_redundancy = min(self.parity, 2)  # duplicate up to 2 parity blocks/chunk
+                parity_indices = list(range(self.k, self.m))
+                for chunk_idx, original_len, blocks_out in encoded_chunks:
+                    if not parity_indices:
+                        continue
+                    idxs = parity_indices.copy()
+                    random.shuffle(idxs)
+                    for block_idx in idxs[:extra_redundancy]:
                         block = blocks_out[block_idx]
                         header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, self.m, 0)
                         packet = header + block
                         sock.sendto(packet, (target_ip, target_port))
                         actual_bytes_sent += len(packet)
-                self.logger.debug(f"📦 Proactive redundancy: sent {extra_redundancy} extra blocks/chunk for {total_chunks} chunks")
+                self.logger.debug(f"📦 Proactive redundancy enabled (loss={loss_rate:.2%}): duplicated {extra_redundancy} parity blocks/chunk for {total_chunks} chunks")
 
             sock.close()
+
+            transfer_duration = time.time() - transfer_start
+            if transfer_duration > 0 and actual_bytes_sent > 0:
+                self._network_estimator.record_transfer(actual_bytes_sent, transfer_duration)
 
             total_packets = total_chunks * self.m
             fec_overhead_ratio = (actual_bytes_sent / len(model_data) - 1) * 100 if len(model_data) > 0 else 0
@@ -384,6 +461,7 @@ class UDPModelSharing:
         but with k=m (no redundancy). Receiver handles k=m case by skipping FEC decode.
         """
         try:
+            transfer_start = time.time()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB (Was 1MB)
 
@@ -442,6 +520,10 @@ class UDPModelSharing:
             sock.sendto(end_header, (target_ip, target_port))
 
             sock.close()
+
+            transfer_duration = time.time() - transfer_start
+            if transfer_duration > 0 and actual_bytes_sent > 0:
+                self._network_estimator.record_transfer(actual_bytes_sent, transfer_duration)
 
             self.logger.info(f"📡 Sent model via UDP (NO-FEC) ({len(model_data)} bytes, {total_chunks} chunks, {total_chunks * self.k} packets) to {target_ip}:{target_port}")
             self.stats["sent_models"] += 1
@@ -566,6 +648,14 @@ class UDPModelSharing:
                     requester_ip = payload.rstrip(b"\0").decode("utf-8")
                     self.logger.info(f"📬 UDP MDLREQ received from {peer_ip}, requester: {requester_ip}")
 
+                    # Immediate ACK to the source port for RTT probing (echo sender timestamp).
+                    # This enables correct RTT estimation on the requester side.
+                    try:
+                        ack_header = struct.pack("!BdIIIIIBBB", self.PTYPE_ACK, timestamp, model_seq, 0, 0, 0, 0, 0, 0, 0)
+                        self.sock.sendto(ack_header, addr)
+                    except Exception:
+                        pass
+
                     # Trigger MDLREQ callback if set
                     if hasattr(self, "mdlreq_callback") and self.mdlreq_callback:
                         try:
@@ -679,8 +769,27 @@ class UDPModelSharing:
                         with self.stats_lock:
                             self.stats["received_models"] += 1
 
-                        # Send ACK
-                        self._send_ack(peer_ip, model_seq, state["last_ts"])
+                        # Track chunk-level denominator for loss estimation.
+                        try:
+                            meta = state.get("meta") or {}
+                            if meta:
+                                first_meta = next(iter(meta.values()))
+                                total_chunks = int(first_meta.get("total", 0) or 0)
+                            else:
+                                total_chunks = 0
+                            if total_chunks > 0:
+                                with self.stats_lock:
+                                    self.stats["chunks_decoded"] += total_chunks
+                        except Exception:
+                            pass
+
+                        # Receive-side throughput estimate (payload-level).
+                        try:
+                            duration = time.time() - float(state.get("first_packet_time", time.time()))
+                            if duration > 0:
+                                self._network_estimator.record_transfer(len(model_data), duration)
+                        except Exception:
+                            pass
 
                         # Call callback
                         if self.callback:
@@ -908,9 +1017,16 @@ class UDPModelSharing:
     def _handle_ack(self, target_ip, model_seq, echoed_ts):
         """Update RTT metrics and Pacing."""
         now = time.time()
+        # Ignore invalid/stale timestamps to avoid poisoning the estimator.
+        if echoed_ts is None or echoed_ts <= 0:
+            return
+        if now - echoed_ts > 5.0:
+            return
         rtt = now - echoed_ts
         if rtt < 0:
             return  # Clock skew or error
+        if rtt > 5.0:
+            return
 
         # RTT を NetworkEstimator に記録
         self._network_estimator.record_rtt(rtt * 1000)  # ms 単位
