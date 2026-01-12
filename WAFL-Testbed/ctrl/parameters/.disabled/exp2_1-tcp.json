@@ -1,8 +1,8 @@
 {
   "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - TCP",
   "epochs": {
-    "self": 64,
-    "wafl": 2048
+    "self": 32,
+    "wafl": 1024
   },
   "contact_pattern": "sumo/contact_pattern_mobility.json",
   "wafl_phase": {
@@ -20,19 +20,5 @@
     "network_conditions_file": "sumo/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
-  "method": {
-    "ssp": {
-      "enabled": false
-    },
-    "tcp": {
-      "enabled": true
-    },
-    "udp": {
-      "enabled": false
-    },
-    "compression": {
-      "enabled": false,
-      "initial_method": "zlib"
-    }
-  }
+  "method": "tcp"
 }

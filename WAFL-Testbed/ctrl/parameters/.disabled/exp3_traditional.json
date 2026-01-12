@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 4: Integrated Scenario - Proposed Full (SSP + UDP + FEC + Adaptive Compression)",
+  "experiment_name": "Experiment 3: Integrated Scenario - Traditional (Strict Sync + TCP + zlib)",
   "epochs": {
     "self": 64,
     "wafl": 2048
@@ -20,18 +20,5 @@
     "network_conditions_file": "sumo_real/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
-  "method": {
-    "ssp": {
-      "enabled": true,
-      "ssp_threshold": 0.9
-    },
-    "udp": {
-      "enabled": true,
-      "fec_m": "auto"
-    },
-    "compression": {
-      "enabled": true,
-      "initial_method": "zlib"
-    }
-  }
+  "method": "tcp"
 }

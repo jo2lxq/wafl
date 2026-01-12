@@ -1,4 +1,5 @@
 {
+  "experiment_name": "Experiment 0: fair (UDP)",
   "epochs": {
     "self": 2,
     "wafl": 8
@@ -10,27 +11,14 @@
     "learning_rate": 0.001,
     "coefficiency": 1.0
   },
-  "mobility_aware": {
-    "enabled": false
-  },
-  "method": {
-    "ssp": {
-      "enabled": false
-    },
-    "udp": {
-      "enabled": true,
-      "fec_m": "auto"
-    },
-    "compression": {
-      "enabled": false,
-      "initial_method": "zlib"
-    }
-  },
-  "experiment_name": "Experiment 0: fair (UDP)",
   "network_condition": {
     "enabled": true,
     "rate": "3mbit",
     "delay": "30ms",
     "loss": "8%"
-  }
+  },
+  "mobility_aware": {
+    "enabled": false
+  },
+  "method": "udp"
 }

@@ -1,47 +1,13 @@
 {
+  "experiment_name": "Test Experiment",
   "epochs": {
-    "self": 2,
-    "wafl": 16
+    "self": 1,
+    "wafl": 1
   },
-  "contact_pattern": "contact_pattern/rgg_n10_a1000_s04_s01.json",
-  "wafl_phase": {
-    "aggregation_strategy": "FedAvg",
-    "batch_size": 32,
-    "learning_rate": 0.001,
-    "coefficiency": 1.0
-  },
-  "mobility_aware": {
+  "contact_pattern": "test.json",
+  "wafl_phase": {},
+  "network_condition": {
     "enabled": false
   },
-  "method": {
-    "ssp": {
-      "enabled": false
-    },
-    "tcp": {
-      "enabled": false
-    },
-    "udp": {
-      "enabled": false,
-      "fec_m": 16,
-      "max_packet_size": 1400
-    },
-    "rudp": {
-      "enabled": true,
-      "mode": "rudp",
-      "aging_limit": 0.5,
-      "window_size": 128,
-      "max_retries": 100
-    },
-    "compression": {
-      "enabled": false,
-      "initial_method": "zlib"
-    }
-  },
-  "experiment_name": "Experiment 0: excellent (RUDP)",
-  "network_condition": {
-    "enabled": true,
-    "rate": "10mbit",
-    "delay": "5ms",
-    "loss": "2%"
-  }
+  "method": "dynamic"
 }

@@ -220,6 +220,34 @@ class ModelLearningUtils:
             self.logger.error(f"Error retrieving neighbour list: {str(exc)[:100]}...")
         return neighbour_list
 
+    def _validate_model_weights(self, model: dict, peer_name: str) -> bool:
+        """
+        Validate model weights to prevent propagation of corrupted/exploding models.
+        Checks for NaN, Inf, and extremely large values.
+        """
+        try:
+            for key, tensor in model.items():
+                if not isinstance(tensor, torch.Tensor):
+                    continue
+
+                # specific check for float tensors
+                if tensor.is_floating_point():
+                    # Check for NaN/Inf
+                    if not torch.isfinite(tensor).all():
+                        self.logger.error(f"❌ Model validation failed for {peer_name}: NaN/Inf detected in {key}")
+                        return False
+
+                    # Check for exploding weights (absolute threshold)
+                    # Normal weights are usually < 10.0. A threshold of 1e5 is extremely safe.
+                    # 1e34 is definitely corruption.
+                    if tensor.abs().max() > 1e6:
+                        self.logger.error(f"❌ Model validation failed for {peer_name}: Exploding weights detected in {key} (max={tensor.abs().max():.2e})")
+                        return False
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ Error during model validation for {peer_name}: {e}")
+            return False
+
     def self_learn(self, five_digit_number_str: str = "99999", WAFL_LEARN=False) -> bool:
         """
         Implementation of the Self-Learning Epoch Logic for WAFL-MLP.
@@ -471,7 +499,11 @@ class ModelLearningUtils:
                         try:
                             neighbour, model = future.result()
                             if model is not None:
-                                received_models.append(model)
+                                # Validate received model to prevent corruption (Exploding Gradient/Weights)
+                                if self._validate_model_weights(model, neighbour):
+                                    received_models.append(model)
+                                else:
+                                    self.logger.warning(f"⚠️ Discarded corrupted model from {neighbour} (NaN/Inf or Exploding Weights)")
                         except Exception as e:
                             nbr = future_to_nbr[future]
                             self.logger.error(f"Error getting result from {nbr}: {e}")
@@ -584,63 +616,97 @@ class ModelSharingUtils:
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.debug("Initialized Model Sharing Utils")
 
+        # Initialize accumulators to avoid AttributeError if on_epoch_start is skipped (e.g. SELF phase)
+        self._last_reported_tcp = {}
+        self._last_reported_udp = {}
+        self._last_reported_rudp = {}
+        self.protocol_counts = {"TCP": 0, "UDP": 0, "RUDP": 0}
+
         # Load method settings from parameters.json
         try:
             with open("ctrl/parameters.json", "r") as f:
                 params = json.load(f)
-                method_config = params.get("method", {})
-                tcp_config = method_config.get("tcp", {})
-                udp_config = method_config.get("udp", {})
-                rudp_config = method_config.get("rudp", {})
-                comp_config = method_config.get("compression", {})
                 net_cond_config = params.get("network_condition", {})
+                # === New Schema Handling (String-based method) ===
+                method_val = params.get("method")
+                if isinstance(method_val, str):
+                    self.active_protocol = method_val  # "tcp", "udp", "rudp", "dynamic"
 
-                # TCP is enabled by default if no explicit config (backward compatibility)
-                self.tcp_enabled = tcp_config.get("enabled", True) if tcp_config else True
+                    # Set enabled flags based on active_protocol
+                    self.tcp_enabled = self.active_protocol in ["tcp", "dynamic"]
+                    self.udp_enabled = self.active_protocol in ["udp", "dynamic"]
+                    self.rudp_enabled = self.active_protocol == "rudp"
 
-                self.udp_enabled = udp_config.get("enabled", False)
-                fec_m_config = udp_config.get("fec_m", 16)
-                self.udp_max_packet_size = udp_config.get("max_packet_size", None)
+                    # Protocol specific configs
+                    # For simplify, we assume standard settings for now or load from root if desired.
+                    # Actually implementation plan said we remove specific sub-configs.
+                    # We just need to handle implicit settings.
 
-                # UDP mode is supported only with adaptive settings.
-                # Enforce "auto" to avoid mismatched behavior (fixed values still drift due to estimator-based updates).
-                if self.udp_enabled:
-                    if fec_m_config != "auto":
-                        raise ValueError('UDP requires udp.fec_m="auto". Fixed UDP fec_m values are not supported.')
+                    if self.udp_enabled:
+                        self.udp_fec_m = 16
+                        self.udp_adaptive_fec = True
+                        self.udp_max_packet_size = None
 
-                    # "auto" mode: keep k fixed and adjust parity/pacing dynamically.
-                    self.udp_fec_m = 16
-                    self.udp_adaptive_fec = True
+                    if self.rudp_enabled:
+                        self.rudp_mode = "rudp"
+                        self.rudp_max_retries = 20  # Standard default
+
+                    # Compression
+                    # For dynamic/udp, compression is usually off or auto?
+                    # Plan said compression disabled fixed.
+                    self.compression_enabled = False
+                    self.compression_enabled = False
+                    self.initial_comp_method = "zlib"
+
+                    # Last reported stats for delta calculation (Control Server polling)
+                    self._last_reported_tcp = {}
+                    self._last_reported_udp = {}
+                    self._last_reported_rudp = {}
+
+                    # Protocol usage tracking for Dynamic mode
+                    self.protocol_counts = {"TCP": 0, "UDP": 0, "RUDP": 0}
+
                 else:
-                    self.udp_fec_m = 16
-                    self.udp_adaptive_fec = False
+                    # === Backward Compatibility (Dict-based method) ===
+                    method_config = params.get("method", {})
+                    tcp_config = method_config.get("tcp", {})
+                    udp_config = method_config.get("udp", {})
+                    rudp_config = method_config.get("rudp", {})
+                    comp_config = method_config.get("compression", {})
 
-                # RUDP/E-RUDP settings
-                # aging_limit と window_size は動的調整されるため、デフォルト値を使用
-                self.rudp_enabled = rudp_config.get("enabled", False)
-                self.rudp_mode = rudp_config.get("mode", "rudp")  # "rudp" or "erudp"
-                self.rudp_max_retries = rudp_config.get("max_retries", 10)
+                    # TCP is enabled by default if no explicit config (backward compatibility)
+                    self.tcp_enabled = tcp_config.get("enabled", True) if tcp_config else True
 
-                self.compression_enabled = comp_config.get("enabled", False)
-                self.initial_comp_method = comp_config.get("initial_method", "zlib")
+                    self.udp_enabled = udp_config.get("enabled", False)
+                    fec_m_config = udp_config.get("fec_m", 16)
+                    self.udp_max_packet_size = udp_config.get("max_packet_size", None)
 
-                # Protocol validation: exactly one must be enabled
-                enabled_protocols = []
-                if self.tcp_enabled and not self.udp_enabled and not self.rudp_enabled:
-                    enabled_protocols.append("TCP")
-                if self.udp_enabled:
-                    enabled_protocols.append("UDP")
-                if self.rudp_enabled:
-                    proto_name = "E-RUDP" if self.rudp_mode == "erudp" else "RUDP"
-                    enabled_protocols.append(proto_name)
+                    if self.udp_enabled:
+                        if fec_m_config != "auto":
+                            # Warn instead of raise? No, strictly auto now.
+                            self.logger.warning('Fixed UDP fec_m values are deprecated. Forcing "auto".')
+                        self.udp_fec_m = 16
+                        self.udp_adaptive_fec = True
+                    else:
+                        self.udp_fec_m = 16
+                        self.udp_adaptive_fec = False
 
-                if len(enabled_protocols) == 0:
-                    raise ValueError("No transport protocol enabled. Set one of tcp.enabled, udp.enabled, or rudp.enabled to true.")
-                if len(enabled_protocols) > 1:
-                    raise ValueError(f"Multiple transport protocols enabled: {enabled_protocols}. Only one protocol can be enabled at a time.")
+                    self.rudp_enabled = rudp_config.get("enabled", False)
+                    self.rudp_mode = rudp_config.get("mode", "rudp")
+                    self.rudp_max_retries = rudp_config.get("max_retries", 10)
 
-                self.active_protocol = enabled_protocols[0]
-                self.logger.info(f"🔌 Active transport protocol: {self.active_protocol}")
+                    self.compression_enabled = comp_config.get("enabled", False)
+                    self.initial_comp_method = comp_config.get("initial_method", "zlib")
+
+                    # Deduce active protocol for compat
+                    if self.rudp_enabled:
+                        self.active_protocol = "RUDP"  # normalize?
+                    elif self.udp_enabled:
+                        self.active_protocol = "UDP"
+                    else:
+                        self.active_protocol = "TCP"
+
+                self.logger.info(f"🔌 Active transport protocol: {self.active_protocol} (TCP={self.tcp_enabled}, UDP={self.udp_enabled}, RUDP={self.rudp_enabled})")
 
                 # Seed NetworkEstimator from static network condition (initialization only).
                 # This avoids cold-start misconfiguration for UDP/RUDP adaptive parameters.
@@ -1008,8 +1074,52 @@ class ModelSharingUtils:
         In UDP mode, uses pure UDP for the entire exchange (no TCP handshake).
         In TCP mode, uses traditional TCP connection.
         """
+        # === Dynamic Protocol Selection ===
+        active_proto_for_call = str(self.active_protocol).upper()
+        if self.active_protocol == "dynamic":
+            try:
+                metrics = get_network_estimator().get_metrics(peer_ip=peer_IP)
+                quality = metrics.get_quality_level()
+            except Exception:
+                quality = "poor"
+
+                active_proto_for_call = "UDP"
+                self.logger.debug(f"⚖️ Dynamic: Using UDP for {peer_IP} (Quality: {quality})")
+
+            # Count protocol choice for reporting (e.g. "TCP", "UDP")
+            # Note: "E-RUDP" is counted as "RUDP" here unless we want separate?
+            # active_proto_for_call is "UDP" or "TCP". RUDP check is below.
+            # But wait, active_proto_for_call logic above is limiting.
+            # If dynamic, we only set to UDP or TCP?
+            # Ah, currently Dynamic Logic (lines 1046-1051) only chooses TCP or UDP?
+            # RUDP is handled by use_rudp check below?
+            # use_rudp = ("RUDP" in active_proto_for_call ...).
+            # If active_proto_for_call is "UDP", use_rudp check sees no "RUDP".
+            # So Dynamic logic currently only switches UDP/TCP?
+            # "Poor" -> "UDP" -> use_rudp=False?
+            # Wait, wafl_technical_spec says Poor -> RUDP.
+            # I need to fix the Dynamic Logic to support RUDP selection too!
+
+            # User Requirement: Excellent/Good -> TCP, Fair/Poor -> UDP
+            # Note: RUDP is disabled in dynamic mode, so we fallback to UDP even for Poor.
+            if quality in ("excellent", "good"):
+                active_proto_for_call = "TCP"
+            else:
+                active_proto_for_call = "UDP"
+
+            self.logger.debug(f"⚖️ Dynamic: Using {active_proto_for_call} for {peer_IP} (Quality: {quality})")
+
+            # Track count
+            if active_proto_for_call in self.protocol_counts:
+                self.protocol_counts[active_proto_for_call] += 1
+            else:
+                self.protocol_counts[active_proto_for_call] = 1  # Should not happen if init correct
+
+        use_udp = active_proto_for_call == "UDP" and self.udp_sharing is not None
+        use_rudp = ("RUDP" in active_proto_for_call or "E-RUDP" in active_proto_for_call) and self.rudp_sharing is not None
+
         # --- Pure UDP Mode: No TCP connection required ---
-        if self.udp_enabled and self.udp_sharing is not None:
+        if use_udp:
             try:
                 self.logger.debug(f"📤 Sending pure UDP MDLREQ to peer: {peer_IP}")
 
@@ -1059,7 +1169,7 @@ class ModelSharingUtils:
                 return False, b"ERROR"
 
         # --- RUDP/E-RUDP Mode: Reliable UDP with ARQ ---
-        if self.rudp_enabled and self.rudp_sharing is not None:
+        if use_rudp:
             try:
                 mode_name = "E-RUDP" if self.rudp_mode == "erudp" else "RUDP"
                 self.logger.debug(f"📤 Sending {mode_name} MDLREQ to peer: {peer_IP}")
@@ -1114,6 +1224,9 @@ class ModelSharingUtils:
                 return False, b"ERROR"
 
         # --- TCP Mode: Traditional TCP connection ---
+        # Fallback if protocols above not selected
+        # If RUDP is enabled but here? RUDP block ends with return.
+        # So this corresponds to TCP (or fallback).
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 self.logger.debug(f"📥 Requesting WAFL model from peer (TCP): {str(peer_IP)}")
@@ -1123,6 +1236,7 @@ class ModelSharingUtils:
 
                 # Use configured timeout for connection
                 s.settimeout(self.timeout)
+                start_tcp_transfer = time.time()  # Start timing for metrics
                 s.connect((peer_IP, self.port))
                 self.logger.debug(f"🔌 Connected to {peer_IP}:{self.port}, timeout={self.timeout}s")
                 s.sendall(command.encode("utf-8"))
@@ -1162,6 +1276,11 @@ class ModelSharingUtils:
                 self.tcp_stats["models_received"] += 1
                 self.logger.debug(f"📊 TCP stats updated: received={len(data)} bytes")
 
+                # Record successful transfer metrics
+                tcp_duration = time.time() - start_tcp_transfer
+                get_network_estimator().record_transfer(len(data), tcp_duration, peer_IP)
+                get_network_estimator().record_packet_result(True, peer_IP)
+
             data = self._deserialize_model(data)
             if data == b"ERROR" or data is None:
                 raise Exception("FETCH ERROR")
@@ -1169,9 +1288,11 @@ class ModelSharingUtils:
             return True, data
         except TimeoutError as te:
             self.logger.warning(f"⏱️ TCP timeout in _fetch_model: {te}")
+            get_network_estimator().record_packet_result(False, peer_IP)
             return False, b"ERROR"
         except Exception as exc:
             self.logger.error(f"The following error occurred in _fetch_model: {str(exc)[:100]}...")
+            get_network_estimator().record_packet_result(False, peer_IP)
             return False, b"ERROR"
 
     def _dispatch_model(self, conn: socket.socket, options: str) -> bool:
@@ -1345,7 +1466,7 @@ class ModelSharingUtils:
 
         if self.udp_enabled and self.udp_sharing is not None:
             try:
-                self.logger.info(f"📶 UDP runtime: pacing={self.udp_sharing.pacing_delay * 1000:.2f}ms, k={self.udp_sharing.k}, m={self.udp_sharing.m}, parity={self.udp_sharing.parity}, payload={self.udp_sharing.PAYLOAD_SIZE}B")
+                self.logger.info(f"📶 UDP runtime: k={self.udp_sharing.k}, payload={self.udp_sharing.PAYLOAD_SIZE}B (Dynamic Pacing/Parity)")
             except Exception:
                 pass
 
@@ -1364,6 +1485,9 @@ class ModelSharingUtils:
                 self.logger.info(f"🗜️ Compression runtime: method={cstats.get('method')}, ratio={cstats.get('compression_ratio'):.3f}, bw_est={cstats.get('bandwidth_est_mbps'):.2f}MB/s")
             except Exception:
                 pass
+
+        # Reset epoch statistics for the new epoch
+        self._reset_epoch_accumulators()
 
     def on_epoch_end(self, *, epoch: int, next_epoch_peer_ips: list[str]) -> None:
         """Epoch終了時の検証用ログと、次epochに向けた接続剪定（RUDP）。"""
@@ -1517,62 +1641,96 @@ class ModelSharingUtils:
         }
 
         # --- Survival Rate and Model Counts (Application Layer) ---
+        # --- Survival Rate and Model Counts (Application Layer) ---
         if self.rudp_sharing is not None:
             # RUDP/E-RUDP mode
-            rudp_stats = self.rudp_sharing.get_stats()
+            # Calculate Delta
+            current_rudp = self.rudp_sharing.get_stats()
+            delta_rudp = self._get_delta_stats(current_rudp, self._last_reported_rudp)
+            self._last_reported_rudp = current_rudp.copy()
+
+            # Survival rate should be calculated from cumulative or delta?
+            # It's a rate, so usually current epoch state.
+            # get_survival_rate() in rudp_sharing uses self.stats, which is now cumulative for the epoch.
+            # So reporting it directly is correct (Snapshot).
+
             metrics.update(
                 {
                     "survival_rate": self.rudp_sharing.get_survival_rate(),
-                    "sent_models": rudp_stats.get("sent_models", 0),
-                    "sent_failed": rudp_stats.get("sent_failed", 0),
-                    "received_models": rudp_stats.get("received_models", 0),
-                    "timeout_models": rudp_stats.get("timeout_models", 0),  # 追加
-                    "fec_recovery_success": rudp_stats.get("fec_recoveries", 0),  # RUDP FEC
+                    "sent_models": delta_rudp.get("sent_models", 0),
+                    "sent_failed": delta_rudp.get("sent_failed", 0),
+                    "received_models": delta_rudp.get("received_models", 0),
+                    "timeout_models": delta_rudp.get("timeout_models", 0),
+                    "fec_recovery_success": delta_rudp.get("fec_recoveries", 0),
                     "fec_recovery_fail": 0,
                     # RUDP-specific metrics
-                    "rudp_retransmissions": rudp_stats.get("retransmissions", 0),
-                    "rudp_acks_sent": rudp_stats.get("acks_sent", 0),
-                    "rudp_acks_received": rudp_stats.get("acks_received", 0),
-                    "rudp_eaks_sent": rudp_stats.get("eaks_sent", 0),
-                    "rudp_eaks_received": rudp_stats.get("eaks_received", 0),
-                    "rudp_aged_packets": rudp_stats.get("aged_packets", 0),
-                    "rudp_connect_time_ms": rudp_stats.get("connect_time_ms", 0),
-                    "rudp_avg_rtt_ms": rudp_stats.get("avg_rtt_ms", 0),
-                    "rudp_max_retries_reached": rudp_stats.get("max_retries_reached", 0),
-                    "rudp_nacks_sent": rudp_stats.get("nacks_sent", 0),  # 追加
+                    "rudp_retransmissions": delta_rudp.get("retransmissions", 0),
+                    "rudp_acks_sent": delta_rudp.get("acks_sent", 0),
+                    "rudp_acks_received": delta_rudp.get("acks_received", 0),
+                    "rudp_eaks_sent": delta_rudp.get("eaks_sent", 0),
+                    "rudp_eaks_received": delta_rudp.get("eaks_received", 0),
+                    "rudp_aged_packets": delta_rudp.get("aged_packets", 0),
+                    # Gauges (State values, do not use Delta)
+                    "rudp_connect_time_ms": current_rudp.get("connect_time_ms", 0),
+                    "rudp_avg_rtt_ms": current_rudp.get("avg_rtt_ms", 0),
+                    "rudp_max_retries_reached": delta_rudp.get("max_retries_reached", 0),
+                    "rudp_nacks_sent": delta_rudp.get("nacks_sent", 0),
+                    # App Bytes (Overwrite prevention)
+                    "app_bytes_sent": delta_rudp.get("bytes_sent", 0),
+                    "app_bytes_received": delta_rudp.get("bytes_received", 0),
                 }
             )
         elif self.udp_sharing is not None:
-            udp_stats = self.udp_sharing.stats
+            current_udp = self.udp_sharing.stats
+            delta_udp = self._get_delta_stats(current_udp, self._last_reported_udp)
+            self._last_reported_udp = current_udp.copy()
+
             metrics.update(
                 {
                     "survival_rate": self.udp_sharing.get_survival_rate(),
-                    "sent_models": udp_stats.get("sent_models", 0),
-                    "sent_failed": udp_stats.get("sent_failed", 0),
-                    "received_models": udp_stats.get("received_models", 0),
-                    "timeout_models": udp_stats.get("timeout_models", 0),
-                    "fec_recovery_success": udp_stats.get("fec_recovery_success", 0),
-                    "fec_recovery_fail": udp_stats.get("fec_recovery_fail", 0),
-                    "fec_encode_time_ms": udp_stats.get("fec_encode_time_ms", 0),
-                    "fec_decode_time_ms": udp_stats.get("fec_decode_time_ms", 0),
+                    "sent_models": delta_udp.get("sent_models", 0),
+                    "sent_failed": delta_udp.get("sent_failed", 0),
+                    "received_models": delta_udp.get("received_models", 0),
+                    "timeout_models": delta_udp.get("timeout_models", 0),
+                    "fec_recovery_success": delta_udp.get("fec_recovery_success", 0),
+                    "fec_recovery_fail": delta_udp.get("fec_recovery_fail", 0),
+                    "fec_encode_time_ms": delta_udp.get("fec_encode_time_ms", 0),
+                    "fec_decode_time_ms": delta_udp.get("fec_decode_time_ms", 0),
+                    # Dynamic params (averaged)
+                    "udp_avg_parity": delta_udp.get("sum_parity", 0) / delta_udp.get("total_transfers", 1) if delta_udp.get("total_transfers", 0) > 0 else 0,
+                    "udp_avg_pacing_ms": (delta_udp.get("sum_pacing_delay", 0.0) / delta_udp.get("total_transfers", 1) * 1000) if delta_udp.get("total_transfers", 0) > 0 else 0,
+                    # App Bytes (Overwrite prevention)
+                    "app_bytes_sent": delta_udp.get("bytes_sent", 0),
+                    "app_bytes_received": delta_udp.get("bytes_received", 0),
                 }
             )
         else:
             # TCP mode
-            fetch_success = self.tcp_stats.get("models_received", 0)
-            fetch_failed = self.tcp_stats.get("fetch_failed", 0)
+            current_tcp = self.tcp_stats
+            delta_tcp = self._get_delta_stats(current_tcp, self._last_reported_tcp)
+            self._last_reported_tcp = current_tcp.copy()
+
+            # Survival rate calculation: use CUMULATIVE stats (current_tcp)
+            fetch_success = current_tcp.get("models_received", 0)
+            fetch_failed = current_tcp.get("fetch_failed", 0)
             fetch_attempts = fetch_success + fetch_failed
             survival_rate = fetch_success / fetch_attempts if fetch_attempts > 0 else 1.0
 
             metrics.update(
                 {
                     "survival_rate": survival_rate,
-                    "sent_models": self.tcp_stats.get("models_sent", 0),
-                    "sent_failed": fetch_failed,
-                    "received_models": fetch_success,
-                    "timeout_models": fetch_failed,  # TCP では fetch_failed = timeout
+                    "sent_models": delta_tcp.get("models_sent", 0),
+                    "sent_failed": delta_tcp.get("fetch_failed", 0),
+                    "received_models": delta_tcp.get("models_received", 0),
+                    "timeout_models": delta_tcp.get("fetch_failed", 0),
                     "fec_recovery_success": 0,
                     "fec_recovery_fail": 0,
+                    # App Bytes (TCP uses physical as app roughly, but let's record 0 or copy physical?)
+                    # Since TCP mode retransmissions are hidden, Physical > App.
+                    # But we don't track explicit payload bytes in tcp_stats (ControlNode might).
+                    # For now, 0 or missing for TCP app_bytes is acceptable, means "use fallback".
+                    "app_bytes_sent": delta_tcp.get("bytes_sent", 0),  # Typically 0 as tcp_stats doesn't track bytes
+                    "app_bytes_received": delta_tcp.get("bytes_received", 0),
                 }
             )
 
@@ -1608,62 +1766,68 @@ class ModelSharingUtils:
             if getattr(self, "udp_adaptive_fec", False):
                 self._update_adaptive_fec(packet_loss)
 
-        # Reset epoch-level statistics after collecting
-        self._reset_epoch_stats()
+        # --- Protocol Counts (Dynamic Mode) ---
+        metrics.update(
+            {
+                "protocol_tcp_count": self.protocol_counts.get("TCP", 0),
+                "protocol_udp_count": self.protocol_counts.get("UDP", 0),
+                "protocol_rudp_count": self.protocol_counts.get("RUDP", 0),
+            }
+        )
 
         return metrics
 
-    def _reset_epoch_stats(self):
-        """Reset epoch-level statistics for the next epoch."""
+    def _reset_epoch_accumulators(self):
+        """Reset epoch-level statistics accumulators (called at start of epoch)."""
         # Reset TCP stats
         self.tcp_stats = {
             "bytes_sent": 0,
             "bytes_received": 0,
             "models_sent": 0,
             "models_received": 0,
-            "fetch_failed": 0,  # Must be reset to prevent accumulation across epochs
+            "fetch_failed": 0,
         }
         # Reset UDP stats if enabled
         if self.udp_sharing is not None:
-            self.udp_sharing.stats = {
-                "sent_models": 0,
-                "sent_failed": 0,
-                "received_models": 0,
-                "fec_recovery_success": 0,
-                "fec_recovery_fail": 0,
-                "total_chunks_received": 0,
-                "chunks_decoded": 0,
-                "failed_chunks": 0,
-                "timeout_models": 0,
-                "bytes_sent": 0,
-                "bytes_received": 0,
-                "fec_encode_time_ms": 0.0,
-                "fec_decode_time_ms": 0.0,
-            }
+            # Re-initialize stats dict to zero
+            self.udp_sharing.stats = {k: 0 for k in self.udp_sharing.stats}
+            # Keep float keys as float if needed, but 0 is fine for int/float add.
+            self.udp_sharing.stats.update(
+                {
+                    "fec_encode_time_ms": 0.0,
+                    "fec_decode_time_ms": 0.0,
+                }
+            )
+
         # Reset RUDP stats if enabled
         if self.rudp_sharing is not None:
-            self.rudp_sharing.stats = {
-                "sent_models": 0,
-                "sent_failed": 0,
-                "received_models": 0,
-                "bytes_sent": 0,
-                "bytes_received": 0,
-                "timeout_models": 0,
-                "retransmissions": 0,
-                "acks_sent": 0,
-                "acks_received": 0,
-                "eaks_sent": 0,
-                "eaks_received": 0,
-                "aged_packets": 0,
-                "connect_time_ms": 0.0,
-                "avg_rtt_ms": 0.0,
-                "max_retries_reached": 0,
-                "nacks_sent": 0,  # 追加
-                "fec_recoveries": 0,  # 追加
-            }
+            self.rudp_sharing.stats = {k: 0 for k in self.rudp_sharing.stats}
+            self.rudp_sharing.stats.update(
+                {
+                    "connect_time_ms": 0.0,
+                    "avg_rtt_ms": 0.0,
+                }
+            )
+
         # Reset compression stats if enabled
         if self.compression_manager is not None:
             self.compression_manager.reset_epoch_stats()
+
+        # Reset last reported to 0 so deltas start from 0 for this epoch?
+        # No, if we reset stats to 0, we must reset last_reported to 0 too.
+        self._last_reported_tcp = {}
+        self._last_reported_udp = {}
+        self._last_reported_rudp = {}
+        # Reset protocol counts for dynamic mode
+        self.protocol_counts = {"TCP": 0, "UDP": 0, "RUDP": 0}
+
+    def _get_delta_stats(self, current: dict, last: dict) -> dict:
+        """Compute delta between current cumulative stats and last reported."""
+        delta = {}
+        for k, v in current.items():
+            if isinstance(v, (int, float)):
+                delta[k] = v - last.get(k, 0)
+        return delta
 
     def _calculate_packet_loss(self) -> float:
         """
@@ -1746,7 +1910,6 @@ class ModelSharingUtils:
         # In auto mode we keep k fixed and allow parity/pacing to follow estimator recommendations.
         target_k = 16
         m = get_network_estimator().get_metrics()
-        target_parity = get_network_estimator().get_recommended_fec_parity(target_k)
 
         # DYNAMIC TIMEOUT ADJUSTMENT
         # Keep timeout consistent with estimator RTT to avoid premature cancellation.
@@ -1768,10 +1931,11 @@ class ModelSharingUtils:
             self.logger.info(f"⏱️ Dynamic Timeout: {current_timeout:.1f}s -> {dynamic_timeout:.1f}s (loss={packet_loss:.1%})")
 
         # Sync parity to estimator recommendation (optional but makes changes visible immediately).
-        current_parity = self.udp_sharing.parity
-        if target_parity != current_parity:
-            self.logger.info(f"📊 Adaptive UDP (auto): loss={packet_loss:.1%}, q={m.get_quality_level()}, RTT={m.rtt_ms:.1f}ms, BW={m.bandwidth_mbps:.2f}Mbps -> parity {current_parity}->{target_parity} (k={target_k})")
-            self.udp_sharing.update_network_params(target_k, new_parity=target_parity)
+        # Sync parity to estimator recommendation
+        # NOTE: UDPModelSharing now pulls directly from NetworkEstimator per-peer.
+        # We don't need to push parity back to UDPModelSharing.
+        # Just logging the recommendation for debug visibility.
+        if self.udp_fec_m != target_k:
             self.udp_fec_m = target_k
 
 
@@ -1826,7 +1990,7 @@ class CTRL_TCP:
         log_dir = f"./results/{self.experiment_id}"
         os.makedirs(log_dir, exist_ok=True)
         log_file_path = os.path.join(log_dir, "output.log")
-        file_handler = logging.FileHandler(log_file_path, mode="w", encoding="utf-8")
+        file_handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         logging.getLogger().addHandler(file_handler)

@@ -340,6 +340,60 @@ def _load_metrics_and_resources(exp_dir):
             if metrics_file.exists():
                 try:
                     df = pd.read_csv(metrics_file)
+                    # Force numeric conversion for key columns to avoid object type issues (empty strings)
+                    numeric_cols = [
+                        "epoch",
+                        "train_loss",
+                        "train_accuracy",
+                        "test_loss",
+                        "test_accuracy",
+                        "epoch_duration_ms",
+                        "compute_time_ms",
+                        "comm_time_ms",
+                        "waiting_time_ms",
+                        "wasted_ms",
+                        "wasted_norm",
+                        "batches_processed",
+                        "was_force_stopped",
+                        "survival_rate",
+                        "sent_models",
+                        "sent_failed",
+                        "received_models",
+                        "fec_recovery_success",
+                        "fec_recovery_fail",
+                        "fec_encode_time_ms",
+                        "fec_decode_time_ms",
+                        "bytes_sent",
+                        "bytes_received",
+                        "timeout_models",
+                        "rudp_nacks_sent",
+                        "fec_recoveries",
+                        "rudp_retransmissions",
+                        "rudp_acks_sent",
+                        "rudp_acks_received",
+                        "rudp_eaks_sent",
+                        "rudp_eaks_received",
+                        "rudp_aged_packets",
+                        "rudp_connect_time_ms",
+                        "rudp_avg_rtt_ms",
+                        "rudp_max_retries_reached",
+                        # New Metrics
+                        "app_bytes_sent",
+                        "app_bytes_received",
+                        "protocol_tcp_count",
+                        "protocol_udp_count",
+                        "protocol_rudp_count",
+                        "udp_avg_parity",
+                        "udp_avg_pacing_ms",
+                        "compression_ratio",
+                        "compression_time_ms",
+                        "original_size",
+                        "compressed_size",
+                    ]
+                    for col in numeric_cols:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors="coerce")
+
                     df["node"] = node_dir.name
                     metrics_dfs.append(df)
                 except Exception:
@@ -534,18 +588,20 @@ def _generate_idle_time_plot(df, experiment_name, analysis_dir, add_phase_line_f
 
     plt.figure(figsize=(12, 6))
     ax = plt.subplot(1, 1, 1)
+    # Create a percentage column for seaborn
+    idle_agg["idle_time_pct"] = idle_agg["idle_time_ratio"] * 100
+    # Use matplotlib bar for correct numeric x-axis alignment
     ax.bar(
         idle_agg["epoch"],
-        idle_agg["idle_time_ratio"] * 100,
+        idle_agg["idle_time_pct"],
         color=COLORS["idle"],
         alpha=0.8,
         edgecolor=COLORS["idle"],
         linewidth=0.5,
+        width=0.6,
+        label="Idle Time (%)",
     )
-    ax.set_ylabel("Idle Time Ratio [%]", color=COLORS["mean_line"])
-    ax.set_xlabel("Epoch")
-    ax.tick_params(axis="y", labelcolor=COLORS["mean_line"])
-    ax.set_ylim(0, 100)
+    pass
 
     # Add phase switch line
     add_phase_line_func(ax, df, x_col="epoch", text_position="top")
@@ -578,20 +634,23 @@ def _generate_wasted_computation_plot(df, experiment_name, analysis_dir):
                 label="Wasted Time",
                 edgecolor=COLORS["wasted_bar"],
                 linewidth=0.5,
+                width=0.6,
             )
             ax1.set_ylabel("Wasted Time [sec]", color=COLORS["wasted_bar"])
             ax1.tick_params(axis="y", labelcolor=COLORS["wasted_bar"])
             ax1.set_xlabel("Epoch")
 
             ax2 = ax1.twinx()
-            ax2.plot(
-                wasted_per_epoch["epoch"],
-                wasted_per_epoch["batches_processed"],
+            sns.lineplot(
+                data=wasted_per_epoch,
+                x="epoch",
+                y="batches_processed",
                 color=COLORS["wasted_line"],
                 linewidth=2.5,
                 marker="o",
-                markersize=4,
+                markersize=8,  # sns marker size logic is different. default is usually fine.
                 label="Incomplete Batches",
+                ax=ax2,
             )
             ax2.set_ylabel("Incomplete Batches (before force-skip)", color=COLORS["wasted_line"])
             ax2.tick_params(axis="y", labelcolor=COLORS["wasted_line"])
@@ -708,8 +767,16 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
         ].copy()
         if not goodput_data.empty and (goodput_data["bytes_received"].sum() > 0 or goodput_data["bytes_sent"].sum() > 0):
             has_meaningful_goodput_data = True
+            # Determine meaningful bytes column for Goodput (prefer app_bytes_received)
+            if "app_bytes_received" in goodput_data.columns and goodput_data["app_bytes_received"].sum() > 0:
+                rx_col = "app_bytes_received"
+            else:
+                rx_col = "bytes_received"
+
             # Calculate throughput in Mbps using comm_time_ms (pure communication time)
-            goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
+            goodput_data["goodput_mbps"] = (goodput_data[rx_col] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
+
+            # bytes_sent is always Physical, so sent_mbps represents "Network Bandwidth Usage"
             goodput_data["sent_mbps"] = (goodput_data["bytes_sent"] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
 
             # Calculate retransmission estimation based on survival_rate
@@ -730,38 +797,47 @@ def _generate_goodput_plot(df, experiment_name, analysis_dir):
             ax = plt.subplot(1, 1, 1)
 
             # Plot estimated physical throughput (includes retransmissions)
-            ax.plot(
-                goodput_agg["epoch"],
-                goodput_agg["estimated_physical_mbps"],
+            # Plot estimated physical throughput (includes retransmissions)
+            sns.lineplot(
+                data=goodput_agg,
+                x="epoch",
+                y="estimated_physical_mbps",
                 color=COLORS["phase_line"],  # Red to highlight overhead
                 linewidth=2,
                 marker="^",
-                markersize=3,
+                markersize=8,
                 label="Est. Physical (w/ Retrans)",
                 alpha=0.8,
                 linestyle="--",
+                ax=ax,
             )
 
             # Plot sent throughput (application layer)
-            ax.plot(
-                goodput_agg["epoch"],
-                goodput_agg["sent_mbps"],
+            # Plot sent throughput (application layer)
+            sns.lineplot(
+                data=goodput_agg,
+                x="epoch",
+                y="sent_mbps",
                 color=COLORS["bar_secondary"],
                 linewidth=2,
                 marker="s",
-                markersize=3,
+                markersize=8,
                 label="Sent (App Layer)",
                 alpha=0.7,
+                ax=ax,
             )
             # Plot received (goodput)
-            ax.plot(
-                goodput_agg["epoch"],
-                goodput_agg["goodput_mbps"],
+            # Plot received (goodput)
+            sns.lineplot(
+                data=goodput_agg,
+                x="epoch",
+                y="goodput_mbps",
                 color=COLORS["goodput"],
                 linewidth=2.5,
                 marker="o",
-                markersize=4,
+                markersize=8,
                 label="Goodput (Received)",
+                ax=ax,
             )
             ax.fill_between(
                 goodput_agg["epoch"],
@@ -818,6 +894,8 @@ def _generate_traffic_volume_plot(df, experiment_name, analysis_dir):
             fig, ax1 = plt.subplots(figsize=(12, 6))
 
             # Bar chart for per-epoch traffic
+            # Bar chart for per-epoch traffic
+            # Bar chart for per-epoch traffic (Use matplotlib bar for correct numeric x-axis alignment)
             ax1.bar(
                 traffic_agg["epoch"],
                 traffic_agg["sent_mb"],
@@ -826,20 +904,24 @@ def _generate_traffic_volume_plot(df, experiment_name, analysis_dir):
                 edgecolor=COLORS["traffic"],
                 linewidth=0.5,
                 label="Per-epoch Traffic",
+                width=0.6,
             )
             ax1.set_ylabel("Sent Data per Epoch [MB]", color=COLORS["traffic"])
             ax1.set_xlabel("Epoch")
             ax1.tick_params(axis="y", labelcolor=COLORS["traffic"])
 
             # Line chart for cumulative traffic (secondary y-axis)
+            # Line chart for cumulative traffic (secondary y-axis)
             ax2 = ax1.twinx()
-            ax2.plot(
-                traffic_agg["epoch"],
-                traffic_agg["cumulative_mb"],
+            sns.lineplot(
+                data=traffic_agg,
+                x="epoch",
+                y="cumulative_mb",
                 color=COLORS["mean_line"],
                 linewidth=2.5,
                 marker="",
                 label="Cumulative",
+                ax=ax2,
             )
             ax2.set_ylabel("Cumulative Sent Data [MB]", color=COLORS["mean_line"])
             ax2.tick_params(axis="y", labelcolor=COLORS["mean_line"])
@@ -848,6 +930,10 @@ def _generate_traffic_volume_plot(df, experiment_name, analysis_dir):
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines2, labels2 = ax2.get_legend_handles_labels()
             ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+
+            # Explicitly remove ax2 legend if it exists to prevent overlap
+            if ax2.get_legend():
+                ax2.get_legend().remove()
 
             plt.title(f"Traffic Volume (WAFL Phase) - {experiment_name}")
             fig.tight_layout()
@@ -890,6 +976,7 @@ def _generate_transfer_time_plot(df, experiment_name, analysis_dir):
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
             # Top: Epoch Duration
+            # Top: Epoch Duration
             ax1.bar(
                 transfer_agg["epoch"],
                 transfer_agg["epoch_duration_s"],
@@ -898,11 +985,13 @@ def _generate_transfer_time_plot(df, experiment_name, analysis_dir):
                 label="Epoch Duration",
                 edgecolor=COLORS["bar_primary"],
                 linewidth=0.5,
+                width=0.6,
             )
             ax1.set_ylabel("Epoch Duration [sec]")
             ax1.legend(loc="upper right")
             ax1.set_title(f"Total Transfer Time Breakdown - {experiment_name}")
 
+            # Bottom: Compression Time (in ms for visibility)
             # Bottom: Compression Time (in ms for visibility)
             ax2.bar(
                 transfer_agg["epoch"],
@@ -912,6 +1001,7 @@ def _generate_transfer_time_plot(df, experiment_name, analysis_dir):
                 label="Compression Time (T_comp)",
                 edgecolor=COLORS["bar_secondary"],
                 linewidth=0.5,
+                width=0.6,
             )
             ax2.set_ylabel("Compression Time [ms]")
             ax2.set_xlabel("Epoch")
@@ -1366,26 +1456,8 @@ def _generate_accuracy_vs_time_plot(df, experiment_name, analysis_dir, add_phase
         label=f"Target ({TARGET_ACCURACY:.0%})",
     )
 
-    # Add phase switch line (find timestamp of first WAFL epoch)
-    wafl_start = plot_data[plot_data["phase"] == "WAFL"]["timestamp"].min()
-    if not pd.isna(wafl_start):
-        ax.axvline(
-            x=wafl_start,
-            color=COLORS["phase_line"],
-            linestyle="--",
-            linewidth=1.5,
-            alpha=0.7,
-        )
-        y_min, y_max = ax.get_ylim()
-        ax.text(
-            wafl_start,
-            y_min + (y_max - y_min) * 0.05,
-            " WAFL Start",
-            color=COLORS["phase_line"],
-            fontsize=10,
-            fontweight="bold",
-            va="bottom",
-        )
+    # Add phase switch line (using helper)
+    add_phase_line_func(ax, plot_data, x_col="wafl_relative_timestamp", text_position="bottom")
 
     plt.title(f"Test Accuracy vs Time - {experiment_name}")
     plt.ylabel("Test Accuracy")
@@ -1492,12 +1564,14 @@ def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
             has_meaningful_data = True
 
             # Aggregate bytes_sent per epoch (sum across all nodes)
+            # Use 'bytes_sent' which is Physical Bytes (Total Network Load: Payload + Headers + Retrans)
             traffic_agg = traffic_data.groupby("epoch").agg({"bytes_sent": "sum"}).reset_index()
             traffic_agg["sent_mb"] = traffic_agg["bytes_sent"] / (1024 * 1024)
 
             # Calculate cumulative sum
             traffic_agg["cumulative_mb"] = traffic_agg["sent_mb"].cumsum()
 
+            ax = plt.subplot(1, 1, 1)
             ax = plt.subplot(1, 1, 1)
             ax.bar(
                 traffic_agg["epoch"],
@@ -1506,6 +1580,7 @@ def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
                 alpha=0.8,
                 edgecolor=COLORS["traffic"],
                 linewidth=0.5,
+                width=0.6,
             )
             ax.set_ylabel("Cumulative Sent Data [MB]")
             ax.set_xlabel("Epoch")
@@ -1675,6 +1750,7 @@ def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_
             aging_agg = aging_data.groupby("epoch").agg({"rudp_aged_packets": "sum"}).reset_index()
 
             ax = plt.subplot(1, 1, 1)
+            ax = plt.subplot(1, 1, 1)
             ax.bar(
                 aging_agg["epoch"],
                 aging_agg["rudp_aged_packets"],
@@ -1682,6 +1758,7 @@ def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_
                 alpha=0.8,
                 edgecolor=COLORS["wasted_bar"],
                 linewidth=0.5,
+                width=0.6,
             )
             ax.set_ylabel("Aged Packets")
             ax.set_xlabel("Epoch")
@@ -1706,6 +1783,327 @@ def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_
     plt.savefig(analysis_dir / "rudp_aging.png", dpi=150)
     plt.close()
     return "rudp_aging.png"
+
+
+def _generate_udp_dynamic_params_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate UDP dynamic parameters plot (Parity & Pacing)."""
+    plt.figure(figsize=(12, 8))
+    has_meaningful_data = False
+
+    if not df.empty and ("udp_avg_parity" in df.columns or "udp_avg_pacing_ms" in df.columns):
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+
+        # Check if there is any non-zero data
+        has_parity = "udp_avg_parity" in wafl_df.columns and wafl_df["udp_avg_parity"].sum() > 0
+        has_pacing = "udp_avg_pacing_ms" in wafl_df.columns and wafl_df["udp_avg_pacing_ms"].sum() > 0
+
+        if has_parity or has_pacing:
+            has_meaningful_data = True
+
+            # Aggregate per epoch (mean across nodes)
+            agg_funcs = {}
+            if "udp_avg_parity" in wafl_df.columns:
+                agg_funcs["udp_avg_parity"] = "mean"
+            if "udp_avg_pacing_ms" in wafl_df.columns:
+                agg_funcs["udp_avg_pacing_ms"] = "mean"
+
+            param_agg = wafl_df.groupby("epoch").agg(agg_funcs).reset_index()
+
+            # Subplot 1: Average Parity
+            ax1 = plt.subplot(2, 1, 1)
+            if has_parity:
+                sns.lineplot(data=param_agg, x="epoch", y="udp_avg_parity", color=COLORS["wasted_bar"], linewidth=2, label="Avg Parity (m-k)", ax=ax1)
+            # add_phase_line_func(ax1, df, "epoch") # Removed for Clean Dynamic Plot
+            ax1.set_title(f"Dynamic UDP Parameters - {experiment_name}")
+            ax1.set_ylabel("Avg Parity")
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+
+            # Subplot 2: Average Pacing
+            ax2 = plt.subplot(2, 1, 2, sharex=ax1)
+            if has_pacing:
+                sns.lineplot(data=param_agg, x="epoch", y="udp_avg_pacing_ms", color=COLORS["goodput"], linewidth=2, label="Avg Pacing Delay [ms]", ax=ax2)
+            # add_phase_line_func(ax2, df, "epoch") # Removed
+            ax2.set_ylabel("Pacing [ms]")
+            ax2.set_xlabel("Epoch")
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+
+    if not has_meaningful_data:
+        plt.clf()  # Clear standard layout
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "UDP Adaptive Parameters not relevant\n(Protocol not enabled or static)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"Dynamic UDP Parameters - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "udp_dynamic_params.png", dpi=150)
+    plt.close()
+    return "udp_dynamic_params.png"
+
+
+def _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate protocol distribution plot (Dynamic Mode)."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    # Check columns existence
+    cols = ["protocol_tcp_count", "protocol_udp_count", "protocol_rudp_count"]
+    avail_cols = [c for c in cols if c in df.columns]
+
+    if not df.empty and avail_cols:
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+
+        # Check if total sum > 0
+        total_counts = wafl_df[avail_cols].sum().sum()
+        if total_counts > 0:
+            has_meaningful_data = True
+
+            # Aggregate sums per epoch
+            agg_funcs = {c: "sum" for c in avail_cols}
+            proto_agg = wafl_df.groupby("epoch").agg(agg_funcs).reset_index()
+
+            # Normalize to percentage? Or raw counts?
+            # User wants to know "how it changed".
+            # Stacked bar 100% is good to show ratio.
+            # But raw counts shows volume too.
+            # Let's do Stacked Bar (Raw Counts) to show scale as well.
+
+            ax = plt.subplot(1, 1, 1)
+
+            bottom = None
+            labels = {"protocol_tcp_count": "TCP", "protocol_udp_count": "UDP", "protocol_rudp_count": "RUDP"}
+            colors = {"protocol_tcp_count": "#3498db", "protocol_udp_count": "#e67e22", "protocol_rudp_count": "#9b59b6"}  # Blue, Orange, Purple
+
+            for col in avail_cols:
+                if col not in proto_agg.columns:
+                    continue
+
+                # Check if this protocol was actually used
+                if proto_agg[col].sum() == 0:
+                    continue
+
+                ax.bar(proto_agg["epoch"], proto_agg[col], label=labels[col], bottom=bottom, color=colors.get(col, "gray"), alpha=0.8, width=0.8)
+                if bottom is None:
+                    bottom = proto_agg[col]
+                else:
+                    bottom += proto_agg[col]
+
+            # add_phase_line_func(ax, df, "epoch") # Removed
+            ax.set_ylabel("Total Transfers (Count)")
+            ax.set_xlabel("Epoch")
+            ax.legend()
+            ax.set_title(f"Dynamic Protocol Distribution - {experiment_name}")
+            ax.grid(True, axis="y", alpha=0.3)
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(
+            0.5,
+            0.5,
+            "Dynamic Protocol Distribution N/A\n(Stats not collected or Single Protocol)",
+            ha="center",
+            va="center",
+            fontsize=14,
+            color=COLORS["no_data"],
+            transform=ax.transAxes,
+        )
+        ax.axis("off")
+        plt.title(f"Dynamic Protocol Distribution - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "protocol_distribution.png", dpi=150)
+    plt.close()
+    return "protocol_distribution.png"
+
+
+def _generate_udp_recovery_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate UDP FEC recovery stats (Success vs Fail) plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and ("fec_recovery_success" in df.columns or "fec_recovery_fail" in df.columns):
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+
+        has_success = "fec_recovery_success" in wafl_df.columns and wafl_df["fec_recovery_success"].sum() > 0
+        has_fail = "fec_recovery_fail" in wafl_df.columns and wafl_df["fec_recovery_fail"].sum() > 0
+
+        if has_success or has_fail:
+            has_meaningful_data = True
+
+            # Aggregate per epoch (sum across nodes)
+            agg_funcs = {}
+            if "fec_recovery_success" in wafl_df.columns:
+                agg_funcs["fec_recovery_success"] = "sum"
+            if "fec_recovery_fail" in wafl_df.columns:
+                agg_funcs["fec_recovery_fail"] = "sum"
+
+            rec_agg = wafl_df.groupby("epoch").agg(agg_funcs).reset_index()
+
+            ax = plt.subplot(1, 1, 1)
+            bar_width = 0.8
+
+            # Success (bottom), Fail (top)
+            # Failures are usually small, so stacking on top makes sense?
+            # Or side-by-side? Failures are critical. Let's stack.
+
+            s_vals = rec_agg["fec_recovery_success"] if has_success else pd.Series([0] * len(rec_agg))
+            f_vals = rec_agg["fec_recovery_fail"] if has_fail else pd.Series([0] * len(rec_agg))
+
+            ax.bar(rec_agg["epoch"], s_vals, label="FEC Recovered", color=COLORS["bar_primary"], alpha=0.9, width=bar_width)
+            ax.bar(rec_agg["epoch"], f_vals, bottom=s_vals, label="Recovery Failed", color=COLORS["control_server"], alpha=0.9, width=bar_width)
+
+            # add_phase_line_func(ax, df, "epoch") # Removed
+            ax.set_ylabel("Models (Count)")
+            ax.set_xlabel("Epoch")
+            ax.legend()
+            ax.set_title(f"UDP FEC Recovery Status - {experiment_name}")
+            ax.grid(True, axis="y", alpha=0.3)
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(0.5, 0.5, "UDP FEC stats N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        plt.title(f"UDP FEC Recovery Status - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "udp_recovery.png", dpi=150)
+    plt.close()
+    return "udp_recovery.png"
+
+
+def _generate_rudp_failure_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate RUDP failure (Max Retries Reached) plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "rudp_max_retries_reached" in df.columns:
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        if wafl_df["rudp_max_retries_reached"].sum() > 0:
+            has_meaningful_data = True
+
+            agg = wafl_df.groupby("epoch").agg({"rudp_max_retries_reached": "sum"}).reset_index()
+
+            ax = plt.subplot(1, 1, 1)
+            ax = plt.subplot(1, 1, 1)
+            ax.bar(
+                agg["epoch"],
+                agg["rudp_max_retries_reached"],
+                color=COLORS["control_server"],
+                alpha=0.8,
+                edgecolor=COLORS["control_server"],
+                linewidth=0.5,
+                width=0.6,
+            )
+
+            add_phase_line_func(ax, df, "epoch")
+            ax.set_ylabel("Max Retries Reached (Count)")
+            ax.set_xlabel("Epoch")
+            ax.set_title(f"RUDP Max Retry Failures - {experiment_name}")
+            ax.grid(True, axis="y", alpha=0.3)
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(0.5, 0.5, "RUDP Failures N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        plt.title(f"RUDP Max Retry Failures - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "rudp_failures.png", dpi=150)
+    plt.close()
+    return "rudp_failures.png"
+
+
+def _generate_rudp_control_overhead_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate RUDP Control Packet Overhead plot."""
+    plt.figure(figsize=(12, 6))
+    has_meaningful_data = False
+
+    cols = ["rudp_acks_sent", "rudp_eaks_sent", "rudp_nacks_sent"]
+    avail_cols = [c for c in cols if c in df.columns]
+
+    if not df.empty and avail_cols:
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        if wafl_df[avail_cols].sum().sum() > 0:
+            has_meaningful_data = True
+
+            # agg = wafl_df.groupby("epoch").agg({c: "mean" for c in avail_cols}).reset_index()
+
+            ax = sns.lineplot(data=wafl_df, x="epoch", y="rudp_acks_sent", label="ACKs", errorbar=None)
+            if "rudp_eaks_sent" in wafl_df.columns:
+                sns.lineplot(data=wafl_df, x="epoch", y="rudp_eaks_sent", label="EAKs", errorbar=None, ax=ax)
+            if "rudp_nacks_sent" in wafl_df.columns:
+                sns.lineplot(data=wafl_df, x="epoch", y="rudp_nacks_sent", label="NACKs", errorbar=None, ax=ax)  # Should be 0 usually?
+
+            add_phase_line_func(ax, df, "epoch")
+            ax.set_ylabel("Control Packets (Avg per Node)")
+            ax.set_xlabel("Epoch")
+            ax.set_title(f"RUDP Control Overhead - {experiment_name}")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+    if not has_meaningful_data:
+        ax = plt.gca()
+        ax.text(0.5, 0.5, "RUDP Overhead N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        plt.title(f"RUDP Control Overhead - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "rudp_control_overhead.png", dpi=150)
+    plt.close()
+    return "rudp_control_overhead.png"
+
+
+def _generate_compression_stats_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate Compression Ratio and Time plot."""
+    plt.figure(figsize=(12, 8))
+    has_meaningful_data = False
+
+    if not df.empty and "compression_ratio" in df.columns:
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+
+        # Check if compression was active (ratio > 1.05 or explicit)
+        if wafl_df["compression_ratio"].mean() > 1.01:
+            has_meaningful_data = True
+
+            agg = wafl_df.groupby("epoch").agg({"compression_ratio": "mean", "compression_time_ms": "mean"}).reset_index()
+
+            # Subplot 1: Ratio
+            ax1 = plt.subplot(2, 1, 1)
+            sns.lineplot(data=agg, x="epoch", y="compression_ratio", color=COLORS["goodput"], linewidth=2, ax=ax1)
+            add_phase_line_func(ax1, df, "epoch")
+            ax1.set_title(f"Compression Statistics - {experiment_name}")
+            ax1.set_ylabel("Compression Ratio")
+            ax1.grid(True, alpha=0.3)
+
+            # Subplot 2: Time
+            ax2 = plt.subplot(2, 1, 2, sharex=ax1)
+            sns.lineplot(data=agg, x="epoch", y="compression_time_ms", color=COLORS["wasted_bar"], linewidth=2, ax=ax2)
+            add_phase_line_func(ax2, df, "epoch")
+            ax2.set_ylabel("Compression Time [ms]")
+            ax2.set_xlabel("Epoch")
+            ax2.grid(True, alpha=0.3)
+
+    if not has_meaningful_data:
+        plt.clf()
+        ax = plt.gca()
+        ax.text(0.5, 0.5, "Compression not used", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        plt.title(f"Compression Statistics - {experiment_name}")
+
+    plt.tight_layout()
+    plt.savefig(analysis_dir / "compression_stats.png", dpi=150)
+    plt.close()
+    return "compression_stats.png"
 
 
 def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
@@ -1801,6 +2199,22 @@ def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
         if pd.notna(avg_decode) and avg_decode > 0:
             metrics["avg_fec_decode_ms"] = avg_decode
 
+    # 14. UDP Recovery Stats
+    if "fec_recovery_success" in wafl_df.columns:
+        metrics["udp_recovery_success"] = int(wafl_df["fec_recovery_success"].sum())
+    if "fec_recovery_fail" in wafl_df.columns:
+        metrics["udp_recovery_fail"] = int(wafl_df["fec_recovery_fail"].sum())
+
+    # 15. RUDP Failures
+    if "rudp_max_retries_reached" in wafl_df.columns:
+        metrics["rudp_max_retries_total"] = int(wafl_df["rudp_max_retries_reached"].sum())
+
+    # 16. Compression Stats
+    if "compression_ratio" in wafl_df.columns:
+        metrics["compression_ratio_avg"] = wafl_df["compression_ratio"].mean()
+    if "compression_time_ms" in wafl_df.columns:
+        metrics["compression_time_avg"] = wafl_df["compression_time_ms"].mean()
+
     return metrics
 
 
@@ -1853,7 +2267,39 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
     if "avg_fec_encode_ms" in metrics and "avg_fec_decode_ms" in metrics:
         total_fec = metrics["avg_fec_encode_ms"] + metrics["avg_fec_decode_ms"]
         lines.append(f"| Avg Total FEC Overhead | {total_fec:.2f} ms |")
+    if "udp_recovery_success" in metrics and "udp_recovery_fail" in metrics:
+        total_rec = metrics["udp_recovery_success"] + metrics["udp_recovery_fail"]
+        rate = metrics["udp_recovery_success"] / total_rec if total_rec > 0 else 0
+        lines.append(f"| UDP FEC Recovery Rate | {rate:.1%} ({metrics['udp_recovery_success']}/{total_rec}) |")
+    if "rudp_max_retries_total" in metrics:
+        lines.append(f"| RUDP Max Retry Failures | {metrics['rudp_max_retries_total']} |")
+    if "compression_ratio_avg" in metrics:
+        lines.append(f"| Avg Compression Ratio | {metrics['compression_ratio_avg']:.2f}x |")
+    if "compression_time_avg" in metrics:
+        lines.append(f"| Avg Compression Time | {metrics['compression_time_avg']:.2f} ms |")
+    lines.append("")
+    # Dynamic Protocol Stats Section
+    if "protocol_tcp_count" in df.columns:
+        lines.append("## Dynamic Protocol Statistics")
+        lines.append("")
+        headers_dyn = ["Epoch", "TCP Transfers", "UDP Transfers", "RUDP Transfers", "Total Transfers"]
+        lines.append("| " + " | ".join(headers_dyn) + " |")
+        lines.append("| " + " | ".join(["---"] * len(headers_dyn)) + " |")
 
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        count_cols = ["protocol_tcp_count", "protocol_udp_count", "protocol_rudp_count"]
+        # Ensure cols exist
+        valid_cols = [c for c in count_cols if c in wafl_df.columns]
+
+        if valid_cols:
+            proto_agg = wafl_df.groupby("epoch")[valid_cols].sum().reset_index()
+            for _, row_data in proto_agg.iterrows():
+                tcp_c = int(row_data.get("protocol_tcp_count", 0))
+                udp_c = int(row_data.get("protocol_udp_count", 0))
+                rudp_c = int(row_data.get("protocol_rudp_count", 0))
+                total_c = tcp_c + udp_c + rudp_c
+                lines.append(f"| {int(row_data['epoch'])} | {tcp_c} | {udp_c} | {rudp_c} | {total_c} |")
+    lines.append("")
     lines.append("")
 
     # Generated Graphs Section
@@ -1879,6 +2325,12 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
         "rudp_retransmissions.png": "RUDP Retransmissions",
         "rudp_rtt.png": "RUDP Average RTT",
         "rudp_aging.png": "E-RUDP Aged Packets",
+        "udp_dynamic_params.png": "UDP Dynamic Parameters (Parity & Pacing)",
+        "protocol_distribution.png": "Protocol Distribution (Dynamic Mode)",
+        "udp_recovery.png": "UDP FEC Recovery Status (Success vs Fail)",
+        "rudp_failures.png": "RUDP Failures (Max Retries Reached)",
+        "rudp_control_overhead.png": "RUDP Control Overhead (ACKs/NACKs)",
+        "compression_stats.png": "Compression Statistics (Ratio & Time)",
     }
 
     for graph_file, description in graph_descriptions.items():
@@ -1956,8 +2408,14 @@ def analyze_results(experiment_id):
         if pd.isna(wafl_start):
             return
 
+        # Offset by 0.5 to draw between epochs (e.g. between 2 and 3)
+        if x_col == "epoch":
+            line_pos = wafl_start - 0.5
+        else:
+            line_pos = wafl_start
+
         ax.axvline(
-            x=wafl_start,
+            x=line_pos,
             color=COLORS["phase_line"],
             linestyle="--",
             alpha=0.7,
@@ -1971,7 +2429,7 @@ def analyze_results(experiment_id):
             y_pos = y_min + (y_max - y_min) * 0.05
             va = "bottom"
         ax.text(
-            wafl_start,
+            line_pos,
             y_pos,
             " WAFL Start",
             color=COLORS["phase_line"],
@@ -2031,10 +2489,6 @@ def analyze_results(experiment_id):
             lambda: _generate_loss_nodes_plot(df, experiment_name, analysis_dir, add_phase_line),
         ),
         (
-            "accuracy_vs_time.png",
-            lambda: _generate_accuracy_vs_time_plot(df, experiment_name, analysis_dir, add_phase_line),
-        ),
-        (
             "compute_comm_breakdown.png",
             lambda: _generate_compute_comm_breakdown_plot(df, experiment_name, analysis_dir),
         ),
@@ -2056,6 +2510,32 @@ def analyze_results(experiment_id):
             "rudp_aging.png",
             lambda: _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line),
         ),
+        # Dynamic Parameters
+        (
+            "udp_dynamic_params.png",
+            lambda: _generate_udp_dynamic_params_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "protocol_distribution.png",
+            lambda: _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        # New Detailed Stats
+        (
+            "udp_recovery.png",
+            lambda: _generate_udp_recovery_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "rudp_failures.png",
+            lambda: _generate_rudp_failure_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "rudp_control_overhead.png",
+            lambda: _generate_rudp_control_overhead_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
+        (
+            "compression_stats.png",
+            lambda: _generate_compression_stats_plot(df, experiment_name, analysis_dir, add_phase_line),
+        ),
     ]
 
     # Execute plot generation sequentially
@@ -2072,6 +2552,9 @@ def analyze_results(experiment_id):
                 print(f"  ✅ Generated {result}")
         except Exception as e:
             print(f"  ❌ Failed to generate {task_name}: {e}")
+
+    # Ensure all figures are closed after plot generation to free memory
+    plt.close("all")
 
     # Generate Markdown report
     print("  📝 Generating Markdown report...")
@@ -2728,6 +3211,86 @@ def _generate_wasted_computation_comparison(experiments_data, group_name, output
     return "wasted_computation_comparison.png"
 
 
+def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
+    """Generate computation vs communication time comparison plot (averaged over nodes)."""
+    comp_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "compute_time_ms" not in df.columns or "comm_time_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid_data = wafl_df[(wafl_df["compute_time_ms"].notna()) & (wafl_df["comm_time_ms"].notna())]
+        if valid_data.empty:
+            continue
+
+        # Average per epoch first, then average over epochs (or just average all)
+        # Using simple mean over all data points in WAFL phase
+        avg_compute = valid_data["compute_time_ms"].mean() / 1000  # ms to s
+        avg_comm = valid_data["comm_time_ms"].mean() / 1000
+
+        comp_data.append(
+            {
+                "experiment": _get_short_name(exp_id),
+                "Computation": avg_compute,
+                "Communication": avg_comm,
+            }
+        )
+
+    if not comp_data:
+        return None
+
+    # Transform for Seaborn (melt)
+    comp_df = pd.DataFrame(comp_data)
+
+    # Create the stacked bar plot manually since sns doesn't support stacked bars natively easily
+    # We plot Total (Comp+Comm) then Comm on top? No, usually Comp bottom, Comm top.
+    # Plot Total (Comp+Comm) first, then Computation on top? No that masks it.
+    # Plot Total, then Computation.
+
+    comp_df["Total"] = comp_df["Computation"] + comp_df["Communication"]
+
+    plt.figure(figsize=(12, 6))
+
+    # Plot Total (Comm acts as background top part)
+    sns.barplot(
+        data=comp_df,
+        x="experiment",
+        y="Total",
+        color=COLORS["bar_secondary"],  # Orange for Comm (top)
+        label="Communication",
+    )
+
+    # Plot Computation (overlay bottom part)
+    sns.barplot(
+        data=comp_df,
+        x="experiment",
+        y="Computation",
+        color=COLORS["bar_primary"],  # Blue for Comp (bottom)
+        label="Computation",
+    )
+
+    # Add text labels
+    for i, row in comp_df.iterrows():
+        # Label Total
+        plt.text(i, row["Total"], f"{row['Total']:.1f}s", ha="center", va="bottom", fontsize=9, fontweight="bold")
+        # Label components if large enough
+        if row["Computation"] > 0.1:
+            plt.text(i, row["Computation"] / 2, f"{row['Computation']:.1f}s", ha="center", va="center", color="white", fontsize=8)
+        if row["Communication"] > 0.1:
+            plt.text(i, row["Computation"] + row["Communication"] / 2, f"{row['Communication']:.1f}s", ha="center", va="center", color="white", fontsize=8)
+
+    plt.title(f"Avg Computation vs Communication Time (WAFL Phase) - {group_name}")
+    plt.ylabel("Time [sec]")
+    plt.xlabel("Experiment")
+    plt.xticks(rotation=45, ha="right")
+    plt.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(output_dir / "compute_comm_comparison.png", dpi=150)
+    plt.close()
+    return "compute_comm_comparison.png"
+
+
 def _generate_goodput_comparison(experiments_data, group_name, output_dir):
     """Generate goodput comparison plot (WAFL phase only)."""
     plt.figure(figsize=(12, 6))
@@ -2738,11 +3301,19 @@ def _generate_goodput_comparison(experiments_data, group_name, output_dir):
             continue
 
         wafl_df = df[df["phase"] == "WAFL"].copy()
-        goodput_data = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["epoch_duration_ms"].notna())].copy()
-        if goodput_data.empty or goodput_data["bytes_received"].sum() == 0:
+        goodput_data = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)].copy()
+
+        # Check for app_bytes_received
+        if "app_bytes_received" in goodput_data.columns and goodput_data["app_bytes_received"].sum() > 0:
+            rx_col = "app_bytes_received"
+        else:
+            rx_col = "bytes_received"
+
+        if goodput_data.empty or goodput_data[rx_col].sum() == 0:
             continue
 
-        goodput_data["goodput_mbps"] = (goodput_data["bytes_received"] * 8 / 1e6) / (goodput_data["epoch_duration_ms"] / 1000)
+        # Use comm_time_ms for true Goodput (Transfer Throughput)
+        goodput_data["goodput_mbps"] = (goodput_data[rx_col] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
         goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
 
         color = NODE_PALETTE[i % len(NODE_PALETTE)]
@@ -3099,7 +3670,10 @@ def main():
         elif args.all:
             targets = get_all_experiments()
         else:
-            targets = get_experiments_without_analysis()
+            # Default behavior for --collect: Collect ALL experiments to ensure updates
+            # Verify/update existing data even if analyzed
+            print("ℹ️  No ID specified. Checking ALL experiments for new data...")
+            targets = get_all_experiments()
 
         if not targets:
             print("✨ No experiments need collection.")

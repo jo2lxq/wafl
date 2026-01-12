@@ -1437,7 +1437,7 @@ echo "TC applied successfully with peer filters"
                         next_epoch = current_epoch + 1
                         can_proceed = min_epoch >= current_epoch
                         if can_proceed:
-                            success = agent.begin_epoch(phase_name, next_epoch)
+                            success = agent.begin_epoch(phase_name, next_epoch + epoch_offset)
                             return (agent.name, success, next_epoch)
                     return (agent.name, None, None)  # No action needed
 
@@ -1510,11 +1510,12 @@ echo "TC applied successfully with peer filters"
                             try:
                                 parts = status.split("-")
                                 if len(parts) >= 3:
-                                    done_epoch = int(parts[2])
-                                    if done_epoch > epochs_completed[agent_name]:
-                                        epochs_completed[agent_name] = done_epoch
+                                    done_epoch_global = int(parts[2])
+                                    done_epoch_local = done_epoch_global - epoch_offset
+                                    if done_epoch_local > epochs_completed[agent_name]:
+                                        epochs_completed[agent_name] = done_epoch_local
                                         agent_status[agent_name] = "IDLE"
-                                        self.logger.info(f"✅ Agent {agent_name} completed {phase_name} epoch {done_epoch}")
+                                        self.logger.info(f"✅ Agent {agent_name} completed {phase_name} epoch {done_epoch_global}")
                             except Exception as e:
                                 self.logger.error(f"Error parsing status {status}: {e}")
 
@@ -1866,32 +1867,70 @@ if __name__ == "__main__":
         method = experiment_parameters.get("method", {})
         print("\n🔧 Method Parameters:")
 
-        # SSP
-        ssp_settings = method.get("ssp", {})
+        # Initialize defaults
+        ssp_settings = {}
+        udp_settings = {}
+        tcp_settings = {}
+        rudp_settings = {}
+        comp_settings = {}
+
+        tcp_enabled = True
+        udp_enabled = False
+        rudp_enabled = False
+        comp_enabled = False
+        rudp_mode = "rudp"
+
+        # Parse method configuration
+        if isinstance(method, str):
+            method_str = method.lower()
+            print(f"   - Configuration Mode: Simple ({method})")
+
+            # Set enable flags based on method string
+            if method_str == "dynamic":
+                tcp_enabled = True
+                udp_enabled = True  # Dynamic uses both
+            elif method_str == "udp":
+                tcp_enabled = False
+                udp_enabled = True
+            elif method_str == "rudp":
+                tcp_enabled = False
+                rudp_enabled = True
+            elif method_str == "tcp":
+                tcp_enabled = True
+
+            # Simple schema assumes defaults for sub-settings
+            if udp_enabled:
+                udp_settings = {"fec_m": "auto"}
+            if rudp_enabled:
+                rudp_settings = {"mode": "rudp", "max_retries": 20, "window_size": 16}
+
+        elif isinstance(method, dict):
+            # Backward compatibility
+            ssp_settings = method.get("ssp", {})
+            udp_settings = method.get("udp", {})
+            tcp_settings = method.get("tcp", {})
+            rudp_settings = method.get("rudp", {})
+            comp_settings = method.get("compression", {})
+
+            tcp_enabled = tcp_settings.get("enabled", True)
+            udp_enabled = udp_settings.get("enabled", False)
+            rudp_enabled = rudp_settings.get("enabled", False)
+            rudp_mode = rudp_settings.get("mode", "rudp")
+            comp_enabled = comp_settings.get("enabled", False)
+
+        # SSP (Common logic)
         ssp_enabled = ssp_settings.get("enabled", False)
         print(f"   - SSP: {'Enabled' if ssp_enabled else 'Disabled'}")
         if ssp_enabled:
             print(f"     • SSP Threshold: {ssp_settings.get('ssp_threshold', 1.0)}")
 
         # UDP
-        udp_settings = method.get("udp", {})
-        udp_enabled = udp_settings.get("enabled", False)
         print(f"   - UDP: {'Enabled' if udp_enabled else 'Disabled'}")
         if udp_enabled:
-            print(f"     • FEC M: {udp_settings.get('fec_m', 9)}")
-
-        # TCP (explicit setting, defaults to True for backward compatibility)
-        tcp_settings = method.get("tcp", {})
-        tcp_enabled = tcp_settings.get("enabled", True) if tcp_settings else True
-        # TCP is only active if UDP and RUDP are disabled
-        tcp_active = tcp_enabled and not udp_enabled
+            print(f"     • FEC M: {udp_settings.get('fec_m', 'auto')}")
 
         # RUDP / E-RUDP
-        rudp_settings = method.get("rudp", {})
-        rudp_enabled = rudp_settings.get("enabled", False)
-        rudp_mode = rudp_settings.get("mode", "rudp")
         if rudp_enabled:
-            tcp_active = False  # RUDP takes precedence over TCP
             mode_display = "E-RUDP" if rudp_mode == "erudp" else "RUDP"
             print(f"   - {mode_display}: Enabled")
             print(f"     • Window Size: {rudp_settings.get('window_size', 16)}")
@@ -1901,31 +1940,34 @@ if __name__ == "__main__":
         else:
             print("   - RUDP: Disabled")
 
-        # Show active TCP only if it's the active protocol
-        if tcp_active:
-            print("   - TCP: Enabled (Active Transport)")
-        else:
-            print(f"   - TCP: {'Enabled' if tcp_enabled else 'Disabled'}")
+        # TCP Logic
+        # RUDP takes precedence over TCP if strictly one protocol allowed,
+        # but for logging we just show status.
+        # Dynamic mode enables both TCP and UDP.
 
-        # Protocol validation
-        enabled_protocols = []
-        if tcp_active:
-            enabled_protocols.append("TCP")
+        print(f"   - TCP: {'Enabled' if tcp_enabled else 'Disabled'}")
+
+        # Protocol validation / Display Active
+        active_protocols = []
+        if tcp_enabled:
+            active_protocols.append("TCP")
         if udp_enabled:
-            enabled_protocols.append("UDP")
+            active_protocols.append("UDP")
         if rudp_enabled:
-            enabled_protocols.append(mode_display if rudp_mode == "erudp" else "RUDP")
+            active_protocols.append("RUDP")
 
-        if len(enabled_protocols) == 0:
-            print("\n⚠️  WARNING: No transport protocol enabled! Set tcp.enabled, udp.enabled, or rudp.enabled to true.")
-        elif len(enabled_protocols) > 1:
-            print(f"\n⚠️  WARNING: Multiple transport protocols enabled: {enabled_protocols}. Only one should be enabled.")
+        if isinstance(method, str) and method == "dynamic":
+            print("\n✅ Active Transport Protocol: DYNAMIC (TCP/UDP switching)")
+        elif len(active_protocols) == 1:
+            print(f"\n✅ Active Transport Protocol: {active_protocols[0]}")
+        elif len(active_protocols) > 1:
+            # This happens in dynamic mode or misconfig (legacy)
+            # If dynamic, handled above.
+            print(f"\n✅ Active Transport Protocols: {', '.join(active_protocols)}")
         else:
-            print(f"\n✅ Active Transport Protocol: {enabled_protocols[0]}")
+            print("\n⚠️  WARNING: No transport protocol enabled!")
 
         # Compression
-        comp_settings = method.get("compression", {})
-        comp_enabled = comp_settings.get("enabled", False)
         print(f"   - Compression: {'Enabled' if comp_enabled else 'Disabled'}")
         if comp_enabled:
             print(f"     • Initial Method: {comp_settings.get('initial_method', 'zlib')}")

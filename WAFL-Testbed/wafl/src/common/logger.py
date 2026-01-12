@@ -39,6 +39,8 @@ class MetricsLogger:
         "fec_decode_time_ms",  # FEC デコード処理時間
         "bytes_sent",
         "bytes_received",
+        "app_bytes_sent",  # Application payload sent (metric for useful data)
+        "app_bytes_received",  # Application payload received (metric for goodput)
         "timeout_models",  # 追加
         # RUDP/E-RUDP metrics
         "rudp_retransmissions",
@@ -58,6 +60,13 @@ class MetricsLogger:
         "compression_time_ms",
         "original_size",
         "compressed_size",
+        # Dynamic Protocol Counts
+        "protocol_tcp_count",
+        "protocol_udp_count",
+        "protocol_rudp_count",
+        # UDP Dynamic Params
+        "udp_avg_parity",
+        "udp_avg_pacing_ms",
     ]
 
     def __init__(self, experiment_id: str, node_name: str, start_timestamp: float = None):
@@ -96,9 +105,12 @@ class MetricsLogger:
     def _init_csv(self):
         """Initialize CSV file with all possible columns."""
         if not os.path.exists(self.csv_path) or os.path.getsize(self.csv_path) == 0:
+            print(f"Creating new metrics.csv at {self.csv_path}")
             with open(self.csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=self.ALL_COLUMNS)
                 writer.writeheader()
+        else:
+            print(f"Appending to existing metrics.csv at {self.csv_path}")
         self.header_written = True
 
     def _write_row(self, entry: dict):
@@ -108,6 +120,8 @@ class MetricsLogger:
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=self.ALL_COLUMNS)
             writer.writerow(full_entry)
+            f.flush()
+            os.fsync(f.fileno())
 
     def log_epoch(self, phase: str, epoch: int, metrics: dict):
         """Log all metrics for an epoch to CSV.
@@ -148,6 +162,7 @@ class MetricsLogger:
             "epoch_duration_ms": metrics.get("epoch_duration_ms", ""),
             "compute_time_ms": metrics.get("compute_time_ms", ""),
             "comm_time_ms": metrics.get("comm_time_ms", 0),
+            "waiting_time_ms": metrics.get("waiting_time_ms", 0),
             # SSP metrics - default to 0 so graphs can show "no waste"
             "wasted_ms": metrics.get("wasted_ms", 0),
             "wasted_norm": metrics.get("wasted_norm", 0),
@@ -164,16 +179,34 @@ class MetricsLogger:
             "fec_decode_time_ms": metrics.get("fec_decode_time_ms", 0),
             "bytes_sent": metrics.get("bytes_sent", 0),
             "bytes_received": metrics.get("bytes_received", 0),
-            "timeout_models": metrics.get("timeout_models", 0),  # 追加
+            "app_bytes_sent": metrics.get("app_bytes_sent", 0),
+            "app_bytes_received": metrics.get("app_bytes_received", 0),
+            "timeout_models": metrics.get("timeout_models", 0),
+            # UDP Dynamic Params
+            "udp_avg_parity": metrics.get("udp_avg_parity", 0),
+            "udp_avg_pacing_ms": metrics.get("udp_avg_pacing_ms", 0),
             # RUDP specific
             "rudp_nacks_sent": metrics.get("rudp_nacks_sent", 0),
             "fec_recoveries": metrics.get("fec_recoveries", 0),
+            "rudp_retransmissions": metrics.get("rudp_retransmissions", 0),
+            "rudp_acks_sent": metrics.get("rudp_acks_sent", 0),
+            "rudp_acks_received": metrics.get("rudp_acks_received", 0),
+            "rudp_eaks_sent": metrics.get("rudp_eaks_sent", 0),
+            "rudp_eaks_received": metrics.get("rudp_eaks_received", 0),
+            "rudp_aged_packets": metrics.get("rudp_aged_packets", 0),
+            "rudp_connect_time_ms": metrics.get("rudp_connect_time_ms", 0),
+            "rudp_avg_rtt_ms": metrics.get("rudp_avg_rtt_ms", 0),
+            "rudp_max_retries_reached": metrics.get("rudp_max_retries_reached", 0),
             # Compression metrics
             "compression_method": metrics.get("compression_method", "none"),
             "compression_ratio": metrics.get("compression_ratio", 1.0),
             "compression_time_ms": metrics.get("compression_time_ms", 0),
             "original_size": metrics.get("original_size", 0),
             "compressed_size": metrics.get("compressed_size", 0),
+            # Protocol Counts
+            "protocol_tcp_count": metrics.get("protocol_tcp_count", 0),
+            "protocol_udp_count": metrics.get("protocol_udp_count", 0),
+            "protocol_rudp_count": metrics.get("protocol_rudp_count", 0),
         }
         self._write_row(entry)
 

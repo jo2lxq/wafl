@@ -4,7 +4,7 @@
     "self": 32,
     "wafl": 128
   },
-  "contact_pattern": "contact_pattern/rgg_n28_a1000_d10_s01.json",
+  "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
     "aggregation_strategy": "FedAvg",
     "batch_size": 32,
@@ -17,16 +17,9 @@
   "mobility_aware": {
     "enabled": false
   },
-  "method": {
-    "ssp": {
-      "enabled": true,
-      "ssp_threshold": 0.9
-    },
-    "udp": {
-      "enabled": false
-    },
-    "compression": {
-      "enabled": false
-    }
+  "method": "tcp",
+  "ssp": {
+    "enabled": true,
+    "ssp_threshold": 0.9
   }
 }

@@ -1,8 +1,8 @@
 {
-  "experiment_name": "Experiment 1: Synchronous Scalability Verification - SSP (p=0.8)",
+  "experiment_name": "Experiment 0: poor (UDP)",
   "epochs": {
-    "self": 32,
-    "wafl": 128
+    "self": 2,
+    "wafl": 8
   },
   "contact_pattern": "contact_pattern/rgg_n50_a1000_s04_s01.json",
   "wafl_phase": {
@@ -12,14 +12,13 @@
     "coefficiency": 1.0
   },
   "network_condition": {
-    "enabled": false
+    "enabled": true,
+    "rate": "1mbit",
+    "delay": "50ms",
+    "loss": "12%"
   },
   "mobility_aware": {
     "enabled": false
   },
-  "method": "tcp",
-  "ssp": {
-    "enabled": true,
-    "ssp_threshold": 0.8
-  }
+  "method": "udp"
 }
