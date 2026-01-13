@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 3: Integrated Scenario - Proposed Full (SSP + UDP + FEC + Adaptive Compression)",
+  "experiment_name": "Experiment 3: Integrated Scenario - Proposed Full (SSP + dynamic)",
   "epochs": {
     "self": 64,
     "wafl": 2048

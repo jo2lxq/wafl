@@ -457,11 +457,36 @@ class WaflAgent:
             except Exception as e:
                 self.logger.warning(f"Failed to read parameters.json: {e}. Using defaults.")
 
+            # Prepare environment variables
+            env_vars_str = "-e LOG_LEVEL=DEBUG"
+            wandb_key = os.environ.get("WANDB_API_KEY")
+
+            # Fallback: Try reading .env file directly if key is missing
+            if not wandb_key and os.path.exists(".env"):
+                try:
+                    with open(".env", "r") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("WANDB_API_KEY="):
+                                wandb_key = line.split("=", 1)[1].strip()
+                                # Remove quotes if present
+                                if (wandb_key.startswith('"') and wandb_key.endswith('"')) or (wandb_key.startswith("'") and wandb_key.endswith("'")):
+                                    wandb_key = wandb_key[1:-1]
+                                break
+                except Exception as e:
+                    self.logger.warning(f"Failed to parse .env file: {e}")
+
+            if wandb_key:
+                env_vars_str += f" -e WANDB_API_KEY={wandb_key}"
+                self.logger.debug("✅ WANDB_API_KEY found and passed to container")
+            else:
+                self.logger.warning("⚠️ WANDB_API_KEY not found in environment or .env. Logging to WandB will fail.")
+
             # Start container using manager
             success = self.container_manager.start_wafl_container(
                 node_info=node_info,
                 experiment_params=experiment_params,
-                env_vars="-e LOG_LEVEL=DEBUG",
+                env_vars=env_vars_str,
             )
 
             if not success:

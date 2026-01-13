@@ -46,27 +46,25 @@ run = [
 [tasks.start]
 depends = ["deploy"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/main.py'\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && set -a && source .env && set +a && .venv/bin/python -u ctrl/main.py'\"",
 ]
 
 [tasks.experiments]
 description = "Run all experiments from ctrl/parameters/ sequentially"
 depends = ["deploy"]
 run = [
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/run_experiments.py'\"",
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"screen -dmS wafl bash -c 'cd ${DEPLOY_CTRL_SERVER_DIST} && set -a && source .env && set +a && .venv/bin/python -u ctrl/run_experiments.py'\"",
 ]
 
 [tasks.analyze]
 description = "Analyze experiment results on management server and collect results"
 run = [
-  "echo '📊 Preparing analysis...'",
   "echo '📥 Collecting results from all nodes...'",
   "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --collect\"",
-  "echo '📊 Running analysis on management server...'",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --all\"",
-  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"cd ${DEPLOY_CTRL_SERVER_DIST} && .venv/bin/python -u ctrl/analyze.py --compare\"",
-  "echo '📥 Downloading analysis results...'",
+  "echo '📥 Downloading collected results...'",
   "rsync -arhvz --progress ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
+  "echo '📊 Running analysis locally...'",
+  ".venv/bin/python -u ctrl/analyze.py --generate",
   "echo '✨ Analysis complete!'",
 ]
 

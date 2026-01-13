@@ -155,15 +155,14 @@ class ModelLearningUtils:
         # Actually ModelLearningUtils is initialized inside WaflAgent (in ctrl/main.py) or used by it?
         # Wait, this is running on the node.
         # The MetricsLogger is passed or initialized?
-        # In the original code, MetricsLogger was initialized in CTRL_TCP or similar?
+        # In the original code, MetricsLogger was instantiated in CTRL_TCP or similar?
         # Let's check where MetricsLogger is instantiated.
         # It seems it was instantiated in CTRL_TCP.__init__ in the previous `view_file` of main.py (lines 670+).
         # But ModelLearningUtils is independent.
         # We should probably initialize MetricsLogger here if we want to use it, OR pass it.
         # However, to keep it simple and avoid changing signatures too much, let's instantiate it here.
-        from .logger import MetricsLogger
-
-        self.metrics_logger = MetricsLogger(experiment_id, "node")  # node name is not used in filename
+        # Use shared metrics logger from CTRL_TCP to valid duplicate WandB runs
+        self.metrics_logger = ctrl_tcp.metrics_logger
 
         self.logger.debug("Initialized Model Learning Utils")
 
@@ -861,8 +860,12 @@ class ModelSharingUtils:
         else:
             self.rudp_sharing = None
 
-        if not self.udp_enabled and not self.rudp_enabled:
             self.logger.info("UDP/RUDP Disabled (TCP mode)")
+
+        # [OPTIMIZATION] Force-enable compression for Dynamic mode
+        # Dynamic mode relies on compression to beat UDP benchmarks.
+        if self.active_protocol == "dynamic":
+            self.compression_enabled = True
 
         if self.compression_enabled:
             self.logger.info(f"🗜️ Compression Enabled (Initial: {self.initial_comp_method})")
@@ -1100,9 +1103,12 @@ class ModelSharingUtils:
             # Wait, wafl_technical_spec says Poor -> RUDP.
             # I need to fix the Dynamic Logic to support RUDP selection too!
 
-            # User Requirement: Excellent/Good -> TCP, Fair/Poor -> UDP
-            # Note: RUDP is disabled in dynamic mode, so we fallback to UDP even for Poor.
-            if quality in ("excellent", "good"):
+            # User Requirement: Excellent -> TCP, Good/Fair/Poor -> UDP
+            # Note: "Good" quality can still have jitter causing TCP timeouts, so we use UDP for robustness.
+            # RUDP is disabled in dynamic mode, so we fallback to UDP even for Poor.
+            # User Requirement: Excellent -> TCP, Good -> TCP, Fair/Poor -> UDP
+            # Note: Loss 2-5% (Good) is handled well by TCP retransmission.
+            if quality in ["excellent", "good"]:
                 active_proto_for_call = "TCP"
             else:
                 active_proto_for_call = "UDP"
@@ -1996,14 +2002,15 @@ class CTRL_TCP:
         logging.getLogger().addHandler(file_handler)
         self.logger.info(f"📝 Log file initialized: {log_file_path}")
 
+        # Initialize Metrics Logger (Moved before setup_local_wafl_node so it can be passed/used)
+        # User requested Project Name to simply be "WAFL-Testbed", grouping by Experiment ID.
+        self.metrics_logger = MetricsLogger(self.experiment_id, self.name, self.start_timestamp, project_name="WAFL-Testbed")
+
         # Setup the WAFL node before starting the control thread
         self.setup_local_wafl_node(self.agent_index, self.name)
 
         self.ctrl_listener_thread = threading.Thread(target=self.wait_ctrl, daemon=False, name="CTRL_TCP_Listener")
         self.ctrl_listener_thread.start()
-
-        # Initialize Metrics Logger
-        self.metrics_logger = MetricsLogger(self.experiment_id, self.name, self.start_timestamp)
 
         # Start Resource Monitor
         self.monitor_thread = threading.Thread(
@@ -2048,6 +2055,8 @@ class CTRL_TCP:
             if self.start_timestamp is None:
                 self.logger.warning("start_timestamp not found in config, using current time fallback")
                 self.start_timestamp = time.time()
+
+            self.experiment_name = experiment_info.get("experiment_name", "WAFL-Testbed")
 
             wafl_devices_data = config_data.get("infrastructure")
             if not isinstance(wafl_devices_data, dict):

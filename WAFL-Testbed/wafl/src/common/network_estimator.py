@@ -22,11 +22,13 @@ class NetworkMetrics:
 
     def get_quality_level(self) -> str:
         """ネットワーク品質レベルを返す"""
-        if self.packet_loss_rate < 0.02 and self.rtt_ms < 20:
+        # User defined reference: Ex(2%,5ms), Good(5%,15ms), Fair(8%,30ms), Poor(12%,50ms)
+        # Thresholds set strictly based on definition (RTT roughly 2x one-way delay)
+        if self.packet_loss_rate <= 0.02 and self.rtt_ms <= 10:
             return "excellent"
-        elif self.packet_loss_rate < 0.05 and self.rtt_ms < 50:
+        elif self.packet_loss_rate <= 0.05 and self.rtt_ms <= 30:
             return "good"
-        elif self.packet_loss_rate < 0.10 and self.rtt_ms < 100:
+        elif self.packet_loss_rate <= 0.08 and self.rtt_ms <= 60:
             return "fair"
         else:
             return "poor"
@@ -119,7 +121,7 @@ class NetworkEstimator:
     """Network state estimator using observed measurements, handling global and per-peer states."""
 
     WINDOW_SIZE = 100
-    ALPHA = 0.2
+    ALPHA = 0.1  # Smoother estimation to prevent jitter-based flipping
 
     def __init__(self):
         self.logger = logging.getLogger("NetworkEstimator")

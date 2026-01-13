@@ -161,34 +161,9 @@ def run_experiment(
         return "success"
 
     try:
-        # Step 1: Copy parameter file to parameters.json (with schema adaptation)
+        # Step 1: Copy parameter file to parameters.json
         print(f"📄 Updating {parameters_json.name}...")
-
-        # Check if method is string and needs conversion (for backward compatibility with main.py)
-        method_val = params.get("method")
-        if isinstance(method_val, str) and method_val != "dynamic":
-            method_str = method_val.lower()
-            print(f"⚠️  Converting string method '{method_str}' to dictionary for compatibility")
-
-            new_method = {}
-            if method_str == "tcp":
-                new_method = {"tcp": {"enabled": True}, "udp": {"enabled": False}, "rudp": {"enabled": False}, "compression": {"enabled": False, "initial_method": "zlib"}}
-            elif method_str == "udp":
-                new_method = {"tcp": {"enabled": False}, "udp": {"enabled": True, "fec_m": "auto"}, "rudp": {"enabled": False}, "compression": {"enabled": False, "initial_method": "zlib"}}
-            elif method_str == "rudp":
-                new_method = {"tcp": {"enabled": False}, "udp": {"enabled": False}, "rudp": {"enabled": True, "mode": "rudp", "max_retries": 20}, "compression": {"enabled": False, "initial_method": "zlib"}}
-
-            if new_method:
-                # Create a copy of params to avoid modifying the original dict if used elsewhere
-                modified_params = params.copy()
-                modified_params["method"] = new_method
-                save_json(parameters_json, modified_params)
-            else:
-                # Fallback for unknown strings
-                shutil.copy2(param_file, parameters_json)
-        else:
-            # Copy as is (dict or "dynamic" string)
-            shutil.copy2(param_file, parameters_json)
+        shutil.copy2(param_file, parameters_json)
 
         # Step 2: Update execution_config.json with experiment_name
         print(f"⚙️  Updating experiment_name in {execution_config.name}...")

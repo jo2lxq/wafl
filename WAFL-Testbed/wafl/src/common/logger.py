@@ -4,6 +4,8 @@ import csv
 import os
 import time
 
+import wandb
+
 
 class MetricsLogger:
     """Extended metrics logger that writes to CSV with support for SSP, UDP, and compression metrics."""
@@ -69,13 +71,14 @@ class MetricsLogger:
         "udp_avg_pacing_ms",
     ]
 
-    def __init__(self, experiment_id: str, node_name: str, start_timestamp: float = None):
+    def __init__(self, experiment_id: str, node_name: str, start_timestamp: float = None, project_name: str = "WAFL-Testbed"):
         """Initialize metrics logger.
 
         Args:
             experiment_id: The experiment ID
             node_name: Node name
             start_timestamp: Experiment start timestamp (epoch)
+            project_name: WandB project name (Experiment Name)
         """
         self.experiment_id = experiment_id
         self.node_name = node_name
@@ -102,6 +105,22 @@ class MetricsLogger:
         # Initialize header with all columns
         self._init_csv()
 
+        # Initialize WandB
+        try:
+            wandb.init(
+                project=project_name,
+                name=f"{node_name}",
+                group=experiment_id,
+                config={
+                    "experiment_id": experiment_id,
+                    "node_name": node_name,
+                    "start_time": self.start_time,
+                },
+                reinit=True,
+            )
+        except Exception as e:
+            print(f"Failed to initialize wandb: {e}")
+
     def _init_csv(self):
         """Initialize CSV file with all possible columns."""
         if not os.path.exists(self.csv_path) or os.path.getsize(self.csv_path) == 0:
@@ -122,6 +141,15 @@ class MetricsLogger:
             writer.writerow(full_entry)
             f.flush()
             os.fsync(f.fileno())
+
+        # Log to WandB
+        try:
+            # Convert empty strings to None or 0 where appropriate, or let wandb handle it.
+            # Wandb handles dicts well. We should filter out internal CSV artifacts if any.
+            # But here `entry` is cleaner than `full_entry` because it doesn't have empty strings for missing values yet.
+            wandb.log(entry)
+        except Exception:
+            pass
 
     def log_epoch(self, phase: str, epoch: int, metrics: dict):
         """Log all metrics for an epoch to CSV.
