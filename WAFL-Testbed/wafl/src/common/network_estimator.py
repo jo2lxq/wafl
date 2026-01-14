@@ -5,6 +5,7 @@
 """
 
 import logging
+import math
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -196,27 +197,24 @@ class NetworkEstimator:
         metrics = self.get_metrics(peer_ip)
         loss = metrics.packet_loss_rate
 
-        if loss < 0.002:
-            parity = 1
-        elif loss < 0.005:
-            parity = max(1, int(k * 0.0625))
-        elif loss < 0.01:
-            parity = max(1, int(k * 0.0625))
-        elif loss < 0.02:
-            parity = max(2, int(k * 0.125))
-        elif loss < 0.05:
-            parity = max(4, int(k * 0.25))
-        elif loss < 0.10:
-            parity = max(8, int(k * 0.50))
-        elif loss < 0.20:
-            parity = max(12, int(k * 0.75))
-        else:
-            parity = max(16, int(k * 1.0))
+        # Linear redundancy calculation with safety factor
+        # Linear: parity = ceil(k * loss_rate * safety_factor)
+        # Factor 2.5 means:
+        # Loss 1% -> +2.5% (min 1)
+        # Loss 5% -> +12.5% (k=16 -> +2)
+        # Loss 20% -> +50% (k=16 -> +8)
+        safety_factor = 2.5
+        parity = math.ceil(k * loss * safety_factor)
 
+        # Always ensure at least 1 parity packet (min 1/k redundancy)
+        # to allow recovery of single packet loss without retransmission
+        parity = max(1, parity)
+
+        # Cap at zfec limit (k + m <= 256)
         if k + parity > 256:
             parity = 256 - k
 
-        return parity
+        return int(parity)
 
     def get_recommended_window_size(self, peer_ip: Optional[str] = None) -> int:
         metrics = self.get_metrics(peer_ip)
@@ -238,27 +236,26 @@ class NetworkEstimator:
 
     def get_recommended_pacing_delay(self, peer_ip: Optional[str] = None) -> float:
         metrics = self.get_metrics(peer_ip)
-        loss = metrics.packet_loss_rate
         bandwidth = metrics.bandwidth_mbps
 
-        if loss < 0.005:
-            loss_based = 0.0
-        elif loss < 0.02:
-            loss_based = 0.0001
-        elif loss < 0.05:
-            loss_based = 0.0005
-        else:
-            loss_based = 0.001 + (0.001 * loss * 10)
+        # Pure Bandwidth-Based Pacing
+        # Do not penalize for loss (which is often random/interference in this context).
+        # We rely on FEC to handle loss, and Pacing to handle bottleneck capacity.
 
         if bandwidth <= 0:
-            bw_based = 0.0
-        else:
-            packet_bits = 1400 * 8
-            packet_time = packet_bits / (bandwidth * 1_000_000)
-            bw_based = packet_time * 0.5
+            # Default safe pacing if unknown
+            return 0.002  # 2ms
 
-        pacing = max(loss_based, bw_based)
-        return max(0.0, min(0.02, pacing))
+        packet_bits = 1400 * 8
+        packet_time = packet_bits / (bandwidth * 1_000_000)
+
+        # Pacing at 50% of packet serialization time to avoid bursting
+        # If BW is 100Mbps, packet_time ~ 0.11ms -> Pacing 0.05ms
+        # rsleep/time.sleep resolution is poor (1ms+), so accumulation might be needed in sender.
+        # But here we just return the recommended delay.
+        pacing_delay = packet_time * 0.5
+
+        return max(0.0, min(0.01, pacing_delay))
 
 
 # グローバルインスタンス (シングルトン)

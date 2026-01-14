@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Optimized Dockerfile for faster builds with BuildKit cache
-FROM python:3.11-slim AS base
+FROM python:3.11-slim@sha256:d963377c651e0ba71336362d37cb32531e9a569407c7bea07e2a05a88dde145d AS base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 FROM system-deps AS python-deps
 
 # Install uv (copy from official image)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest@sha256:816fdce3387ed2142e37d2e56e1b1b97ccc1ea87731ba199dc8a25c04e4997c5 /uv /bin/uv
 
 # Set working directory
 WORKDIR /app

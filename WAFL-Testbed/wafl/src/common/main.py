@@ -1136,16 +1136,38 @@ class ModelSharingUtils:
 
                 self.logger.debug(f"📡 UDP MDLREQ sent to {peer_IP}, waiting for UDP model...")
 
-                # Wait for UDP data using configured timeout (no busy-wait)
+                # Wait for UDP data using configured timeout with Aggressive MDLREQ Retransmission
                 start_wait = time.time()
                 deadline = start_wait + float(self.udp_model_completion_timeout)
+                last_req_time = start_wait
+                RESEND_INTERVAL = 1.5  # Retransmit MDLREQ every 1.5s if no model received
+
                 data_or_future = None
                 with self.received_models_cv:
                     while peer_IP not in self.received_models:
-                        remaining = deadline - time.time()
+                        now = time.time()
+                        remaining = deadline - now
                         if remaining <= 0:
                             break
-                        self.received_models_cv.wait(timeout=min(0.2, remaining))
+
+                        # Aggressive Retransmission: If waiting too long, resend MDLREQ
+                        # But ONLY if we haven't received any data recently (streaming is not active)
+                        if now - last_req_time > RESEND_INTERVAL:
+                            last_activity = self.udp_sharing.get_last_peer_activity(peer_IP)
+                            is_active = (now - last_activity) < 1.0
+
+                            if not is_active:
+                                self.logger.debug(f"🔄 Resending UDP MDLREQ to {peer_IP} (idle for {now - last_activity:.1f}s)")
+                                self.udp_sharing.send_mdlreq(peer_IP, self.port, self.addr)
+                                last_req_time = now
+                            else:
+                                # Transfer is active, just reset timer to avoid spamming
+                                last_req_time = now
+
+                        # Short wait to allow checking retransmission timer
+                        wait_slice = min(0.2, remaining, max(0.1, RESEND_INTERVAL - (now - last_req_time)))
+                        self.received_models_cv.wait(timeout=wait_slice)
+
                     if peer_IP in self.received_models:
                         data_or_future = self.received_models.pop(peer_IP)
 
@@ -1573,7 +1595,9 @@ class ModelSharingUtils:
                 WAIT_TIME = min(WAIT_TIME * GROWTH_FACTOR, 5.0)  # Cap wait time at 5s
 
         # Record fetch failure for TCP stats (used for survival rate calculation)
-        if not FETCHED and self.udp_sharing is None:
+        # Note: In Dynamic/UDP mode, this captures high-level timeouts (e.g. MDLREQ failure)
+        # that are not captured by UDPModelSharing (which only sees partial packet loss).
+        if not FETCHED:
             self.tcp_stats["fetch_failed"] = self.tcp_stats.get("fetch_failed", 0) + 1
             self.logger.warning(f"Failed to fetch model from {peer_IP} after {max_retries} retries")
 
@@ -1648,25 +1672,33 @@ class ModelSharingUtils:
 
         # --- Survival Rate and Model Counts (Application Layer) ---
         # --- Survival Rate and Model Counts (Application Layer) ---
+        # --- Survival Rate and Model Counts (Application Layer) ---
+        # Initialize accumulators for aggregated metrics
+        agg_sent_models = 0
+        agg_sent_failed = 0
+        agg_received_models = 0
+        agg_timeout_models = 0
+        agg_app_bytes_sent = 0
+        agg_app_bytes_received = 0
+
+        # Protocol-specific metrics to merge later
+        proto_specific_metrics = {}
+
+        # 1. RUDP/E-RUDP Statistics
         if self.rudp_sharing is not None:
-            # RUDP/E-RUDP mode
-            # Calculate Delta
             current_rudp = self.rudp_sharing.get_stats()
             delta_rudp = self._get_delta_stats(current_rudp, self._last_reported_rudp)
             self._last_reported_rudp = current_rudp.copy()
 
-            # Survival rate should be calculated from cumulative or delta?
-            # It's a rate, so usually current epoch state.
-            # get_survival_rate() in rudp_sharing uses self.stats, which is now cumulative for the epoch.
-            # So reporting it directly is correct (Snapshot).
+            agg_sent_models += delta_rudp.get("sent_models", 0)
+            agg_sent_failed += delta_rudp.get("sent_failed", 0)
+            agg_received_models += delta_rudp.get("received_models", 0)
+            agg_timeout_models += delta_rudp.get("timeout_models", 0)
+            agg_app_bytes_sent += delta_rudp.get("bytes_sent", 0)
+            agg_app_bytes_received += delta_rudp.get("bytes_received", 0)
 
-            metrics.update(
+            proto_specific_metrics.update(
                 {
-                    "survival_rate": self.rudp_sharing.get_survival_rate(),
-                    "sent_models": delta_rudp.get("sent_models", 0),
-                    "sent_failed": delta_rudp.get("sent_failed", 0),
-                    "received_models": delta_rudp.get("received_models", 0),
-                    "timeout_models": delta_rudp.get("timeout_models", 0),
                     "fec_recovery_success": delta_rudp.get("fec_recoveries", 0),
                     "fec_recovery_fail": 0,
                     # RUDP-specific metrics
@@ -1676,69 +1708,72 @@ class ModelSharingUtils:
                     "rudp_eaks_sent": delta_rudp.get("eaks_sent", 0),
                     "rudp_eaks_received": delta_rudp.get("eaks_received", 0),
                     "rudp_aged_packets": delta_rudp.get("aged_packets", 0),
-                    # Gauges (State values, do not use Delta)
+                    # Gauges
                     "rudp_connect_time_ms": current_rudp.get("connect_time_ms", 0),
                     "rudp_avg_rtt_ms": current_rudp.get("avg_rtt_ms", 0),
                     "rudp_max_retries_reached": delta_rudp.get("max_retries_reached", 0),
                     "rudp_nacks_sent": delta_rudp.get("nacks_sent", 0),
-                    # App Bytes (Overwrite prevention)
-                    "app_bytes_sent": delta_rudp.get("bytes_sent", 0),
-                    "app_bytes_received": delta_rudp.get("bytes_received", 0),
                 }
             )
-        elif self.udp_sharing is not None:
+
+        # 2. UDP Statistics
+        if self.udp_sharing is not None:
             current_udp = self.udp_sharing.stats
             delta_udp = self._get_delta_stats(current_udp, self._last_reported_udp)
             self._last_reported_udp = current_udp.copy()
 
-            metrics.update(
+            agg_sent_models += delta_udp.get("sent_models", 0)
+            agg_sent_failed += delta_udp.get("sent_failed", 0)
+            agg_received_models += delta_udp.get("received_models", 0)
+            agg_timeout_models += delta_udp.get("timeout_models", 0)
+            agg_app_bytes_sent += delta_udp.get("bytes_sent", 0)
+            agg_app_bytes_received += delta_udp.get("bytes_received", 0)
+
+            # For specific metrics, we might overwrite RUDP ones if both active (unlikely)
+            # Use distinct keys or prioritizing UDP if Dynamic
+            proto_specific_metrics.update(
                 {
-                    "survival_rate": self.udp_sharing.get_survival_rate(),
-                    "sent_models": delta_udp.get("sent_models", 0),
-                    "sent_failed": delta_udp.get("sent_failed", 0),
-                    "received_models": delta_udp.get("received_models", 0),
-                    "timeout_models": delta_udp.get("timeout_models", 0),
                     "fec_recovery_success": delta_udp.get("fec_recovery_success", 0),
                     "fec_recovery_fail": delta_udp.get("fec_recovery_fail", 0),
                     "fec_encode_time_ms": delta_udp.get("fec_encode_time_ms", 0),
                     "fec_decode_time_ms": delta_udp.get("fec_decode_time_ms", 0),
-                    # Dynamic params (averaged)
                     "udp_avg_parity": delta_udp.get("sum_parity", 0) / delta_udp.get("total_transfers", 1) if delta_udp.get("total_transfers", 0) > 0 else 0,
                     "udp_avg_pacing_ms": (delta_udp.get("sum_pacing_delay", 0.0) / delta_udp.get("total_transfers", 1) * 1000) if delta_udp.get("total_transfers", 0) > 0 else 0,
-                    # App Bytes (Overwrite prevention)
-                    "app_bytes_sent": delta_udp.get("bytes_sent", 0),
-                    "app_bytes_received": delta_udp.get("bytes_received", 0),
                 }
             )
-        else:
-            # TCP mode
-            current_tcp = self.tcp_stats
-            delta_tcp = self._get_delta_stats(current_tcp, self._last_reported_tcp)
-            self._last_reported_tcp = current_tcp.copy()
 
-            # Survival rate calculation: use CUMULATIVE stats (current_tcp)
-            fetch_success = current_tcp.get("models_received", 0)
-            fetch_failed = current_tcp.get("fetch_failed", 0)
-            fetch_attempts = fetch_success + fetch_failed
-            survival_rate = fetch_success / fetch_attempts if fetch_attempts > 0 else 1.0
+        # 3. TCP Statistics (Always processed as fallback or primary)
+        current_tcp = self.tcp_stats
+        delta_tcp = self._get_delta_stats(current_tcp, self._last_reported_tcp)
+        self._last_reported_tcp = current_tcp.copy()
 
-            metrics.update(
-                {
-                    "survival_rate": survival_rate,
-                    "sent_models": delta_tcp.get("models_sent", 0),
-                    "sent_failed": delta_tcp.get("fetch_failed", 0),
-                    "received_models": delta_tcp.get("models_received", 0),
-                    "timeout_models": delta_tcp.get("fetch_failed", 0),
-                    "fec_recovery_success": 0,
-                    "fec_recovery_fail": 0,
-                    # App Bytes (TCP uses physical as app roughly, but let's record 0 or copy physical?)
-                    # Since TCP mode retransmissions are hidden, Physical > App.
-                    # But we don't track explicit payload bytes in tcp_stats (ControlNode might).
-                    # For now, 0 or missing for TCP app_bytes is acceptable, means "use fallback".
-                    "app_bytes_sent": delta_tcp.get("bytes_sent", 0),  # Typically 0 as tcp_stats doesn't track bytes
-                    "app_bytes_received": delta_tcp.get("bytes_received", 0),
-                }
-            )
+        agg_sent_models += delta_tcp.get("models_sent", 0)
+        # TCP does not track sent_failed explicitly in this dict, assume 0
+        agg_received_models += delta_tcp.get("models_received", 0)
+        agg_timeout_models += delta_tcp.get("fetch_failed", 0)
+        agg_app_bytes_sent += delta_tcp.get("bytes_sent", 0)
+        agg_app_bytes_received += delta_tcp.get("bytes_received", 0)
+
+        # Survival Rate Calculation (Aggregate)
+        # Survival = Received / (Received + Timeouts)
+        total_fetch_attempts = agg_received_models + agg_timeout_models
+        survival_rate = agg_received_models / total_fetch_attempts if total_fetch_attempts > 0 else 1.0
+
+        # Update Metrics
+        metrics.update(
+            {
+                "survival_rate": survival_rate,
+                "sent_models": agg_sent_models,
+                "sent_failed": agg_sent_failed,
+                "received_models": agg_received_models,
+                "timeout_models": agg_timeout_models,
+                "app_bytes_sent": agg_app_bytes_sent,
+                "app_bytes_received": agg_app_bytes_received,
+            }
+        )
+
+        # Merge protocol specific metrics
+        metrics.update(proto_specific_metrics)
 
         # --- Compression Metrics ---
         if self.compression_manager is not None:
@@ -1919,15 +1954,25 @@ class ModelSharingUtils:
 
         # DYNAMIC TIMEOUT ADJUSTMENT
         # Keep timeout consistent with estimator RTT to avoid premature cancellation.
+        # Reduced base timeouts to improve Epoch Duration (fail fast & retry).
+        # With aggressive MDLREQ retransmission, we don't need long waits for initial packet.
         if packet_loss < 0.05:
-            dynamic_timeout = 10.0
+            dynamic_timeout = 5.0  # Was 10.0
         elif packet_loss < 0.15:
-            dynamic_timeout = 8.0
+            dynamic_timeout = 6.0  # Was 8.0
         else:
-            dynamic_timeout = 6.0
+            dynamic_timeout = 8.0  # Was 6.0 (High loss needs more time for FEC/Reconstruction)
 
         rtt_sec = (m.rtt_ms / 1000.0) if m.rtt_ms > 0 else 0.1
-        dynamic_timeout = max(dynamic_timeout, rtt_sec * 10)
+        # Ensure timeout allows for at least 15 RTTs (plenty for retransmissions if using ARQ, or just margin)
+        dynamic_timeout = max(dynamic_timeout, rtt_sec * 15)
+
+        # Bandwidth Safety Check: Ensure timeout is enough to transfer model at current BW
+        # Assume approx 2MB model size (16Mb) + 50% margin
+        if m.bandwidth_mbps > 0:
+            estimated_transfer_time = (2.0 * 8) / m.bandwidth_mbps
+            min_bw_timeout = estimated_transfer_time * 1.5
+            dynamic_timeout = max(dynamic_timeout, min_bw_timeout)
 
         # Update UDPModelSharing timeout if changed significantly
         current_timeout = self.udp_sharing.timeout

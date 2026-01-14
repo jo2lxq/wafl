@@ -114,7 +114,15 @@ class UDPModelSharing:
         self.callback = None
         self.mdlreq_callback = None
         self.mdlreq_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MDLREQ")
+        self.encode_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="FEC-Encode")
         self.stats_lock = threading.Lock()
+
+        # Activity tracking for smart retransmission
+        self.peer_last_activity = {}  # {peer_ip: timestamp}
+
+    def get_last_peer_activity(self, peer_ip: str) -> float:
+        """Return the timestamp of the last packet received from this peer."""
+        return self.peer_last_activity.get(peer_ip, 0.0)
 
     def _get_encoder(self, k: int, m: int):
         """Get or create cached encoder."""
@@ -233,8 +241,6 @@ class UDPModelSharing:
             else:
                 self._encode_cache_misses += 1
 
-            num_workers = min(8, total_chunks) if total_chunks > 0 else 1
-
             encoded_chunks = None
             if use_cache:
                 encoded_chunks = self._last_encoded_chunks
@@ -246,28 +252,29 @@ class UDPModelSharing:
                     return chunk_idx, original_len, blocks_out, (time.time() - t0) * 1000
 
                 encoded_by_idx = {}
-                with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                    future_to_chunk = {}
-                    for chunk_idx, blocks_in, original_len in chunks_data:
-                        future = executor.submit(_encode_task, chunk_idx, blocks_in, original_len)
-                        future_to_chunk[future] = chunk_idx
+                encoded_by_idx = {}
+                # Use persistent executor
+                future_to_chunk = {}
+                for chunk_idx, blocks_in, original_len in chunks_data:
+                    future = self.encode_executor.submit(_encode_task, chunk_idx, blocks_in, original_len)
+                    future_to_chunk[future] = chunk_idx
 
-                    packets_sent_in_batch = 0
-                    for future in as_completed(future_to_chunk):
-                        chunk_idx, original_len, blocks_out, enc_ms = future.result()
-                        fec_encode_time_ms += float(enc_ms)
-                        encoded_by_idx[chunk_idx] = (original_len, blocks_out)
+                packets_sent_in_batch = 0
+                for future in as_completed(future_to_chunk):
+                    chunk_idx, original_len, blocks_out, enc_ms = future.result()
+                    fec_encode_time_ms += float(enc_ms)
+                    encoded_by_idx[chunk_idx] = (original_len, blocks_out)
 
-                        for block_idx, block in enumerate(blocks_out):
-                            header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, m, 0)
-                            packet = header + block
-                            sock.sendto(packet, (target_ip, target_port))
-                            actual_bytes_sent += len(packet)
-                            packets_sent_in_batch += 1
+                    for block_idx, block in enumerate(blocks_out):
+                        header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, m, 0)
+                        packet = header + block
+                        sock.sendto(packet, (target_ip, target_port))
+                        actual_bytes_sent += len(packet)
+                        packets_sent_in_batch += 1
 
-                            if pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
-                                time.sleep(pacing_delay * self.BATCH_SIZE)
-                                packets_sent_in_batch = 0
+                        if pacing_delay > 0 and packets_sent_in_batch >= self.BATCH_SIZE:
+                            time.sleep(pacing_delay * self.BATCH_SIZE)
+                            packets_sent_in_batch = 0
 
                 encoded_chunks = [(i, encoded_by_idx[i][0], encoded_by_idx[i][1]) for i in range(total_chunks) if i in encoded_by_idx]
                 self._last_encoded_model_id = cache_key[0]
@@ -293,26 +300,6 @@ class UDPModelSharing:
             # Send END packet
             end_header = struct.pack("!BdIIIIIBBB", self.PTYPE_END, time.time(), current_seq, 0, 0, 0, 0, self.k, m, 0)
             sock.sendto(end_header, (target_ip, target_port))
-
-            # ====== PROACTIVE REDUNDANCY ======
-            loss_rate = metrics.packet_loss_rate
-            if loss_rate > 0.08 and parity > 0 and encoded_chunks is not None:
-                import random
-
-                extra_redundancy = min(parity, 2)
-                parity_indices = list(range(self.k, m))
-                for chunk_idx, original_len, blocks_out in encoded_chunks:
-                    if not parity_indices:
-                        continue
-                    idxs = parity_indices.copy()
-                    random.shuffle(idxs)
-                    for block_idx in idxs[:extra_redundancy]:
-                        block = blocks_out[block_idx]
-                        header = struct.pack("!BdIIIIIBBB", self.PTYPE_DATA, time.time(), current_seq, chunk_idx, total_chunks, block_idx, original_len, self.k, m, 0)
-                        packet = header + block
-                        sock.sendto(packet, (target_ip, target_port))
-                        actual_bytes_sent += len(packet)
-                self.logger.debug(f"📦 Proactive redundancy enabled (loss={loss_rate:.2%}): duplicated {extra_redundancy} packets")
 
             sock.close()
 
@@ -343,13 +330,13 @@ class UDPModelSharing:
                     oldest = min(self.sent_models_cache.keys())
                     del self.sent_models_cache[oldest]
 
-            self._network_estimator.record_packet_result(True, peer_ip=target_ip)
+            # self._network_estimator.record_packet_result(True, peer_ip=target_ip)  <-- REMOVED: Sending != Success
             return True
 
         except Exception as e:
             self.logger.error(f"❌ Failed to send model via UDP: {e}")
             self.stats["sent_failed"] += 1
-            self._network_estimator.record_packet_result(False, peer_ip=target_ip)
+            # self._network_estimator.record_packet_result(False, peer_ip=target_ip) <-- REMOVED: Sending error is local, not network loss
             return False
 
     def _send_model_no_fec(self, model_data: bytes, target_ip: str, target_port: int, pacing_delay: float) -> bool:
@@ -416,13 +403,13 @@ class UDPModelSharing:
             self.logger.info(f"📡 Sent model via UDP (NO-FEC) ({len(model_data)} bytes, {total_chunks} chunks) to {target_ip}")
             self.stats["sent_models"] += 1
             self.stats["bytes_sent"] += actual_bytes_sent
-            self._network_estimator.record_packet_result(True, peer_ip=target_ip)
+            # self._network_estimator.record_packet_result(True, peer_ip=target_ip) <-- REMOVED
             return True
 
         except Exception as e:
             self.logger.error(f"❌ Failed to send model via UDP (NO-FEC): {e}")
             self.stats["sent_failed"] += 1
-            self._network_estimator.record_packet_result(False, peer_ip=target_ip)
+            # self._network_estimator.record_packet_result(False, peer_ip=target_ip) <-- REMOVED
             return False
 
     def get_survival_rate(self) -> float:
@@ -489,6 +476,9 @@ class UDPModelSharing:
                     continue
 
                 if ptype in [self.PTYPE_DATA, self.PTYPE_MCAST, self.PTYPE_END]:
+                    # Update activity tracker
+                    self.peer_last_activity[peer_ip] = time.time()
+
                     peer_queue = self._get_or_create_peer_worker(peer_ip)
                     try:
                         peer_queue.put_nowait((data, addr, timestamp))
@@ -606,6 +596,29 @@ class UDPModelSharing:
                             duration = time.time() - float(state.get("first_packet_time", time.time()))
                             if duration > 0:
                                 self._network_estimator.record_transfer(len(model_data), duration, peer_ip=peer_ip)
+
+                            # Calculate and record Observed Loss Rate (Corrected Logic)
+                            sender_k = state.get("sender_k", 16)
+                            sender_m = state.get("sender_m", 0)
+                            if sender_m == 0:
+                                sender_m = sender_k  # For NO-FEC, m=k effectively
+
+                            total_chunks = state.get("meta", {}).get(0, {}).get("total", 0)
+                            if total_chunks == 0:
+                                # Safe fallback if meta not fully populated
+                                total_chunks = max(state.get("chunks", {}).keys(), default=-1) + 1
+
+                            expected_packets = total_chunks * sender_m
+                            received_packets = 0
+                            for c_idx, blocks in state.get("chunks", {}).items():
+                                received_packets += len(blocks)
+
+                            if expected_packets > 0:
+                                loss_rate = 1.0 - (received_packets / expected_packets)
+                                loss_rate = max(0.0, loss_rate)
+                                self._network_estimator.record_loss_rate_sample(loss_rate, peer_ip=peer_ip)
+                                self.logger.debug(f"📉 Observed Loss from {peer_ip}: {loss_rate:.1%} ({received_packets}/{expected_packets})")
+
                         except Exception:
                             pass
 

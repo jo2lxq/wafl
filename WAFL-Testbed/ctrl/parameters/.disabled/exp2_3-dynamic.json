@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - RUDP",
+  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - Dynamic",
   "epochs": {
     "self": 32,
     "wafl": 1024
@@ -20,5 +20,9 @@
     "network_conditions_file": "sumo/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
-  "method": "rudp"
+  "method": "dynamic",
+  "ssp": {
+    "enabled": true,
+    "ssp_threshold": 0.8
+  }
 }

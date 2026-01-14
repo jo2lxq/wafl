@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 0: poor (dynamic)",
+  "experiment_name": "Experiment 0: excellent (dynamic)",
   "epochs": {
     "self": 8,
     "wafl": 64
@@ -13,12 +13,16 @@
   },
   "network_condition": {
     "enabled": true,
-    "rate": "1mbit",
-    "delay": "50ms",
-    "loss": "12%"
+    "rate": "10mbit",
+    "delay": "5ms",
+    "loss": "2%"
   },
   "mobility_aware": {
     "enabled": false
   },
-  "method": "dynamic"
+  "method": "dynamic",
+  "ssp": {
+    "enabled": true,
+    "ssp_threshold": 0.8
+  }
 }
