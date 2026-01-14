@@ -29,11 +29,12 @@ class UDPModelSharing:
     PTYPE_ACK = 3
     PTYPE_END = 4  # End of Transfer (Fast NACK trigger)
     PTYPE_MDLREQ = 5  # Model Request (UDP-based MDLREQ)
+    PTYPE_ABORT = 6  # Abort signal (receiver timed out)
 
     MAX_RETRIES = 10  # Max NACK attempts
     BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
 
-    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float, max_packet_size: int = None):
+    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float, max_packet_size: int = None, fast_mode: bool = False):
         self.ip = ip
         self.port = port
 
@@ -58,6 +59,22 @@ class UDPModelSharing:
 
         self.logger = logging.getLogger("UDPModelSharing")
 
+        # Fast mode: disables NACK retries, discards incomplete models immediately
+        self.fast_mode = fast_mode
+        if self.fast_mode:
+            # Adaptive Batch Size: Adjust based on estimated bandwidth
+            metrics = self._network_estimator.get_metrics()
+            bandwidth = metrics.bandwidth_mbps
+            if bandwidth < 2.0:  # Poor (~1Mbit)
+                self.BATCH_SIZE = 16
+            elif bandwidth < 10.0:  # Fair (~5Mbit)
+                self.BATCH_SIZE = 32
+            else:  # Good/Excellent
+                self.BATCH_SIZE = 64
+            self.logger.info(f"🚀 Fast mode: BATCH_SIZE={self.BATCH_SIZE} (bandwidth={bandwidth:.1f}Mbps)")
+
+        self.MAX_FEC_M = 256  # zfec limit
+
         # Encoder Cache: (k, m) -> zfec.Encoder
         self._encoder_cache = {}
 
@@ -80,7 +97,14 @@ class UDPModelSharing:
             "sum_parity": 0,
             "sum_pacing_delay": 0.0,
             "total_transfers": 0,
+            # Fast mode statistics
+            "fast_mode_discarded": 0,
+            "aborted_sends": 0,  # Sends aborted by receiver timeout
         }
+
+        # Early abort tracking: {target_ip: True} when receiver sends ABORT
+        self.abort_peers = {}
+        self.abort_lock = threading.Lock()
 
         # Monotonically increasing model sequence number
         self.model_seq = 0
@@ -133,7 +157,30 @@ class UDPModelSharing:
     def _get_params_for_peer(self, peer_ip: str) -> tuple[int, int, float]:
         """Get FEC parity, total m, and pacing delay for a specific peer."""
         parity = self._network_estimator.get_recommended_fec_parity(self.k, peer_ip)
+
+        # Fast mode: Dynamic FEC based on observed loss rate
+        if self.fast_mode:
+            metrics = self._network_estimator.get_metrics(peer_ip)
+            loss_rate = metrics.packet_loss_rate
+
+            # Dynamic parity: base on estimated loss + safety factor
+            # Minimum 15% redundancy to handle typical interference
+            base_parity = int(self.k * loss_rate * 2.0)  # 2x safety factor
+            min_parity = int(self.k * 0.15)  # Minimum 15%
+            parity = max(base_parity, min_parity, parity) + 1
+
+            # Extra margin for high-loss environments (>10%)
+            if loss_rate > 0.10:
+                parity += 2
+
+            self.logger.debug(f"🎯 Fast mode FEC: loss={loss_rate * 100:.1f}%, parity={parity} (k={self.k})")
+
         m = self.k + parity
+
+        if self.MAX_FEC_M:
+            m = min(m, self.MAX_FEC_M)
+            parity = m - self.k
+
         pacing = self._network_estimator.get_recommended_pacing_delay(peer_ip)
         return parity, m, pacing
 
@@ -172,6 +219,18 @@ class UDPModelSharing:
         except Exception as e:
             self.logger.error(f"❌ Failed to send UDP MDLREQ: {e}")
             return False
+
+    def send_abort(self, target_ip: str, target_port: int) -> None:
+        """Send ABORT signal to sender (receiver timed out, stop sending)."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Use minimal packet: just the packet type byte
+            header = struct.pack("!BdIIIIIBBB", self.PTYPE_ABORT, time.time(), 0, 0, 0, 0, 0, 0, 0, 0)
+            sock.sendto(header, (target_ip, target_port))
+            sock.close()
+            self.logger.debug(f"🛑 Sent ABORT to {target_ip}:{target_port}")
+        except Exception as e:
+            self.logger.warning(f"Failed to send ABORT: {e}")
 
     def send_model(self, model_data: bytes, target_ip: str, target_port: int) -> bool:
         """
@@ -504,6 +563,13 @@ class UDPModelSharing:
                             pass
                     continue
 
+                # Handle ABORT signal (receiver timed out, stop sending to them)
+                if ptype == self.PTYPE_ABORT:
+                    with self.abort_lock:
+                        self.abort_peers[peer_ip] = True
+                    self.logger.info(f"🛑 ABORT received from {peer_ip}, stopping sends")
+                    continue
+
             except socket.timeout:
                 continue
             except Exception as e:
@@ -548,6 +614,24 @@ class UDPModelSharing:
                     state = incoming_models[key]
                     if self._is_model_complete(state):
                         continue
+                    # Fast mode: discard incomplete models without NACK
+                    if self.fast_mode:
+                        self.logger.info(f"🚀 Fast mode: Discarding incomplete model {model_seq} from {peer_ip}")
+                        with self.stats_lock:
+                            self.stats["fast_mode_discarded"] += 1
+                        completed_models.add(key)
+                        completed_history.append(key)
+                        if key in incoming_models:
+                            del incoming_models[key]
+
+                        # Notify listener to stop waiting
+                        if self.callback:
+                            try:
+                                self.callback(b"FAST_DISCARD", peer_ip)
+                            except Exception:
+                                pass
+                        continue
+                    # Normal mode: send NACK for missing chunks
                     missing = self._identify_missing_chunks(state)
                     if missing:
                         self._send_nack(peer_ip, model_seq, missing)
@@ -648,6 +732,16 @@ class UDPModelSharing:
         for key in to_remove:
             with self.stats_lock:
                 self.stats["timeout_models"] += 1
+                if self.fast_mode:
+                    self.stats["fast_mode_discarded"] += 1
+            if self.fast_mode:
+                self.logger.debug(f"🚀 Fast mode: Timeout discarding model {key} from {peer_ip}")
+                # Notify listener to stop waiting
+                if self.callback:
+                    try:
+                        self.callback(b"FAST_DISCARD", peer_ip)
+                    except Exception:
+                        pass
             del incoming_models[key]
 
     def _is_model_complete(self, state):

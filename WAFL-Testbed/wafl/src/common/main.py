@@ -225,6 +225,11 @@ class ModelLearningUtils:
         Checks for NaN, Inf, and extremely large values.
         """
         try:
+            # Type guard: ensure model is a dict (not str/bytes from error cases)
+            if not isinstance(model, dict):
+                self.logger.error(f"❌ Model validation failed for {peer_name}: Invalid type {type(model).__name__} (expected dict)")
+                return False
+
             for key, tensor in model.items():
                 if not isinstance(tensor, torch.Tensor):
                     continue
@@ -463,8 +468,8 @@ class ModelLearningUtils:
                     # but self.model_sharing.timeout is used by socket.
                     # We rely on strict future timeout for overall control.
                     model = self.model_sharing.request_model_from_peer(peer_ip, "&purpose=testing")
-                    if isinstance(model, str):
-                        self.logger.error(f"Failed to receive model from {neighbour}: {model[:50]}")
+                    if isinstance(model, (str, bytes)) or model is None:
+                        self.logger.error(f"Failed to receive model from {neighbour}: {str(model)[:50] if model else 'None'}")
                         return (neighbour, None)
                     return (neighbour, model)
                 except Exception as e:
@@ -595,7 +600,7 @@ class ModelSharingUtils:
 
     cMDLREQ = "MDLREQ"
 
-    def __init__(self, index: int, name: str, addr: str, port: int, timeout: float) -> None:
+    def __init__(self, index: int, name: str, addr: str, port: int, timeout: float, fast_timeout: float = 3.0) -> None:
         """
         Initialize the instance attributes.
         """
@@ -612,6 +617,9 @@ class ModelSharingUtils:
             self.timeout = 10.0  # デフォルトタイムアウト（4.0s -> 10.0s に変更してプロトコル内部タイムアウトを優先）
         else:
             self.timeout = timeout
+
+        self.fast_timeout = fast_timeout  # Configured from execution_config
+
         self.logger = logging.getLogger("ModelSharingUtils")
         self.logger.debug("Initialized Model Sharing Utils")
 
@@ -629,12 +637,13 @@ class ModelSharingUtils:
                 # === New Schema Handling (String-based method) ===
                 method_val = params.get("method")
                 if isinstance(method_val, str):
-                    self.active_protocol = method_val  # "tcp", "udp", "rudp", "dynamic"
+                    self.active_protocol = method_val  # "tcp", "udp", "rudp", "dynamic", "fast"
 
                     # Set enabled flags based on active_protocol
                     self.tcp_enabled = self.active_protocol in ["tcp", "dynamic"]
-                    self.udp_enabled = self.active_protocol in ["udp", "dynamic"]
+                    self.udp_enabled = self.active_protocol in ["udp", "dynamic", "fast"]
                     self.rudp_enabled = self.active_protocol == "rudp"
+                    self.fast_mode = self.active_protocol == "fast"  # NEW: fast mode flag
 
                     # Protocol specific configs
                     # For simplify, we assume standard settings for now or load from root if desired.
@@ -654,8 +663,12 @@ class ModelSharingUtils:
                     # For dynamic/udp, compression is usually off or auto?
                     # Plan said compression disabled fixed.
                     self.compression_enabled = False
-                    self.compression_enabled = False
+                    if self.fast_mode:
+                        self.compression_enabled = True
                     self.initial_comp_method = "zlib"
+
+                    if self.fast_mode:
+                        self.logger.info(f"🚀 Fast mode enabled: timeout={self.fast_timeout}s")
 
                     # Last reported stats for delta calculation (Control Server polling)
                     self._last_reported_tcp = {}
@@ -775,7 +788,9 @@ class ModelSharingUtils:
             self.udp_adaptive_fec = False
             self.compression_enabled = False
             self.initial_comp_method = "zlib"
+
             self.active_protocol = "TCP"
+            self.fast_mode = False
 
         # Load timeout configurations from config.json (set by ctrl server from execution_config.json)
         # Timeouts are REQUIRED - no defaults allowed
@@ -823,6 +838,7 @@ class ModelSharingUtils:
                 timeout=self.udp_model_completion_timeout,
                 inter_packet_timeout=self.udp_inter_packet_timeout,
                 max_packet_size=self.udp_max_packet_size,
+                fast_mode=self.fast_mode,
             )
             # Start listener callback for model data
             self.udp_sharing.start_listener(self._on_udp_model_received)
@@ -945,6 +961,13 @@ class ModelSharingUtils:
 
     def _on_udp_model_received(self, data: bytes, source_ip: str):
         """Callback for UDP model reception."""
+        if data == b"FAST_DISCARD":
+            self.logger.info(f"🚀 Fast mode: Received discard signal from {source_ip}")
+            with self.received_models_cv:
+                self.received_models[source_ip] = b"ERROR"
+                self.received_models_cv.notify_all()
+            return
+
         self.logger.info(f"📦 Received UDP model from {source_ip} ({len(data)} bytes) - Starting async deserialization")
 
         # Determine if compression is used (based on manager presence)
@@ -1121,6 +1144,14 @@ class ModelSharingUtils:
             else:
                 self.protocol_counts[active_proto_for_call] = 1  # Should not happen if init correct
 
+        # --- Fast Mode: UDP without NACK retries ---
+        if self.fast_mode:
+            # Use UDP but skip aggressive MDLREQ retransmission
+            active_proto_for_call = "UDP"
+            # No TCP fallback, no MDLREQ resend logic change here (handled in UDPModelSharing mainly)
+            # But we must ensure UDP is selected
+            pass
+
         use_udp = active_proto_for_call == "UDP" and self.udp_sharing is not None
         use_rudp = ("RUDP" in active_proto_for_call or "E-RUDP" in active_proto_for_call) and self.rudp_sharing is not None
 
@@ -1138,7 +1169,36 @@ class ModelSharingUtils:
 
                 # Wait for UDP data using configured timeout with Aggressive MDLREQ Retransmission
                 start_wait = time.time()
-                deadline = start_wait + float(self.udp_model_completion_timeout)
+
+                # Adaptive Timeout: Calculate based on estimated bandwidth and model size
+                if self.fast_mode and self.fast_timeout is not None:
+                    # Get estimated bandwidth from NetworkEstimator
+                    # Use per-peer metrics with fallback to global if insufficient samples
+                    estimator = get_network_estimator()
+                    peer_samples = estimator.get_sample_count(peer_IP)
+                    if peer_samples >= 3:
+                        # Enough samples: use per-peer metrics for accuracy
+                        metrics = estimator.get_metrics(peer_IP)
+                        self.logger.debug(f"📊 Using per-peer metrics for {peer_IP} ({peer_samples} samples)")
+                    else:
+                        # Insufficient samples: use global metrics
+                        metrics = estimator.get_metrics()
+                        self.logger.debug(f"📊 Using global metrics (peer {peer_IP} has {peer_samples} samples)")
+                    bandwidth_bytes_per_sec = max(metrics.bandwidth_mbps * 1_000_000 / 8, 10_000)  # Min 10KB/s
+
+                    # Estimate model size (use last known or default 800KB)
+                    estimated_model_size = 800_000  # 800KB typical compressed model
+                    predicted_transfer_time = estimated_model_size / bandwidth_bytes_per_sec
+
+                    # Adaptive timeout: max(predicted time * 1.5, configured fast_timeout)
+                    adaptive_timeout = max(predicted_transfer_time * 1.5, self.fast_timeout)
+                    # Cap at reasonable maximum (10s to prevent excessive waiting)
+                    timeout_val = min(adaptive_timeout, 10.0)
+                    self.logger.debug(f"⏱️ Adaptive timeout: {timeout_val:.1f}s (predicted={predicted_transfer_time:.1f}s, bw={metrics.bandwidth_mbps:.1f}Mbps)")
+                else:
+                    timeout_val = float(self.udp_model_completion_timeout)
+
+                deadline = start_wait + timeout_val
                 last_req_time = start_wait
                 RESEND_INTERVAL = 1.5  # Retransmit MDLREQ every 1.5s if no model received
 
@@ -1148,11 +1208,14 @@ class ModelSharingUtils:
                         now = time.time()
                         remaining = deadline - now
                         if remaining <= 0:
+                            # Send ABORT signal to stop sender from wasting bandwidth
+                            if self.udp_sharing:
+                                self.udp_sharing.send_abort(peer_IP, self.port)
                             break
 
                         # Aggressive Retransmission: If waiting too long, resend MDLREQ
                         # But ONLY if we haven't received any data recently (streaming is not active)
-                        if now - last_req_time > RESEND_INTERVAL:
+                        if not self.fast_mode and (now - last_req_time > RESEND_INTERVAL):
                             last_activity = self.udp_sharing.get_last_peer_activity(peer_IP)
                             is_active = (now - last_activity) < 1.0
 
@@ -1180,8 +1243,8 @@ class ModelSharingUtils:
                         return True, self._deserialize_model(data_or_future)
                     try:
                         deserialized_output = data_or_future.result(timeout=10.0)
-                        if isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR"):
-                            self.logger.error("Async deserialization returned ERROR")
+                        if deserialized_output is None or (isinstance(deserialized_output, bytes) and deserialized_output.startswith(b"ERROR")):
+                            self.logger.error("Async deserialization returned ERROR or None")
                             return False, b"ERROR"
                         return True, deserialized_output
                     except Exception as e:
@@ -1189,7 +1252,8 @@ class ModelSharingUtils:
                         return False, b"ERROR"
 
                 # Timeout waiting for UDP model - NO TCP fallback
-                self.logger.warning(f"⚠️ UDP MDLREQ timeout waiting for {peer_IP} (>{self.udp_model_completion_timeout}s)")
+                # Timeout waiting for UDP model - NO TCP fallback
+                self.logger.warning(f"⚠️ UDP MDLREQ timeout waiting for {peer_IP} (>{timeout_val}s)")
                 return False, b"ERROR"
 
             except Exception as e:
@@ -1739,6 +1803,7 @@ class ModelSharingUtils:
                     "fec_decode_time_ms": delta_udp.get("fec_decode_time_ms", 0),
                     "udp_avg_parity": delta_udp.get("sum_parity", 0) / delta_udp.get("total_transfers", 1) if delta_udp.get("total_transfers", 0) > 0 else 0,
                     "udp_avg_pacing_ms": (delta_udp.get("sum_pacing_delay", 0.0) / delta_udp.get("total_transfers", 1) * 1000) if delta_udp.get("total_transfers", 0) > 0 else 0,
+                    "fast_mode_discarded": delta_udp.get("fast_mode_discarded", 0),
                 }
             )
 
@@ -2162,6 +2227,12 @@ class CTRL_TCP:
             if not isinstance(self.timeout, (int, float)):
                 self.logger.error("Invalid format for 'method.model_exchange_timeout' in JSON. Number required.")
                 return False
+
+            # Load fast_timeout from timeouts section (added support for execution_config)
+            timeouts_config = config_data.get("timeouts", {})
+            self.fast_timeout = timeouts_config.get("fast_model_completion", 3.0)  # Default to 3.0s if not specified
+            self.logger.info(f"Fast model completion timeout set to {self.fast_timeout}s")
+
             self.logger.info("All configurations successfully stored in member variables.")
             return True
 
@@ -2254,7 +2325,8 @@ class CTRL_TCP:
 
         model_dir = f"./results/{self.experiment_id}"
         os.makedirs(model_dir, exist_ok=True)
-        self.model_sharing = ModelSharingUtils(agent_index, device_name, device_ip, self.p2p_port, self.timeout)
+        # Pass fast_timeout to ModelSharingUtils
+        self.model_sharing = ModelSharingUtils(agent_index, device_name, device_ip, self.p2p_port, self.timeout, self.fast_timeout)
         self.model_learning = ModelLearningUtils(
             "./dataset",
             f"./results/{self.experiment_id}/model.pth",

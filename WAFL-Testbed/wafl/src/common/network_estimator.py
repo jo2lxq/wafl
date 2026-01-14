@@ -51,7 +51,7 @@ class EstimatorState:
         # Smoothed metrics
         self._smoothed_loss_rate = 0.0
         self._smoothed_rtt = 100.0
-        self._smoothed_bandwidth = 5.0  # Balanced start
+        self._smoothed_bandwidth = 10.0  # Optimistic start for faster initial convergence
 
     def seed(self, loss_rate: float, rtt_ms: float, bandwidth_mbps: float):
         self._smoothed_loss_rate = loss_rate
@@ -117,12 +117,16 @@ class EstimatorState:
             jitter_ms=jitter,
         )
 
+    def get_sample_count(self) -> int:
+        """Return the number of bandwidth samples collected."""
+        return len(self._bandwidth_samples)
+
 
 class NetworkEstimator:
     """Network state estimator using observed measurements, handling global and per-peer states."""
 
     WINDOW_SIZE = 100
-    ALPHA = 0.1  # Smoother estimation to prevent jitter-based flipping
+    ALPHA = 0.3  # Faster convergence to measured values
 
     def __init__(self):
         self.logger = logging.getLogger("NetworkEstimator")
@@ -192,6 +196,11 @@ class NetworkEstimator:
     def get_metrics(self, peer_ip: Optional[str] = None) -> NetworkMetrics:
         with self._lock:
             return self._get_state(peer_ip).get_metrics()
+
+    def get_sample_count(self, peer_ip: Optional[str] = None) -> int:
+        """Return the number of bandwidth samples for a peer or global."""
+        with self._lock:
+            return self._get_state(peer_ip).get_sample_count()
 
     def get_recommended_fec_parity(self, k: int, peer_ip: Optional[str] = None) -> int:
         metrics = self.get_metrics(peer_ip)

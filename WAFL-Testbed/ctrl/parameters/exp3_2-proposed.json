@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 3: Integrated Scenario - Proposed Full (SSP + dynamic)",
+  "experiment_name": "Experiment 3: Integrated Scenario - Proposed Full (SSP + Fast)",
   "epochs": {
     "self": 64,
     "wafl": 2048
@@ -20,9 +20,5 @@
     "network_conditions_file": "sumo_real/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
-  "method": "dynamic",
-  "ssp": {
-    "enabled": true,
-    "ssp_threshold": 0.8
-  }
+  "method": "fast"
 }

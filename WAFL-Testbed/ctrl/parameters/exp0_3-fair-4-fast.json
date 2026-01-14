@@ -1,0 +1,24 @@
+{
+  "experiment_name": "Experiment 0: fair (fast)",
+  "epochs": {
+    "self": 8,
+    "wafl": 64
+  },
+  "contact_pattern": "contact_pattern/rwp_n50_a1000_r100_p10_s01.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": true,
+    "rate": "3mbit",
+    "delay": "30ms",
+    "loss": "8%"
+  },
+  "mobility_aware": {
+    "enabled": false
+  },
+  "method": "fast"
+}

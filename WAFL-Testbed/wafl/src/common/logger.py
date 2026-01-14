@@ -43,7 +43,9 @@ class MetricsLogger:
         "bytes_received",
         "app_bytes_sent",  # Application payload sent (metric for useful data)
         "app_bytes_received",  # Application payload received (metric for goodput)
+        "app_bytes_received",  # Application payload received (metric for goodput)
         "timeout_models",  # 追加
+        "fast_mode_discarded",  # 追加: Fast modeで破棄されたモデル数
         # RUDP/E-RUDP metrics
         "rudp_retransmissions",
         "rudp_acks_sent",
@@ -210,6 +212,7 @@ class MetricsLogger:
             "app_bytes_sent": metrics.get("app_bytes_sent", 0),
             "app_bytes_received": metrics.get("app_bytes_received", 0),
             "timeout_models": metrics.get("timeout_models", 0),
+            "fast_mode_discarded": metrics.get("fast_mode_discarded", 0),
             # UDP Dynamic Params
             "udp_avg_parity": metrics.get("udp_avg_parity", 0),
             "udp_avg_pacing_ms": metrics.get("udp_avg_pacing_ms", 0),
