@@ -10,6 +10,51 @@
 
 WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワーク上でエミュレートするための研究プラットフォームである．シミュレーションでは再現困難な**実環境制約**（OS レイヤ遅延，物理リソース競合，ネットワークスタック挙動）を定量化できる．
 
+---
+
+### 全体アーキテクチャ
+
+```mermaid
+flowchart TB
+    subgraph ControlServer["コントロールサーバー (管理サーバー / 開発マシン)"]
+        main["main.py<br/>オーケストレーター"]
+        deploy["deploy.py<br/>デプロイスクリプト"]
+        analyze["analyze.py<br/>結果分析・グラフ生成"]
+        verify["verify.py<br/>設定検証・ベンチマーク"]
+    end
+
+    subgraph ExecutionServers["実行サーバー群 (物理マシン / Docker コンテナ)"]
+        subgraph Agent0["Agent 0"]
+            container0["Docker Container"]
+            mainpy0["main.py (エージェント)"]
+            sharing0["ModelSharingUtils"]
+            container0 --> mainpy0 --> sharing0
+        end
+        subgraph Agent1["Agent 1"]
+            container1["Docker Container"]
+            mainpy1["main.py (エージェント)"]
+            sharing1["ModelSharingUtils"]
+            container1 --> mainpy1 --> sharing1
+        end
+        subgraph Agent2["Agent 2"]
+            container2["Docker Container"]
+            mainpy2["main.py (エージェント)"]
+            sharing2["ModelSharingUtils"]
+            container2 --> mainpy2 --> sharing2
+        end
+    end
+
+    main -->|"SSH + TCP<br/>Port 10001"| Agent0
+    main -->|"SSH + TCP<br/>Port 10001"| Agent1
+    main -->|"SSH + TCP<br/>Port 10001"| Agent2
+
+    sharing0 <-->|"P2P<br/>Port 10002"| sharing1
+    sharing1 <-->|"P2P<br/>Port 11002"| sharing2
+    sharing0 <-->|"P2P<br/>Port 12002"| sharing2
+```
+
+---
+
 ### システムコンポーネント
 
 #### 1. コントロールサーバー (Control Server)
@@ -20,13 +65,19 @@ WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワ
 - 全エージェントへの設定・コードデプロイ
 - 実験ライフサイクル管理（開始，停止，クリーンアップ）
 - ログ・結果の収集
-- 学習プロセスの同期制御（SSP, Strict Sync 等）
+- 学習プロセスの同期制御（SSP, BSP）
+- ネットワーク条件のエミュレーション制御
 
 **実装**: `ctrl/main.py`
 
 **主要クラス**:
-- `ControlServer`: 実験全体の制御
-- `WaflAgent`: 各エージェントとの通信インターフェース
+
+| クラス                 | 責務                                   |
+| ---------------------- | -------------------------------------- |
+| `ControlServer`        | 実験全体の制御，エージェント管理       |
+| `WaflAgent`            | 各エージェントとの通信インターフェース |
+| `ContainerManager`     | Docker コンテナのライフサイクル管理    |
+| `SSHConnectionManager` | SSH 接続のプーリングと再利用           |
 
 **動作フロー**:
 1. `execution_config.json` と `parameters.json` を読み込み
@@ -50,23 +101,37 @@ WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワ
 **実装**: `wafl/src/common/main.py`
 
 **主要クラス**:
-- `CTRL_TCP`: コントロールサーバーとの通信
-- `ModelLearningUtils`: 学習ロジック (SELF/WAFL)
-- `ModelSharingUtils`: P2P モデル交換 (TCP/UDP)
-- `MetricsLogger`: JSON Lines 形式のログ出力
+
+| クラス               | 責務                         |
+| -------------------- | ---------------------------- |
+| `CTRL_TCP`           | コントロールサーバーとの通信 |
+| `ModelLearningUtils` | 学習ロジック (SELF/WAFL)     |
+| `ModelSharingUtils`  | P2P モデル交換 (TCP/UDP)     |
+| `UDPModelSharing`    | UDP+FEC によるモデル共有     |
+| `CompressionManager` | 適応的圧縮                   |
+| `NetworkEstimator`   | ネットワーク状態推定         |
+| `MetricsLogger`      | JSON Lines 形式のログ出力    |
 
 **デプロイ方式**: Docker コンテナとして起動（環境の一貫性と分離を保証）
+
+---
 
 ### 通信フロー
 
 #### 1. 制御通信 (Control Communication)
 
-```
-┌─────────────────┐         TCP (Port 10001)         ┌──────────┐
-│ Control Server  │ ───────────────────────────────> │  Agent   │
-│                 │                                  │          │
-│  ControlServer  │ <─────────────────────────────── │ CTRL_TCP │
-└─────────────────┘         Status / Logs            └──────────┘
+```mermaid
+sequenceDiagram
+    participant CS as Control Server
+    participant Agent as Agent (CTRL_TCP)
+    
+    CS->>Agent: TCP Connect (Port 10001)
+    CS->>Agent: Command (BEGIN-SELF-00001)
+    Agent-->>CS: Status (DONE-SELF-00001)
+    CS->>Agent: Command (BEGIN-WAFL-00001)
+    Agent-->>CS: Status (EXEC-WAFL-00001)
+    Agent-->>CS: Status (DONE-WAFL-00001)
+    CS->>Agent: KILL
 ```
 
 **プロトコル**: TCP  
@@ -91,37 +156,64 @@ WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワ
 
 #### 2. P2P データ共有 (Model Exchange)
 
-```
-┌─────────┐     Model Request     ┌─────────┐
-│ Agent A │ <───────────────────> │ Agent B │
-│         │                       │         │
-│         │ <──────────────────── │         │
-└─────────┘   Model Parameters    └─────────┘
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant B as Agent B
+    
+    A->>B: Model Request (MDLREQ)
+    B-->>A: Model Parameters (pickle bytes)
 ```
 
 **プロトコル**: TCP または UDP（設定可能）  
 **デフォルトポート**: 10002
 
-**TCP モード（デフォルト）**:
-- **利点**: 信頼性の高い転送，パケット順序保証
-- **欠点**: 再送による遅延，HOL Blocking
-- **用途**: 安定したネットワーク環境
+詳細: [docs/protocol.md](protocol.md)
 
-**UDP + FEC モード**:
-- **利点**: 再送遅延なし，高速転送
-- **欠点**: パケットロス時の復元失敗リスク
-- **FEC アルゴリズム**: Block-based XOR（zfec ライブラリ使用）
-  - パラメータ `fec_m`: M 個のデータチャンクに 1 個の冗長パケット
-  - 冗長率: $1/(M+1)$
-  - 復元条件: 1 ブロック内で最大 1 パケットロスまで復元可能
-- **用途**: 高損失・低遅延が求められる環境
+---
 
-**圧縮 (Compression)**:
-- **方式**: None, LZ4 (高速), zlib (高圧縮)
-- **選択**: 動的選択 (Adaptive Compression)
-  - 推定転送時間 $T_{est} = T_{comp} + \frac{Size_{comp} \times R}{BW}$ を最小化
-  - $R$: FEC 冗長率 = $1 + 1/(M+1)$
-  - $BW$: EMA で推定された帯域
+### 3 つの通信モード
+
+#### モード選択
+
+```json
+{
+  "method": "tcp"      // TCP モード
+  "method": "dynamic"  // Dynamic モード
+  "method": "fast"     // Fast モード
+}
+```
+
+#### アーキテクチャ図
+
+```mermaid
+flowchart TB
+    MSU["ModelSharingUtils"]
+    
+    MSU --> TCP["TCP Mode"]
+    MSU --> Dynamic["Dynamic Mode"]
+    MSU --> Fast["Fast Mode"]
+    
+    subgraph TCP["TCP Mode"]
+        tcp_socket["TCP Socket"]
+    end
+    
+    subgraph Dynamic["Dynamic Mode"]
+        comp_mgr["Compression Manager<br/>(Adaptive)"]
+        fec_adaptive["FEC<br/>(Adaptive)"]
+        udp_nack["UDP + NACK"]
+        comp_mgr --> fec_adaptive --> udp_nack
+    end
+    
+    subgraph Fast["Fast Mode"]
+        lz4["LZ4<br/>(条件付き)"]
+        fec_fixed["FEC<br/>(Fixed)"]
+        udp_nack2["UDP + NACK"]
+        lz4 --> fec_fixed --> udp_nack2
+    end
+```
+
+---
 
 ### ネットワークエミュレーション
 
@@ -130,28 +222,39 @@ WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワ
 #### 実装方式
 
 ```bash
-# コンテナの仮想イーサネット (veth) に tc ルールを適用
-tc qdisc add dev veth0 root netem \
+# コンテナの仮想イーサネット (eth0) に tc ルールを適用
+tc qdisc add dev eth0 root netem \
   delay 50ms \          # 遅延
   loss 3% \             # パケットロス率
   rate 10mbit           # 帯域制限
 ```
 
-#### 制御可能なパラメータ
+#### 静的 vs 動的ネットワーク条件
 
-| パラメータ | 説明                           | 設定例                  |
-| ---------- | ------------------------------ | ----------------------- |
-| **delay**  | ネットワーク遅延（レイテンシ） | `"50ms"`, `"100ms"`     |
-| **loss**   | ランダムパケットドロップ率     | `"0%"`, `"3%"`, `"10%"` |
-| **rate**   | 最大転送レート（帯域制限）     | `"100mbit"`, `"10mbit"` |
+| 方式     | 説明                         | 設定                |
+| -------- | ---------------------------- | ------------------- |
+| **静的** | 実験中一定のネットワーク条件 | `network_condition` |
+| **動的** | ノード間距離に応じて変化     | `mobility_aware`    |
 
-#### 設定方法
+詳細: [docs/mobility_aware.md](mobility_aware.md)
 
-**グローバル設定**（全ノード共通）:
-`ctrl/parameters.json` の `network_condition` セクション
+#### Per-Peer Limitation
 
-**ノード個別設定**:
-`ctrl/execution_config.json` の各ノードに `network_condition` を追加（優先度高）
+Mobility-Aware モードでは，HTB + Filter を使用して通信相手ごとに異なるネットワーク制限を適用：
+
+```mermaid
+flowchart LR
+    A0["Agent 0"]
+    A1["Agent 1<br/>(近距離)"]
+    A2["Agent 2<br/>(中距離)"]
+    A3["Agent 3<br/>(遠距離)"]
+    
+    A0 -->|"100Mbps<br/>Excellent"| A1
+    A0 -->|"10Mbps<br/>Good"| A2
+    A0 -->|"1Mbps<br/>Poor"| A3
+```
+
+---
 
 ### リソース制限
 
@@ -173,18 +276,23 @@ Docker の `--cpus` オプションで CPU 使用率を制限し，異なる性�
 | `"0.5"`   | 0.5 CPU コア（50%） |
 | `"2.0"`   | 2 CPU コア（200%）  |
 
+---
+
 ### ソフトウェアスタック
 
-| カテゴリ           | 使用技術     |
-| ------------------ | ------------ |
-| **言語**           | Python 3.11+ |
-| **深層学習**       | PyTorch      |
-| **コンテナ化**     | Docker       |
-| **パッケージ管理** | uv           |
-| **タスクランナー** | mise         |
-| **SSH 自動化**     | Paramiko     |
-| **FEC**            | zfec         |
-| **圧縮**           | zlib, lz4    |
+| カテゴリ           | 使用技術            | 用途               |
+| ------------------ | ------------------- | ------------------ |
+| **言語**           | Python 3.11+        | 全コンポーネント   |
+| **深層学習**       | PyTorch             | モデル学習・推論   |
+| **コンテナ化**     | Docker              | 実行環境分離       |
+| **パッケージ管理** | uv                  | 依存関係管理       |
+| **タスクランナー** | mise                | ワークフロー自動化 |
+| **SSH 自動化**     | Paramiko            | リモート制御       |
+| **FEC**            | zfec                | 誤り訂正符号       |
+| **圧縮**           | zlib, lz4           | データ圧縮         |
+| **可視化**         | matplotlib, seaborn | グラフ生成         |
+
+---
 
 ### データフロー
 
@@ -236,6 +344,8 @@ sequenceDiagram
     CS->>A2: KILL
 ```
 
+---
+
 ### SSP (Semi-Synchronous Protocol) 実装
 
 #### 動作原理
@@ -245,20 +355,27 @@ sequenceDiagram
 3. **計算破棄**: 未完了ノードは現在の学習を中断し，同じエポックにスキップ（1エポック以上遅れるノードは存在しない）
 4. **メトリクス記録**: 破棄された計算量（`wasted_ms`, `wasted_norm`）を記録
 
-#### コード例 (ctrl/main.py)
-
-```python
-if ssp_threshold < 1.0:
-    # 完了ノード数をカウント
-    completed_count = sum(1 for ae in agent_epochs.values() if ae >= target_epoch)
+```mermaid
+flowchart TD
+    Start["エポック開始"]
+    Check["完了ノード数 >= N × threshold?"]
+    Wait["待機継続"]
+    Force["未完了ノードに FORCE_NEXT 送信"]
+    Next["次のエポックへ"]
     
-    if completed_count >= len(self.agents) * ssp_threshold:
-        # 未完了ノードに強制進行
-        for agent in self.agents:
-            if agent_epochs[agent.name] < target_epoch:
-                agent._send_command("FORCE_NEXT\r\n")
-                agent_epochs[agent.name] = target_epoch
+    Start --> Check
+    Check -->|No| Wait
+    Wait --> Check
+    Check -->|Yes| Force
+    Force --> Next
 ```
+
+#### SSP vs BSP 比較
+
+| 方式    | 同期         | メリット | デメリット               |
+| ------- | ------------ | -------- | ------------------------ |
+| **BSP** | 全ノード待機 | 精度保証 | 遅いノードがボトルネック |
+| **SSP** | 閾値で進行   | 高速     | 計算破棄が発生           |
 
 ---
 
@@ -278,22 +395,15 @@ WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federat
 - Deploy configuration and code to all agents
 - Manage experiment lifecycle (Start, Stop, Cleanup)
 - Collect logs and results
-- Control learning process synchronization (SSP, Strict Sync, etc.)
+- Control learning process synchronization (SSP, BSP)
 
 **Implementation**: [`ctrl/main.py`](file:///home/ktakahashi/workspace/wafl/WAFL-Testbed/ctrl/main.py)
 
 **Main Classes**:
 - `ControlServer`: Overall experiment control
 - `WaflAgent`: Communication interface with each agent
-
-**Operation Flow**:
-1. Load `execution_config.json` and `parameters.json`
-2. Deploy configurations to all agents via SSH
-3. Launch Docker containers (apply resource limits)
-4. Apply network emulation (tc/netem)
-5. Direct execution: SELF phase → WAFL phase
-6. Per-epoch synchronization control (SSP threshold check, FORCE_NEXT issuance)
-7. Graceful shutdown of all agents after experiment completion
+- `ContainerManager`: Docker container lifecycle management
+- `SSHConnectionManager`: SSH connection pooling and reuse
 
 #### 2. Execution Servers (Agents)
 
@@ -311,157 +421,26 @@ WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federat
 - `CTRL_TCP`: Communication with Control Server
 - `ModelLearningUtils`: Learning logic (SELF/WAFL)
 - `ModelSharingUtils`: P2P model exchange (TCP/UDP)
+- `UDPModelSharing`: UDP+FEC model sharing
+- `CompressionManager`: Adaptive compression
+- `NetworkEstimator`: Network state estimation
 - `MetricsLogger`: JSON Lines format log output
 
 **Deployment**: Launched as Docker containers (ensuring environment consistency and isolation)
 
-### Communication Flow
+### Three Communication Modes
 
-#### 1. Control Communication
+| Mode        | Protocol           | Reliability   | Use Case                |
+| ----------- | ------------------ | ------------- | ----------------------- |
+| **TCP**     | Standard TCP       | TCP guarantee | Stable networks         |
+| **Dynamic** | UDP + Adaptive FEC | FEC + NACK    | Unstable networks       |
+| **Fast**    | UDP + Fixed FEC    | Minimal FEC   | High-bandwidth networks |
 
-```
-┌─────────────────┐         TCP (Port 10001)         ┌──────────┐
-│ Control Server  │ ───────────────────────────────> │  Agent   │
-│                 │                                  │          │
-│  ControlServer  │ <─────────────────────────────── │ CTRL_TCP │
-└─────────────────┘         Status / Logs            └──────────┘
-```
+Details: [docs/protocol.md](protocol.md)
 
-**Protocol**: TCP  
-**Default Port**: 10001 (inside container), configurable (host side)
-
-**Commands (Control Server → Agent)**:
-| Command              | Format             | Description                              |
-| -------------------- | ------------------ | ---------------------------------------- |
-| `BEGIN-SELF-{epoch}` | `BEGIN-SELF-00001` | Start SELF learning                      |
-| `BEGIN-WAFL-{epoch}` | `BEGIN-WAFL-00100` | Start WAFL learning                      |
-| `STAT`               | `STAT`             | Status request                           |
-| `FORCE_NEXT`         | `FORCE_NEXT`       | SSP Reset: force terminate current epoch |
-| `KILL`               | `KILL`             | Graceful process termination             |
-
-**Responses (Agent → Control Server)**:
-| Status                 | Format            | Description    |
-| ---------------------- | ----------------- | -------------- |
-| `READY`                | `READY`           | Waiting        |
-| `EXEC-{phase}-{epoch}` | `EXEC-WAFL-00100` | Executing      |
-| `DONE-{phase}-{epoch}` | `DONE-WAFL-00100` | Completed      |
-| `ERROR`                | `ERROR`           | Error occurred |
-
-#### 2. P2P Data Sharing (Model Exchange)
-
-```
-┌─────────┐     Model Request    ┌─────────┐
-│ Agent A │ ───────────────────> │ Agent B │
-│         │                      │         │
-│         │ <─────────────────── │         │
-└─────────┘   Model Parameters   └─────────┘
-```
-
-**Protocol**: TCP or UDP (configurable)  
-**Default Port**: 10002
-
-**TCP Mode (Default)**:
-- **Advantages**: Reliable transfer, packet order guarantee
-- **Disadvantages**: Retransmission delays, HOL Blocking
-- **Use Case**: Stable network environments
-
-**UDP + FEC Mode**:
-- **Advantages**: No retransmission delays, fast transfer
-- **Disadvantages**: Recovery failure risk on packet loss
-- **FEC Algorithm**: Block-based XOR (using zfec library)
-  - Parameter `fec_m`: 1 redundant packet per M data chunks
-  - Redundancy rate: $1/(M+1)$
-  - Recovery condition: Recoverable up to 1 packet loss per block
-- **Use Case**: High-loss, low-latency environments
-
-**Compression**:
-- **Methods**: None, LZ4 (fast), zlib (high compression)
-- **Selection**: Adaptive Compression
-  - Minimize estimated transfer time: $T_{est} = T_{comp} + \frac{Size_{comp} \times R}{BW}$
-  - $R$: FEC redundancy rate = $1 + 1/(M+1)$
-  - $BW$: Bandwidth estimated by EMA
-
-### Network Emulation
-
-Uses Linux TC tools (`tc`, `netem`) to control network conditions for simulating real environments.
-
-#### Implementation Method
-
-```bash
-# Apply tc rules to container's virtual ethernet (veth)
-tc qdisc add dev veth0 root netem \
-  delay 50ms \          # Latency
-  loss 3% \             # Packet loss rate
-  rate 10mbit           # Bandwidth limit
-```
-
-#### Controllable Parameters
-
-| Parameter | Description                             | Example                 |
-| --------- | --------------------------------------- | ----------------------- |
-| **delay** | Network latency                         | `"50ms"`, `"100ms"`     |
-| **loss**  | Random packet drop rate                 | `"0%"`, `"3%"`, `"10%"` |
-| **rate**  | Maximum transfer rate (bandwidth limit) | `"100mbit"`, `"10mbit"` |
-
-#### Configuration
-
-**Global Settings** (common to all nodes):
-`network_condition` section in `ctrl/parameters.json`
-
-**Per-Node Settings**:
-Add `network_condition` to each node in `ctrl/execution_config.json` (higher priority)
-
-### Resource Limits
-
-Uses Docker's `--cpus` option to limit CPU usage, simulating devices with different performance levels.
-
-**Configuration Example**:
-```json
-{
-  "name": 0,
-  "cpu_limit": "1.0"  // 1 core
-}
-```
-
-| cpu_limit | Meaning            |
-| --------- | ------------------ |
-| `"1.0"`   | 1 CPU core (100%)  |
-| `"0.5"`   | 0.5 CPU core (50%) |
-| `"2.0"`   | 2 CPU cores (200%) |
-
-### Software Stack
-
-| Category               | Technology   |
-| ---------------------- | ------------ |
-| **Language**           | Python 3.11+ |
-| **Deep Learning**      | PyTorch      |
-| **Containerization**   | Docker       |
-| **Package Management** | uv           |
-| **Task Runner**        | mise         |
-| **SSH Automation**     | Paramiko     |
-| **FEC**                | zfec         |
-| **Compression**        | zlib, lz4    |
-
-### SSP (Semi-Synchronous Protocol) Implementation
-
-#### Operating Principle
+### SSP (Semi-Synchronous Protocol)
 
 1. **Completion Rate Check**: Verify if completed nodes ≥ `len(agents) × ssp_threshold`
 2. **Force Progress**: Send `FORCE_NEXT` command to incomplete nodes when threshold reached
-3. **Computation Discard**: Incomplete nodes interrupt current learning and skip to the same epoch (no node is ever more than 1 epoch behind)
+3. **Computation Discard**: Incomplete nodes interrupt current learning and skip to the same epoch
 4. **Metrics Logging**: Record discarded computation (`wasted_ms`, `wasted_norm`)
-
-#### Code Example (ctrl/main.py)
-
-```python
-if ssp_threshold < 1.0:
-    # Count completed nodes
-    completed_count = sum(1 for ae in agent_epochs.values() if ae >= target_epoch)
-    
-    if completed_count >= len(self.agents) * ssp_threshold:
-        # Force progress for incomplete nodes
-        for agent in self.agents:
-            if agent_epochs[agent.name] < target_epoch:
-                agent._send_command("FORCE_NEXT\r\n")
-                agent_epochs[agent.name] = target_epoch
-```
