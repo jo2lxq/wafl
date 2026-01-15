@@ -264,7 +264,37 @@ class ConfigValidator:
 
         # Validate method
         if "method" in self.params:
-            log_success("method: All settings valid")
+            method_val = self.params["method"]
+            if isinstance(method_val, str):
+                valid_methods = ["tcp", "udp", "rudp", "dynamic", "fast"]
+                if method_val not in valid_methods:
+                    self.errors.append(f"Invalid method string: {method_val}. Must be one of {valid_methods}")
+                    log_error(f"Invalid method string: {method_val}")
+                    all_valid = False
+                else:
+                    log_success(f"method: {method_val}")
+            elif isinstance(method_val, dict):
+                # Ablation format validation
+                base = method_val.get("base")
+                if base not in ["tcp", "udp"]:
+                    self.errors.append(f"Invalid method.base: {base}. Must be 'tcp' or 'udp'")
+                    log_error(f"Invalid method.base: {base}")
+                    all_valid = False
+
+                fec = method_val.get("fec", True)
+                comp = method_val.get("compression", False)
+                nack = method_val.get("nack", True)
+
+                # bool または dict 形式に対応
+                fec_enabled = fec if isinstance(fec, bool) else fec.get("enabled", True)
+                comp_enabled = comp if isinstance(comp, bool) else comp.get("enabled", False)
+                nack_enabled = nack if isinstance(nack, bool) else nack.get("enabled", True)
+
+                log_success(f"method (ablation): base={base}, fec={fec_enabled}, comp={comp_enabled}, nack={nack_enabled}")
+            else:
+                self.errors.append(f"Invalid method type: {type(method_val)}")
+                log_error(f"Invalid method type: {type(method_val)}")
+                all_valid = False
         else:
             self.errors.append("method section not found")
             log_error("method section not found")

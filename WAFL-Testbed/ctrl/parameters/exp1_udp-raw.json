@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 1: UDP + FEC only",
+  "experiment_name": "Experiment 1: UDP (Raw)",
   "epochs": {
     "self": 8,
     "wafl": 64
@@ -13,16 +13,16 @@
   },
   "network_condition": {
     "enabled": true,
-    "rate": "1mbit",
-    "delay": "50ms",
-    "loss": "12%"
+    "rate": "3mbit",
+    "delay": "30ms",
+    "loss": "8%"
   },
   "mobility_aware": {
     "enabled": false
   },
   "method": {
     "base": "udp",
-    "fec": true,
+    "fec": false,
     "compression": false,
     "nack": false
   }

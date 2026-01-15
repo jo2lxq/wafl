@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 3: Integrated Scenario - Traditional (Strict Sync + TCP)",
+  "experiment_name": "Experiment 3: SUMO-osm Mobility - Traditional (Strict Sync + TCP)",
   "epochs": {
     "self": 64,
     "wafl": 2048

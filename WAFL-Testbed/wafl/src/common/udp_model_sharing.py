@@ -34,7 +34,22 @@ class UDPModelSharing:
     MAX_RETRIES = 10  # Max NACK attempts
     BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
 
-    def __init__(self, ip: str, port: int, fec_m: int, timeout: float, inter_packet_timeout: float, max_packet_size: int = None, fast_mode: bool = False):
+    def __init__(
+        self,
+        ip: str,
+        port: int,
+        fec_m: int,
+        timeout: float,
+        inter_packet_timeout: float,
+        max_packet_size: int = None,
+        fast_mode: bool = False,
+        # Ablation Study 用パラメータ
+        fec_enabled: bool = True,
+        fec_mode: str = "adaptive",  # "adaptive" | "fixed"
+        fec_fixed_redundancy: float = 0.0625,  # 固定冗長率 (6.25%)
+        nack_enabled: bool = True,
+        dynamic_mode: bool = False,  # Dynamic モードフラグ
+    ):
         self.ip = ip
         self.port = port
 
@@ -50,6 +65,14 @@ class UDPModelSharing:
         # k: data packets per chunk
         self.k = fec_m if fec_m > 0 else 16  # Default k=16 if not specified
 
+        # Ablation Study: FEC 制御パラメータ
+        self.fec_enabled = fec_enabled
+        self.fec_mode = fec_mode
+        self.fec_fixed_redundancy = fec_fixed_redundancy
+
+        # Ablation Study: NACK 制御パラメータ
+        self.nack_enabled = nack_enabled
+
         # Network Estimator for dynamic parameters
         self._network_estimator = get_network_estimator()
 
@@ -61,7 +84,9 @@ class UDPModelSharing:
 
         # Fast mode: disables NACK retries, discards incomplete models immediately
         self.fast_mode = fast_mode
-        if self.fast_mode:
+
+        # バッチサイズ動的化: Fast モードまたは NACK 無効時に適用
+        if self.fast_mode or not self.nack_enabled:
             # Adaptive Batch Size: Adjust based on estimated bandwidth
             metrics = self._network_estimator.get_metrics()
             bandwidth = metrics.bandwidth_mbps
@@ -71,7 +96,20 @@ class UDPModelSharing:
                 self.BATCH_SIZE = 32
             else:  # Good/Excellent
                 self.BATCH_SIZE = 64
-            self.logger.info(f"🚀 Fast mode: BATCH_SIZE={self.BATCH_SIZE} (bandwidth={bandwidth:.1f}Mbps)")
+            self.logger.info(f"🚀 Dynamic batch size: BATCH_SIZE={self.BATCH_SIZE} (bandwidth={bandwidth:.1f}Mbps)")
+        elif dynamic_mode:
+            # Dynamic モード: NetworkEstimator の品質レベルに基づく調整
+            metrics = self._network_estimator.get_metrics()
+            quality = metrics.get_quality_level()
+            if quality == "poor":
+                self.BATCH_SIZE = 16
+            elif quality == "fair":
+                self.BATCH_SIZE = 32
+            elif quality == "good":
+                self.BATCH_SIZE = 48
+            else:  # excellent
+                self.BATCH_SIZE = 64
+            self.logger.info(f"⚖️ Dynamic mode batch size: BATCH_SIZE={self.BATCH_SIZE} (quality={quality})")
 
         self.MAX_FEC_M = 256  # zfec limit
 
@@ -100,6 +138,8 @@ class UDPModelSharing:
             # Fast mode statistics
             "fast_mode_discarded": 0,
             "aborted_sends": 0,  # Sends aborted by receiver timeout
+            # Ablation Study: NACK 無効時の破棄カウント
+            "nack_disabled_discards": 0,
         }
 
         # Early abort tracking: {target_ip: True} when receiver sends ABORT
@@ -118,7 +158,9 @@ class UDPModelSharing:
         # Multicast Settings
         self.mcast_ttl = 2
 
-        self.logger.info(f"UDPModelSharing initialized: max_packet={self.MAX_PACKET_SIZE}B, k={self.k}")
+        # Log initialization with Ablation parameters
+        ablation_info = f"fec_enabled={self.fec_enabled}, fec_mode={self.fec_mode}, nack_enabled={self.nack_enabled}"
+        self.logger.info(f"UDPModelSharing initialized: max_packet={self.MAX_PACKET_SIZE}B, k={self.k}, {ablation_info}")
 
         # Encode cache (single-entry)
         # Keyed by (id(model_data), k, m, payload_size).
@@ -156,24 +198,35 @@ class UDPModelSharing:
 
     def _get_params_for_peer(self, peer_ip: str) -> tuple[int, int, float]:
         """Get FEC parity, total m, and pacing delay for a specific peer."""
-        parity = self._network_estimator.get_recommended_fec_parity(self.k, peer_ip)
+        # Ablation Study: FEC 無効時は冗長度 0
+        if not self.fec_enabled:
+            pacing = self._network_estimator.get_recommended_pacing_delay(peer_ip)
+            return 0, self.k, pacing  # m = k (NO-FEC mode)
 
-        # Fast mode: Dynamic FEC based on observed loss rate
-        if self.fast_mode:
+        # Ablation Study: FEC 固定モード
+        if self.fec_mode == "fixed":
+            parity = max(1, int(self.k * self.fec_fixed_redundancy))
+            self.logger.debug(f"🎯 Fixed FEC: redundancy={self.fec_fixed_redundancy * 100:.1f}%, parity={parity} (k={self.k})")
+        else:
+            # 適応モード（既存ロジック）
+            parity = self._network_estimator.get_recommended_fec_parity(self.k, peer_ip)
+
+        # Fast / Ablation (FEC有効) モード: ロス率×2 + 最低15% + 安全マージン
+        # FEC で確実に回復できるようにするため、追加マージンを設ける
+        if self.fast_mode or (self.fec_enabled and not self.nack_enabled):
             metrics = self._network_estimator.get_metrics(peer_ip)
             loss_rate = metrics.packet_loss_rate
 
-            # Dynamic parity: base on estimated loss + safety factor
-            # Minimum 15% redundancy to handle typical interference
-            base_parity = int(self.k * loss_rate * 2.0)  # 2x safety factor
-            min_parity = int(self.k * 0.15)  # Minimum 15%
-            parity = max(base_parity, min_parity, parity) + 1
+            # FEC parity: ロス率×2 + 最低15% + 安全マージン
+            base_parity = int(self.k * loss_rate * 2.0)  # ロス率の2倍
+            min_parity = int(self.k * 0.15)  # 最低15%
+            parity = max(base_parity, min_parity) + 1  # +1 安全マージン
 
-            # Extra margin for high-loss environments (>10%)
-            if loss_rate > 0.10:
-                parity += 2
+            # 高ロス補正 (5%以上で+1)
+            if loss_rate > 0.05:
+                parity += 1
 
-            self.logger.debug(f"🎯 Fast mode FEC: loss={loss_rate * 100:.1f}%, parity={parity} (k={self.k})")
+            self.logger.debug(f"🎯 FEC (loss×2 + min15% + margin): loss={loss_rate * 100:.1f}%, parity={parity} (k={self.k})")
 
         m = self.k + parity
 
@@ -631,12 +684,30 @@ class UDPModelSharing:
                             except Exception:
                                 pass
                         continue
-                    # Normal mode: send NACK for missing chunks
-                    missing = self._identify_missing_chunks(state)
-                    if missing:
-                        self._send_nack(peer_ip, model_seq, missing)
-                        state["retries"] += 1
-                        state["last_update"] = time.time()
+                    # NACK 制御（Ablation Study）
+                    if self.nack_enabled:
+                        # NACK 有効: 不足チャンクの再送を要求
+                        missing = self._identify_missing_chunks(state)
+                        if missing:
+                            self._send_nack(peer_ip, model_seq, missing)
+                            state["retries"] += 1
+                            state["last_update"] = time.time()
+                    else:
+                        # NACK 無効: 不完全モデルを破棄
+                        self.logger.info(f"🔕 NACK disabled: Discarding incomplete model {model_seq} from {peer_ip}")
+                        with self.stats_lock:
+                            self.stats["nack_disabled_discards"] += 1
+                        completed_models.add(key)
+                        completed_history.append(key)
+                        if key in incoming_models:
+                            del incoming_models[key]
+
+                        # Notify listener to stop waiting
+                        if self.callback:
+                            try:
+                                self.callback(b"NACK_DISABLED_DISCARD", peer_ip)
+                            except Exception:
+                                pass
                     continue
 
                 if ptype not in [self.PTYPE_DATA, self.PTYPE_MCAST]:

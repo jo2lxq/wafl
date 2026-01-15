@@ -1,8 +1,8 @@
 {
-  "experiment_name": "Experiment 2: Dynamic Communication Quality Evaluation - TCP",
+  "experiment_name": "Experiment 2: SUMO Mobility - TCP",
   "epochs": {
     "self": 32,
-    "wafl": 1024
+    "wafl": 640
   },
   "contact_pattern": "sumo/contact_pattern_mobility.json",
   "wafl_phase": {

@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 0: poor (UDP)",
+  "experiment_name": "Experiment 0: good (dynamic)",
   "epochs": {
     "self": 8,
     "wafl": 64
@@ -13,12 +13,12 @@
   },
   "network_condition": {
     "enabled": true,
-    "rate": "1mbit",
-    "delay": "50ms",
-    "loss": "12%"
+    "rate": "5mbit",
+    "delay": "15ms",
+    "loss": "5%"
   },
   "mobility_aware": {
     "enabled": false
   },
-  "method": "udp"
+  "method": "dynamic"
 }
