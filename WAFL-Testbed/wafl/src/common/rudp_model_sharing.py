@@ -114,6 +114,7 @@ class RUDPModelSharing:
             "max_retries_reached": 0,
             "nacks_sent": 0,  # 追加
             "fec_recoveries": 0,  # 追加
+            "app_bytes_sent": 0,  # 追加: 純粋なアプリケーションペイロード
         }
 
         self.logger.info(f"RUDPModelSharing initialized: mode={self.mode}, port={self.port}, timeout={self.timeout}s")
@@ -304,6 +305,7 @@ class RUDPModelSharing:
                         sock.send(header + model_data)
                         self.stats["sent_models"] += 1
                         self.stats["bytes_sent"] += len(model_data)
+                        self.stats["app_bytes_sent"] += len(model_data)
                         self.logger.info(f"📡 Sent model via RUDP ({len(model_data)} bytes) to {peer_ip} on same connection")
                     except Exception as send_error:
                         self.logger.error(f"❌ Failed to send model to {peer_ip}: {send_error}")
@@ -533,6 +535,7 @@ class RUDPModelSharing:
 
             self.stats["sent_models"] += 1
             self.stats["bytes_sent"] += len(model_data)
+            self.stats["app_bytes_sent"] += len(model_data)
             self._network_estimator.record_packet_result(True)
 
             self.logger.info(f"📡 Sent model via RUDP ({len(model_data)} bytes) to {target_ip}:{target_port} (connect: {connect_time:.1f}ms)")

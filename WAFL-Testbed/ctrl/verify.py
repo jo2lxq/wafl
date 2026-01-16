@@ -285,12 +285,8 @@ class ConfigValidator:
                 comp = method_val.get("compression", False)
                 nack = method_val.get("nack", True)
 
-                # bool または dict 形式に対応
-                fec_enabled = fec if isinstance(fec, bool) else fec.get("enabled", True)
-                comp_enabled = comp if isinstance(comp, bool) else comp.get("enabled", False)
-                nack_enabled = nack if isinstance(nack, bool) else nack.get("enabled", True)
-
-                log_success(f"method (ablation): base={base}, fec={fec_enabled}, comp={comp_enabled}, nack={nack_enabled}")
+                # bool 形式のみ対応
+                log_success(f"method (ablation): base={base}, fec={fec}, comp={comp}, nack={nack}")
             else:
                 self.errors.append(f"Invalid method type: {type(method_val)}")
                 log_error(f"Invalid method type: {type(method_val)}")

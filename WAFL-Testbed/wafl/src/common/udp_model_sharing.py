@@ -129,6 +129,7 @@ class UDPModelSharing:
             "timeout_models": 0,
             "bytes_sent": 0,
             "bytes_received": 0,
+            "app_bytes_sent": 0,
             "fec_encode_time_ms": 0.0,
             "fec_decode_time_ms": 0.0,
             # Dynamic parameter tracking (sums for averaging)
@@ -424,6 +425,7 @@ class UDPModelSharing:
             self.logger.info(f"📡 Sent model via UDP ({len(model_data)}B -> {actual_bytes_sent}B, {total_chunks} chunks, {total_packets} pkts, +{fec_overhead_ratio:.1f}%) to {target_ip}")
             self.stats["sent_models"] += 1
             self.stats["bytes_sent"] += actual_bytes_sent
+            self.stats["app_bytes_sent"] += len(model_data)
 
             # Cache for ARQ
             with self.sent_cache_lock:
@@ -515,6 +517,7 @@ class UDPModelSharing:
             self.logger.info(f"📡 Sent model via UDP (NO-FEC) ({len(model_data)} bytes, {total_chunks} chunks) to {target_ip}")
             self.stats["sent_models"] += 1
             self.stats["bytes_sent"] += actual_bytes_sent
+            self.stats["app_bytes_sent"] += len(model_data)
             # self._network_estimator.record_packet_result(True, peer_ip=target_ip) <-- REMOVED
             return True
 

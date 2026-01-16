@@ -497,6 +497,138 @@ def _load_metrics_and_resources(exp_dir):
 # =============================================================================
 
 
+def _generate_traffic_overhead_plot(df, experiment_name, analysis_dir):
+    """Generate Traffic Overhead Ratio plot (Physical Bytes / App Bytes)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    has_meaningful_data = False
+
+    if not df.empty and "bytes_sent" in df.columns and "app_bytes_sent" in df.columns:
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[(wafl_df["bytes_sent"].notna()) & (wafl_df["app_bytes_sent"].notna())].copy()
+
+        if not valid.empty and valid["bytes_sent"].sum() > 0:
+            has_meaningful_data = True
+
+            # Calculate ratio per epoch
+            agg = valid.groupby("epoch").agg({"bytes_sent": "sum", "app_bytes_sent": "sum"}).reset_index()
+            # Avoid division by zero
+            agg["overhead_ratio"] = agg["bytes_sent"] / agg["app_bytes_sent"].replace(0, np.nan)
+
+            # Plot Ratio
+            sns.lineplot(data=agg, x="epoch", y="overhead_ratio", color=COLORS["phase_line"], linewidth=2.5, marker="o", label="Overhead Ratio (Physical/App)", ax=ax)
+
+            # Add reference line at 1.0 (No Overhead)
+            ax.axhline(y=1.0, color="gray", linestyle="--", alpha=0.5, label="Ideal (1.0)")
+
+            # Add mean ratio to title
+            mean_ratio = agg["overhead_ratio"].mean()
+            ax.set_title(f"Traffic Overhead Ratio - {experiment_name}\n(Mean Ratio: {mean_ratio:.2f}x)")
+            ax.set_ylabel("Overhead Ratio (Physical / App)")
+            ax.set_xlabel("Epoch")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+    if not has_meaningful_data:
+        ax.text(0.5, 0.5, "Traffic Data N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        ax.set_title(f"Traffic Overhead Ratio - {experiment_name}")
+
+    fig.tight_layout()
+    fig.savefig(analysis_dir / "traffic_overhead.png", dpi=150)
+    plt.close(fig)
+    return "traffic_overhead.png"
+
+
+def _generate_throughput_overhead_plot(df, experiment_name, analysis_dir):
+    """Generate Throughput Overhead plot (Physical Throughput vs Goodput)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    has_meaningful_data = False
+
+    cols = ["bytes_sent", "app_bytes_sent", "comm_time_ms"]
+    if not df.empty and all(c in df.columns for c in cols):
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[(wafl_df["comm_time_ms"] > 50)].copy()  # Min 50ms filter
+
+        if not valid.empty:
+            has_meaningful_data = True
+
+            # Calculate stats per epoch
+            # (agg variable calculation removed as it was unused)
+
+            # Convert to Mbps
+            # Comm time is average per node, bytes are SUM.
+            # To get accurate throughput comparison, we should calculate per node then average, OR
+            # if we sum bytes, we should sum comm_time? No.
+            # Let's use the average throughput per node approach for consistency.
+
+            # Option 2: Calculate per-node throughput first
+            valid["phy_mbps"] = (valid["bytes_sent"] * 8 / 1e6) / (valid["comm_time_ms"] / 1000)
+            valid["app_mbps"] = (valid["app_bytes_sent"] * 8 / 1e6) / (valid["comm_time_ms"] / 1000)
+
+            node_agg = valid.groupby("epoch").agg({"phy_mbps": "mean", "app_mbps": "mean"}).reset_index()
+
+            sns.lineplot(data=node_agg, x="epoch", y="phy_mbps", label="Physical Throughput (Bandwidth Used)", color=COLORS["traffic"], linewidth=2, ax=ax)
+            sns.lineplot(data=node_agg, x="epoch", y="app_mbps", label="Goodput (Data Delivered)", color=COLORS["goodput"], linewidth=2, ax=ax)
+
+            ax.fill_between(node_agg["epoch"], node_agg["app_mbps"], node_agg["phy_mbps"], color=COLORS["traffic"], alpha=0.1, label="Overhead Gap")
+
+            ax.set_title(f"Throughput Overhead (Physical vs Goodput) - {experiment_name}")
+            ax.set_ylabel("Throughput [Mbps]")
+            ax.set_xlabel("Epoch")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+    if not has_meaningful_data:
+        ax.text(0.5, 0.5, "Throughput Data N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
+        ax.axis("off")
+        ax.set_title(f"Throughput Overhead - {experiment_name}")
+
+    fig.tight_layout()
+    fig.savefig(analysis_dir / "throughput_overhead.png", dpi=150)
+    plt.close(fig)
+    return "throughput_overhead.png"
+
+
+def _generate_accuracy_time_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate Accuracy vs Wall-clock Time plot (from WAFL Start)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if not df.empty and "test_accuracy" in df.columns and "wafl_relative_timestamp" in df.columns:
+        # Use WAFL phase only for clean time-series from 0
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        if "is_ssp_interrupted" in wafl_df.columns:
+            wafl_df = wafl_df[~wafl_df["is_ssp_interrupted"]]
+
+        if not wafl_df.empty:
+            # Stats per epoch to get mean time and accuracy
+            agg = wafl_df.groupby("epoch").agg({"wafl_relative_timestamp": "mean", "test_accuracy": ["mean", "std"]})
+            agg.columns = ["time", "mean", "std"]
+            agg = agg.reset_index()
+            agg["std"] = agg["std"].fillna(0)
+
+            ax.plot(agg["time"], agg["mean"], color=COLORS["mean_line"], linewidth=2.5, label="Test Accuracy", marker="o", markersize=3)
+            ax.fill_between(agg["time"], agg["mean"] - agg["std"], agg["mean"] + agg["std"], color=COLORS["accuracy_fill"], alpha=0.3)
+
+            # Target line
+            ax.axhline(y=TARGET_ACCURACY, color=COLORS["target_line"], linestyle="--", label=f"Target ({TARGET_ACCURACY:.0%})")
+
+            ax.set_title(f"Test Accuracy vs Wall-clock Time - {experiment_name}")
+            ax.set_ylabel("Test Accuracy")
+            ax.set_xlabel("Time from WAFL Start [sec]")
+            ax.set_ylim(0, 1.05)
+            ax.legend(loc="lower right")
+            ax.grid(True, alpha=0.3)
+
+            fig.tight_layout()
+            fig.savefig(analysis_dir / "accuracy_time.png", dpi=150)
+            plt.close(fig)
+            return "accuracy_time.png"
+
+    # No data
+    plt.close(fig)
+    return None
+
+
 def _generate_asymmetry_plot(df, experiment_name, analysis_dir, add_phase_line_func):
     """Generate model exchange asymmetry plot (Received Models Distribution)."""
     if df.empty or "received_models" not in df.columns:
@@ -1846,181 +1978,6 @@ def _generate_cumulative_sent_data_plot(df, experiment_name, analysis_dir):
     return "cumulative_sent_data.png"
 
 
-def _generate_rudp_retransmission_plot(df, experiment_name, analysis_dir, add_phase_line_func):
-    """Generate RUDP retransmission count plot."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_meaningful_data = False
-
-    if not df.empty and "rudp_retransmissions" in df.columns:
-        # Filter to WAFL phase only
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        rudp_data = wafl_df[wafl_df["rudp_retransmissions"].notna()].copy()
-
-        if not rudp_data.empty and rudp_data["rudp_retransmissions"].sum() > 0:
-            has_meaningful_data = True
-            num_nodes = rudp_data["node"].nunique()
-            palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
-
-            sns.lineplot(
-                data=rudp_data,
-                x="epoch",
-                y="rudp_retransmissions",
-                hue="node",
-                alpha=0.4,
-                legend=False,
-                palette=palette,
-                estimator=None,
-                linewidth=1.2,
-                ax=ax,
-            )
-            sns.lineplot(
-                data=rudp_data,
-                x="epoch",
-                y="rudp_retransmissions",
-                color=COLORS["mean_line"],
-                linewidth=2.5,
-                label="Mean",
-                errorbar=None,
-                ax=ax,
-            )
-            add_phase_line_func(ax, df, "epoch")
-            ax.set_title(f"RUDP Retransmissions - {experiment_name}")
-            ax.set_ylabel("Retransmissions")
-            ax.set_xlabel("Epoch")
-            ax.legend()
-
-    if not has_meaningful_data:
-        ax.text(
-            0.5,
-            0.5,
-            "RUDP not enabled\n(no retransmission data)",
-            ha="center",
-            va="center",
-            fontsize=14,
-            color=COLORS["no_data"],
-            transform=ax.transAxes,
-        )
-        ax.axis("off")
-        ax.set_title(f"RUDP Retransmissions - {experiment_name}")
-
-    fig.tight_layout()
-    fig.savefig(analysis_dir / "rudp_retransmissions.png", dpi=150)
-    plt.close(fig)
-    return "rudp_retransmissions.png"
-
-
-def _generate_rudp_rtt_plot(df, experiment_name, analysis_dir, add_phase_line_func):
-    """Generate RUDP average RTT plot."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_meaningful_data = False
-
-    if not df.empty and "rudp_avg_rtt_ms" in df.columns:
-        # Filter to WAFL phase only
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        rtt_data = wafl_df[wafl_df["rudp_avg_rtt_ms"].notna()].copy()
-
-        if not rtt_data.empty and rtt_data["rudp_avg_rtt_ms"].sum() > 0:
-            has_meaningful_data = True
-            num_nodes = rtt_data["node"].nunique()
-            palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
-
-            sns.lineplot(
-                data=rtt_data,
-                x="epoch",
-                y="rudp_avg_rtt_ms",
-                hue="node",
-                alpha=0.4,
-                legend=False,
-                palette=palette,
-                estimator=None,
-                linewidth=1.2,
-                ax=ax,
-            )
-            sns.lineplot(
-                data=rtt_data,
-                x="epoch",
-                y="rudp_avg_rtt_ms",
-                color=COLORS["mean_line"],
-                linewidth=2.5,
-                label="Mean",
-                errorbar=None,
-                ax=ax,
-            )
-            add_phase_line_func(ax, df, "epoch")
-            ax.set_title(f"RUDP Average RTT - {experiment_name}")
-            ax.set_ylabel("RTT [ms]")
-            ax.set_xlabel("Epoch")
-            ax.legend()
-
-    if not has_meaningful_data:
-        ax.text(
-            0.5,
-            0.5,
-            "RUDP not enabled\n(no RTT data)",
-            ha="center",
-            va="center",
-            fontsize=14,
-            color=COLORS["no_data"],
-            transform=ax.transAxes,
-        )
-        ax.axis("off")
-        ax.set_title(f"RUDP Average RTT - {experiment_name}")
-
-    fig.tight_layout()
-    fig.savefig(analysis_dir / "rudp_rtt.png", dpi=150)
-    plt.close(fig)
-    return "rudp_rtt.png"
-
-
-def _generate_rudp_aging_plot(df, experiment_name, analysis_dir, add_phase_line_func):
-    """Generate E-RUDP aged packets plot."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_meaningful_data = False
-
-    if not df.empty and "rudp_aged_packets" in df.columns:
-        # Filter to WAFL phase only
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        aging_data = wafl_df[wafl_df["rudp_aged_packets"].notna()].copy()
-
-        if not aging_data.empty and aging_data["rudp_aged_packets"].sum() > 0:
-            has_meaningful_data = True
-
-            # Aggregate by epoch
-            aging_agg = aging_data.groupby("epoch").agg({"rudp_aged_packets": "sum"}).reset_index()
-
-            ax.bar(
-                aging_agg["epoch"],
-                aging_agg["rudp_aged_packets"],
-                color=COLORS["wasted_bar"],
-                alpha=0.8,
-                edgecolor=COLORS["wasted_bar"],
-                linewidth=0.5,
-                width=0.6,
-            )
-            ax.set_ylabel("Aged Packets")
-            ax.set_xlabel("Epoch")
-            ax.set_title(f"E-RUDP Aged Packets - {experiment_name}")
-
-    if not has_meaningful_data:
-        ax.text(
-            0.5,
-            0.5,
-            "E-RUDP not enabled or no packets aged\n(aging_limit not exceeded)",
-            ha="center",
-            va="center",
-            fontsize=14,
-            color=COLORS["no_data"],
-            transform=ax.transAxes,
-        )
-        ax.axis("off")
-        ax.set_title(f"E-RUDP Aged Packets - {experiment_name}")
-
-    fig.tight_layout()
-    fig.savefig(analysis_dir / "rudp_aging.png", dpi=150)
-    plt.close(fig)
-    return "rudp_aging.png"
-
-
 def _generate_udp_dynamic_params_plot(df, experiment_name, analysis_dir, add_phase_line_func):
     """Generate UDP dynamic parameters plot (Parity & Pacing)."""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
@@ -2405,12 +2362,22 @@ def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
 
     # 8. Average Goodput (Mbps)
     if "bytes_received" in wafl_df.columns and "comm_time_ms" in wafl_df.columns:
-        valid = wafl_df[(wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)]
+        valid = wafl_df[(wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 50)]  # Min 50ms
         if not valid.empty and valid["bytes_received"].sum() > 0:
             total_bytes = valid["bytes_received"].sum()
             total_time_s = valid["comm_time_ms"].sum() / 1000
             avg_goodput = (total_bytes * 8 / 1e6) / total_time_s
+            avg_goodput = (total_bytes * 8 / 1e6) / total_time_s
             metrics["avg_goodput_mbps"] = avg_goodput
+
+    # 8.5 Average Physical Throughput (Mbps)
+    if "bytes_sent" in wafl_df.columns and "comm_time_ms" in wafl_df.columns:
+        valid = wafl_df[(wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 50)]
+        if not valid.empty and valid["bytes_sent"].sum() > 0:
+            total_bytes = valid["bytes_sent"].sum()
+            total_time_s = valid["comm_time_ms"].sum() / 1000
+            avg_phy = (total_bytes * 8 / 1e6) / total_time_s
+            metrics["avg_phy_throughput_mbps"] = avg_phy
 
     # 9. Number of Nodes
     if "node" in df.columns:
@@ -2424,11 +2391,12 @@ def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
     if "epoch" in wafl_df.columns and not wafl_df.empty:
         metrics["wafl_epochs"] = int(wafl_df["epoch"].max() - wafl_df["epoch"].min() + 1)
 
-    # 12. RUDP Retransmissions (total)
-    if "rudp_retransmissions" in wafl_df.columns:
-        total_retrans = wafl_df["rudp_retransmissions"].sum()
-        if pd.notna(total_retrans) and total_retrans > 0:
-            metrics["rudp_retransmissions"] = int(total_retrans)
+    # 12. Traffic Overhead Ratio
+    if "bytes_sent" in wafl_df.columns and "app_bytes_sent" in wafl_df.columns:
+        phy_bytes = wafl_df["bytes_sent"].sum()
+        app_bytes = wafl_df["app_bytes_sent"].sum()
+        if app_bytes > 0:
+            metrics["traffic_overhead_ratio"] = phy_bytes / app_bytes
 
     # 13. FEC Processing Time (encode + decode)
     if "fec_encode_time_ms" in wafl_df.columns:
@@ -2440,17 +2408,7 @@ def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
         if pd.notna(avg_decode) and avg_decode > 0:
             metrics["avg_fec_decode_ms"] = avg_decode
 
-    # 14. UDP Recovery Stats
-    if "fec_recovery_success" in wafl_df.columns:
-        metrics["udp_recovery_success"] = int(wafl_df["fec_recovery_success"].sum())
-    if "fec_recovery_fail" in wafl_df.columns:
-        metrics["udp_recovery_fail"] = int(wafl_df["fec_recovery_fail"].sum())
-
-    # 15. RUDP Failures
-    if "rudp_max_retries_reached" in wafl_df.columns:
-        metrics["rudp_max_retries_total"] = int(wafl_df["rudp_max_retries_reached"].sum())
-
-    # 16. Compression Stats
+    # 14. Compression Stats
     if "compression_ratio" in wafl_df.columns:
         metrics["compression_ratio_avg"] = wafl_df["compression_ratio"].mean()
     if "compression_time_ms" in wafl_df.columns:
@@ -2499,8 +2457,8 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
         lines.append(f"| Avg Survival Rate | {metrics['avg_survival_rate']:.4f} ({metrics['avg_survival_rate'] * 100:.2f}%) |")
     if "avg_goodput_mbps" in metrics:
         lines.append(f"| Avg Goodput | {metrics['avg_goodput_mbps']:.2f} Mbps |")
-    if "rudp_retransmissions" in metrics:
-        lines.append(f"| RUDP Retransmissions | {metrics['rudp_retransmissions']} |")
+    if "traffic_overhead_ratio" in metrics:
+        lines.append(f"| Traffic Overhead Ratio | {metrics['traffic_overhead_ratio']:.2f}x |")
     if "avg_fec_encode_ms" in metrics:
         lines.append(f"| Avg FEC Encode Time | {metrics['avg_fec_encode_ms']:.2f} ms |")
     if "avg_fec_decode_ms" in metrics:
@@ -2508,19 +2466,10 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
     if "avg_fec_encode_ms" in metrics and "avg_fec_decode_ms" in metrics:
         total_fec = metrics["avg_fec_encode_ms"] + metrics["avg_fec_decode_ms"]
         lines.append(f"| Avg Total FEC Overhead | {total_fec:.2f} ms |")
-    if "udp_recovery_success" in metrics and "udp_recovery_fail" in metrics:
-        total_rec = metrics["udp_recovery_success"] + metrics["udp_recovery_fail"]
-        rate = metrics["udp_recovery_success"] / total_rec if total_rec > 0 else 0
-        lines.append(f"| UDP FEC Recovery Rate | {rate:.1%} ({metrics['udp_recovery_success']}/{total_rec}) |")
-    if "rudp_max_retries_total" in metrics:
-        lines.append(f"| RUDP Max Retry Failures | {metrics['rudp_max_retries_total']} |")
     if "compression_ratio_avg" in metrics:
         lines.append(f"| Avg Compression Ratio | {metrics['compression_ratio_avg']:.2f}x |")
     if "compression_time_avg" in metrics:
         lines.append(f"| Avg Compression Time | {metrics['compression_time_avg']:.2f} ms |")
-    lines.append("")
-    # Dynamic Protocol Stats Section
-    # Dynamic Protocol Stats Section removed as per request (Visualization only)
     lines.append("")
     lines.append("")
 
@@ -2530,18 +2479,17 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
 
     graph_descriptions = {
         "accuracy_mean.png": "Train and Test Accuracy (Mean ± SD)",
+        "accuracy_time.png": "Test Accuracy vs Wall-clock Time",
         "accuracy_nodes.png": "Node-wise Test Accuracy",
-        "accuracy_vs_time.png": "Test Accuracy vs Elapsed Time",
         "loss_mean.png": "Train and Test Loss (Mean ± SD)",
         "loss_nodes.png": "Node-wise Test Loss",
-        "time_to_accuracy.png": f"Time to Target Accuracy ({TARGET_ACCURACY * 100:.0f}%)",
+        "traffic_overhead.png": "Traffic Overhead Ratio (Physical / App)",
+        "throughput_overhead.png": "Throughput Overhead (Physical vs Goodput)",
         "epoch_duration.png": "Wall-clock Time per Epoch",
-        "idle_time_ratio.png": "Idle Time Ratio (Sync Wait)",
         "compute_comm_breakdown.png": "Compute vs Communication Time",
         "survival_rate.png": "Survival Rate (UDP/FEC)",
         "goodput.png": "Throughput (Sent vs Goodput)",
         "traffic_volume.png": "Traffic Volume per Epoch",
-        "total_transfer_time.png": "Transfer Time Breakdown",
         "wasted_computation.png": "Wasted Computation (SSP)",
         "fec_overhead.png": "FEC Processing Overhead (Encode + Decode)",
         "udp_dynamic_params.png": "UDP Dynamic Parameters (Parity & Pacing)",
@@ -2549,8 +2497,6 @@ def _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir
         "asymmetry_distribution.png": "Asymmetry Check (Received Models Distribution)",
         "asymmetry_lorenz.png": "Asymmetry Check (Lorenz Curve & Gini)",
         "survivor_quality.png": "Survivor Quality (Accuracy vs Connectivity)",
-        "survivor_trajectory_groups.png": "Survivor Trajectory (High vs Low Connectivity)",
-        "udp_recovery.png": "UDP FEC Recovery Status (Success vs Fail)",
         "compression_stats.png": "Compression Statistics (Ratio & Time)",
     }
 
@@ -2622,13 +2568,17 @@ def analyze_results(experiment_id):
         plot_tasks.append((func, args))
 
     add_task(_generate_epoch_duration_plot, df, experiment_name, analysis_dir, _add_phase_line, exp_dir)
-    add_task(_generate_idle_time_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_wasted_computation_plot, df, experiment_name, analysis_dir)
     add_task(_generate_survival_rate_plot, df, experiment_name, analysis_dir, _add_phase_line)
-    add_task(_generate_goodput_plot, df, experiment_name, analysis_dir)
+    add_task(_generate_goodput_plot, df, experiment_name, analysis_dir, _add_phase_line)
+    add_task(_generate_effective_goodput_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_traffic_volume_plot, df, experiment_name, analysis_dir)
-    add_task(_generate_transfer_time_plot, df, experiment_name, analysis_dir)
-    add_task(_generate_time_to_accuracy_plot, df, experiment_name, analysis_dir)
+
+    # New / Refined Plots
+    add_task(_generate_traffic_overhead_plot, df, experiment_name, analysis_dir, _add_phase_line)
+    add_task(_generate_throughput_overhead_plot, df, experiment_name, analysis_dir)
+    add_task(_generate_accuracy_time_plot, df, experiment_name, analysis_dir, _add_phase_line)
+
     add_task(_generate_accuracy_mean_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_loss_mean_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_accuracy_nodes_plot, df, experiment_name, analysis_dir, _add_phase_line)
@@ -2639,7 +2589,6 @@ def analyze_results(experiment_id):
     add_task(_generate_protocol_distribution_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_asymmetry_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_survivor_quality_plot, df, experiment_name, analysis_dir, _add_phase_line)
-    add_task(_generate_udp_recovery_plot, df, experiment_name, analysis_dir, _add_phase_line)
     add_task(_generate_compression_stats_plot, df, experiment_name, analysis_dir, _add_phase_line)
 
     # Execute plot generation in parallel using multiprocessing
@@ -2668,6 +2617,175 @@ def analyze_results(experiment_id):
     _generate_experiment_report(df, experiment_id, experiment_name, analysis_dir, wafl_phase_start_relative)
 
     print(f"✨ Analysis complete. {len(generated_plots)} plots + report generated in: {analysis_dir}")
+
+
+def _generate_goodput_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate per-node goodput plot using Application Payload (app_bytes_received)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Use 'app_bytes_received' for Goodput (Payload Rate) if available
+    target_col = "app_bytes_received"
+    if target_col not in df.columns or df[target_col].sum() == 0:
+        target_col = "bytes_received"  # Fallback (should not happen with new logic)
+
+    plot_df = df[(df[target_col].notna()) & (df["comm_time_ms"] > 50)].copy()  # Filter noise < 50ms
+
+    if plot_df.empty:
+        return None
+
+    # Filter SSP interrupted if present (omitted for brevity, assume standard filter)
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+    # Goodput = Payload Bits / Communication Time
+    plot_df["goodput_mbps"] = (plot_df[target_col] * 8 / 1e6) / (plot_df["comm_time_ms"] / 1000)
+
+    num_nodes = plot_df["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="goodput_mbps",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        linewidth=1.2,
+        ax=ax,
+    )
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="goodput_mbps",
+        color=COLORS["goodput"],
+        linewidth=2.5,
+        label="Mean Goodput",
+        errorbar=None,
+        ax=ax,
+    )
+
+    add_phase_line_func(ax, plot_df, "epoch")
+    ax.set_title(f"Goodput (Payload) - {experiment_name}")
+    ax.set_ylabel("Goodput [Mbps]")
+    ax.set_xlabel("Epoch")
+    fig.tight_layout()
+    fig.savefig(analysis_dir / "goodput.png", dpi=150)
+    plt.close(fig)
+    return "goodput.png"
+
+
+def _generate_effective_goodput_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate per-node Effective Goodput plot using Original Size (Pre-compression)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    plot_df = None
+
+    # Priority 1: Calculate from original_size and comm_time_ms (Most accurate)
+    if "original_size" in df.columns and "comm_time_ms" in df.columns:
+        temp_df = df[(df["original_size"].notna()) & (df["comm_time_ms"] > 50)].copy()  # Min 50ms noise filter
+        if not temp_df.empty:
+            # Effective Goodput = Original Bits / Time
+            temp_df["effective_goodput_mbps"] = (temp_df["original_size"] * 8 / 1e6) / (temp_df["comm_time_ms"] / 1000)
+            plot_df = temp_df
+
+    # Priority 2: Use pre-calculated effective_goodput_mbps (Fallback)
+    if plot_df is None and "effective_goodput_mbps" in df.columns:
+        temp_df = df[(df["effective_goodput_mbps"].notna()) & (df["effective_goodput_mbps"] > 0)].copy()
+        if "comm_time_ms" in temp_df.columns:
+            temp_df = temp_df[temp_df["comm_time_ms"] > 50]
+
+        if not temp_df.empty:
+            plot_df = temp_df
+
+    if plot_df is None:
+        plt.close(fig)
+        return None
+
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+    num_nodes = plot_df["node"].nunique()
+    palette = NODE_PALETTE[:num_nodes] if num_nodes <= len(NODE_PALETTE) else "husl"
+
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="effective_goodput_mbps",
+        hue="node",
+        alpha=0.4,
+        legend=False,
+        palette=palette,
+        linewidth=1.2,
+        ax=ax,
+    )
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="effective_goodput_mbps",
+        color=COLORS["mean_line"],
+        linewidth=2.5,
+        label="Mean Effective Goodput",
+        errorbar=None,
+        ax=ax,
+    )
+
+    add_phase_line_func(ax, plot_df, "epoch")
+    ax.set_title(f"Effective Goodput (Original Size / Time) - {experiment_name}")
+    ax.set_ylabel("Effective Goodput [Mbps]")
+    ax.set_xlabel("Epoch")
+    fig.tight_layout()
+    fig.savefig(analysis_dir / "effective_goodput.png", dpi=150)
+    plt.close(fig)
+    return "effective_goodput.png"
+
+
+def _generate_traffic_overhead_plot(df, experiment_name, analysis_dir, add_phase_line_func):
+    """Generate Traffic Overhead Ratio (Physical / App Payload)."""
+    if df.empty or "bytes_sent" not in df.columns or "app_bytes_sent" not in df.columns:
+        return None
+
+    plot_df = df[(df["bytes_sent"].notna()) & (df["app_bytes_sent"].notna())].copy()
+    if plot_df.empty:
+        return None
+
+    if "is_ssp_interrupted" in plot_df.columns:
+        plot_df = plot_df[~plot_df["is_ssp_interrupted"]]
+
+    # Using 'app_bytes_sent' which is purely payload
+    # Add small epsilon to avoid division by zero
+    plot_df["overhead_ratio"] = plot_df["bytes_sent"] / (plot_df["app_bytes_sent"] + 1e-9)
+    # Clip extreme values for visualization stability (e.g. initial empty packets)
+    plot_df = plot_df[plot_df["app_bytes_sent"] > 100]  # Ignore irrelevant small packets
+
+    if plot_df.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    sns.lineplot(
+        data=plot_df,
+        x="epoch",
+        y="overhead_ratio",
+        color=COLORS["wasted_bar"],
+        linewidth=2.5,
+        label="Overhead Ratio (Physical/App)",
+        errorbar=None,
+        ax=ax,
+    )
+
+    ax.axhline(y=1.0, color="gray", linestyle="--", label="Ideal (1.0)")
+    add_phase_line_func(ax, plot_df, "epoch")
+
+    ax.set_title(f"Traffic Overhead Ratio - {experiment_name}")
+    ax.set_ylabel("Overhead Ratio")
+    ax.set_xlabel("Epoch")
+    ax.legend()
+
+    fig.tight_layout()
+    fig.savefig(analysis_dir / "traffic_overhead.png", dpi=150)
+    plt.close(fig)
+    return "traffic_overhead.png"
 
 
 # =============================================================================
@@ -2915,8 +3033,8 @@ def _generate_duration_comparison(experiments_data, group_name, output_dir):
         if df.empty or "epoch_duration_ms" not in df.columns:
             continue
 
-        plot_df = df[df["epoch_duration_ms"].notna()].copy()
-        if plot_df.empty:
+        epoch_dur = df[df["epoch_duration_ms"].notna()].copy()
+        if epoch_dur.empty:
             continue
 
         # Get phase switch epoch from first experiment
@@ -2925,7 +3043,7 @@ def _generate_duration_comparison(experiments_data, group_name, output_dir):
             if not wafl_epochs.empty:
                 phase_switch_epoch = wafl_epochs.min()
 
-        dur_mean = plot_df.groupby("epoch")["epoch_duration_ms"].mean().reset_index()
+        dur_mean = epoch_dur.groupby("epoch")["epoch_duration_ms"].mean().reset_index()
         dur_mean["duration_s"] = dur_mean["epoch_duration_ms"] / 1000
 
         color = NODE_PALETTE[i % len(NODE_PALETTE)]
@@ -3021,12 +3139,14 @@ def _generate_time_to_accuracy_comparison(experiments_data, group_name, output_d
             fontsize=9,
         )
 
-    ax.set_title(f"Time to {TARGET_ACCURACY:.0%} Accuracy (from WAFL Start) - {group_name}")
+    ax.set_title(f"Time to {TARGET_ACCURACY * 100:.0%} Accuracy (from WAFL Start) - {group_name}")
     ax.set_ylabel("Time from WAFL Start [sec]")
     ax.set_xlabel("Experiment")
     # Explicitly set tick labels to ensure they are correct when rotated
     ax.set_xticks(range(len(tta_df["experiment"])))
-    ax.set_xticklabels(tta_df["experiment"], rotation=45, ha="right")
+    ax.set_xticklabels(tta_df["experiment"])
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
 
     fig.tight_layout()
     fig.savefig(output_dir / "time_to_accuracy_comparison.png", dpi=150)
@@ -3118,7 +3238,7 @@ def _generate_throughput_comparison(experiments_data, group_name, output_dir):
     return "throughput_comparison.png"
 
 
-def _generate_accuracy_vs_time_comparison(experiments_data, group_name, output_dir):
+def _generate_accuracy_time_comparison(experiments_data, group_name, output_dir):
     """Generate test accuracy vs time comparison plot (WAFL phase, aligned at WAFL start)."""
     fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -3220,7 +3340,9 @@ def _generate_cumulative_sent_data_comparison(experiments_data, group_name, outp
 
     # Explicitly set ticks and labels
     ax.set_xticks(range(len(cumulative_df["experiment"])))
-    ax.set_xticklabels(cumulative_df["experiment"], rotation=45, ha="right")
+    ax.set_xticklabels(cumulative_df["experiment"])
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
 
     fig.tight_layout()
     fig.savefig(output_dir / "cumulative_sent_data_comparison.png", dpi=150)
@@ -3346,61 +3468,14 @@ def _generate_wasted_computation_comparison(experiments_data, group_name, output
 
     # Explicitly set ticks and labels
     ax.set_xticks(range(len(wasted_df["experiment"])))
-    ax.set_xticklabels(wasted_df["experiment"], rotation=45, ha="right")
+    ax.set_xticklabels(wasted_df["experiment"])
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
 
     fig.tight_layout()
     fig.savefig(output_dir / "wasted_computation_comparison.png", dpi=150)
     plt.close(fig)
     return "wasted_computation_comparison.png"
-
-
-def _generate_goodput_comparison(experiments_data, group_name, output_dir):
-    """Generate goodput comparison plot (WAFL phase only)."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_data = False
-
-    for i, (exp_id, df) in enumerate(experiments_data.items()):
-        if df.empty or "bytes_received" not in df.columns or "epoch_duration_ms" not in df.columns:
-            continue
-
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        goodput_data = wafl_df[(wafl_df["bytes_received"].notna()) & (wafl_df["comm_time_ms"].notna()) & (wafl_df["comm_time_ms"] > 0)].copy()
-
-        # Check for app_bytes_received
-        if "app_bytes_received" in goodput_data.columns and goodput_data["app_bytes_received"].sum() > 0:
-            rx_col = "app_bytes_received"
-        else:
-            rx_col = "bytes_received"
-
-        if goodput_data.empty or goodput_data[rx_col].sum() == 0:
-            continue
-
-        # Use comm_time_ms for true Goodput (Transfer Throughput)
-        goodput_data["goodput_mbps"] = (goodput_data[rx_col] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
-        goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
-
-        color = NODE_PALETTE[i % len(NODE_PALETTE)]
-        ax.plot(
-            goodput_agg["epoch"],
-            goodput_agg["goodput_mbps"],
-            color=color,
-            linewidth=2,
-            label=_get_short_name(exp_id),
-        )
-        has_data = True
-
-    if not has_data:
-        plt.close(fig)
-        return None
-
-    ax.set_title(f"Goodput Comparison (WAFL Phase) - {group_name}")
-    ax.set_ylabel("Goodput [Mbps]")
-    ax.set_xlabel("Epoch")
-    ax.legend(loc="upper right")
-    fig.tight_layout()
-    fig.savefig(output_dir / "goodput_comparison.png", dpi=150)
-    plt.close(fig)
-    return "goodput_comparison.png"
 
 
 def _generate_traffic_volume_comparison(experiments_data, group_name, output_dir):
@@ -3413,6 +3488,7 @@ def _generate_traffic_volume_comparison(experiments_data, group_name, output_dir
             continue
 
         wafl_df = df[df["phase"] == "WAFL"].copy()
+        # Use simple bytes_sent for total volume view
         traffic_data = wafl_df[wafl_df["bytes_sent"].notna()]
         if traffic_data.empty or traffic_data["bytes_sent"].sum() == 0:
             continue
@@ -3472,7 +3548,6 @@ def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
 
     breakdown_df = pd.DataFrame(breakdown_data)
 
-    sns.set_theme(style="darkgrid")
     fig, ax = plt.subplots(figsize=(12, 6))
     x = range(len(breakdown_df))
     width = 0.35
@@ -3498,13 +3573,369 @@ def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
     ax.set_xlabel("Experiment")
     ax.set_title(f"Compute vs Communication Time (WAFL Phase) - {group_name}")
     ax.set_xticks(x)
-    ax.set_xticklabels(breakdown_df["experiment"], rotation=45, ha="right")
+    ax.set_xticklabels(breakdown_df["experiment"])
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
     ax.legend()
 
     fig.tight_layout()
     fig.savefig(output_dir / "compute_comm_comparison.png", dpi=150)
     plt.close(fig)
     return "compute_comm_comparison.png"
+
+
+def _generate_goodput_comparison(experiments_data, group_name, output_dir):
+    """Generate goodput comparison plot (WAFL phase only) using app_bytes_received."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "comm_time_ms" not in df.columns:
+            continue
+
+        plot_df = df[df["comm_time_ms"] > 50].copy()  # Min 50ms filter
+        if plot_df.empty:
+            continue
+
+        target_col = "app_bytes_received"
+        if target_col not in df.columns:
+            target_col = "bytes_received"
+
+        wafl_df = plot_df[plot_df["phase"] == "WAFL"].copy()
+        goodput_data = wafl_df[wafl_df[target_col].notna()].copy()
+
+        if goodput_data.empty or goodput_data[target_col].sum() == 0:
+            continue
+
+        # Goodput = Payload Bits / Time
+        goodput_data["goodput_mbps"] = (goodput_data[target_col] * 8 / 1e6) / (goodput_data["comm_time_ms"] / 1000)
+        goodput_agg = goodput_data.groupby("epoch")["goodput_mbps"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        ax.plot(
+            goodput_agg["epoch"],
+            goodput_agg["goodput_mbps"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+        )
+        has_data = True
+
+    if not has_data:
+        plt.close(fig)
+        return None
+
+    ax.set_title(f"Goodput Comparison (Payload) - {group_name}")
+    ax.set_ylabel("Goodput [Mbps]")
+    ax.set_xlabel("Epoch")
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_dir / "goodput_comparison.png", dpi=150)
+    plt.close(fig)
+    return "goodput_comparison.png"
+
+
+def _generate_effective_goodput_comparison(experiments_data, group_name, output_dir):
+    """Generate Effective Goodput comparison plot (Original Size / Time)."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    has_data = False
+
+    for i, (exp_id, df) in enumerate(experiments_data.items()):
+        if df.empty or "effective_goodput_mbps" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        plot_df = wafl_df[(wafl_df["effective_goodput_mbps"].notna())].copy()
+
+        if plot_df.empty:
+            continue
+
+        agg = plot_df.groupby("epoch")["effective_goodput_mbps"].mean().reset_index()
+
+        color = NODE_PALETTE[i % len(NODE_PALETTE)]
+        ax.plot(
+            agg["epoch"],
+            agg["effective_goodput_mbps"],
+            color=color,
+            linewidth=2,
+            label=_get_short_name(exp_id),
+        )
+        has_data = True
+
+    if not has_data:
+        plt.close(fig)
+        return None
+
+    ax.set_title(f"Effective Goodput Comparison (Original / Time) - {group_name}")
+    ax.set_ylabel("Effective Goodput [Mbps]")
+    ax.set_xlabel("Epoch")
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_dir / "effective_goodput_comparison.png", dpi=150)
+    plt.close(fig)
+    return "effective_goodput_comparison.png"
+
+
+def _generate_traffic_overhead_comparison(experiments_data, group_name, output_dir):
+    """Generate Traffic Overhead Ratio comparison plot using app_bytes_sent."""
+    overhead_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "bytes_sent" not in df.columns:
+            continue
+
+        target_app = "app_bytes_sent"
+        if target_app not in df.columns:
+            # Fallback for old logs? No, we enforced new logs.
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[(wafl_df["bytes_sent"].notna()) & (wafl_df[target_app].notna())].copy()
+
+        if not valid.empty and valid["bytes_sent"].sum() > 0:
+            agg = valid.groupby("epoch").agg({"bytes_sent": "sum", "app_bytes_sent": "sum"}).reset_index()
+            # Calculate sum of all epochs
+            total_phy = agg["bytes_sent"].sum()
+            total_app = agg["app_bytes_sent"].sum()
+
+            ratio = total_phy / total_app if total_app > 0 else 0
+            overhead_data.append({"experiment": _get_short_name(exp_id), "overhead_ratio": ratio})
+
+    if not overhead_data:
+        return None
+
+    overhead_df = pd.DataFrame(overhead_data)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars = ax.bar(overhead_df["experiment"], overhead_df["overhead_ratio"], color=COLORS["phase_line"], alpha=0.8)
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, height, f"{height:.2f}x", ha="center", va="bottom", fontsize=10, fontweight="bold")
+
+    ax.set_title(f"Traffic Overhead Ratio Comparison (Physical / App) - {group_name}")
+    ax.set_ylabel("Overhead Ratio")
+    ax.set_xlabel("Experiment")
+    ax.axhline(y=1.0, color="gray", linestyle="--", label="Ideal (1.0)")
+
+    ax.set_xticks(range(len(overhead_df["experiment"])))
+    ax.set_xticklabels(overhead_df["experiment"])
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
+    ax.legend()
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "traffic_overhead_comparison.png", dpi=150)
+    plt.close(fig)
+    return "traffic_overhead_comparison.png"
+
+
+def _generate_throughput_overhead_comparison(experiments_data, group_name, output_dir):
+    """Generate Throughput Overhead comparison (Grouped Bar)."""
+    tp_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "comm_time_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[wafl_df["comm_time_ms"] > 50].copy()  # Min 50ms filter
+
+        if not valid.empty:
+            # Per node avg
+            valid["phy_mbps"] = (valid["bytes_sent"] * 8 / 1e6) / (valid["comm_time_ms"] / 1000)
+            valid["app_mbps"] = (valid["app_bytes_sent"] * 8 / 1e6) / (valid["comm_time_ms"] / 1000)
+
+            avg_phy = valid["phy_mbps"].mean()
+            avg_app = valid["app_mbps"].mean()
+
+            tp_data.append({"experiment": _get_short_name(exp_id), "Physical Throughput": avg_phy, "Goodput": avg_app})
+
+    if not tp_data:
+        return None
+
+    tp_df = pd.DataFrame(tp_data)
+
+    # Melting for grouped bar plot
+    melted = tp_df.melt(id_vars="experiment", var_name="Metric", value_name="Mbps")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(data=melted, x="experiment", y="Mbps", hue="Metric", palette=[COLORS["traffic"], COLORS["goodput"]], ax=ax)
+
+    ax.set_title(f"Throughput Comparison (Physical vs Goodput) - {group_name}")
+    # Fix: Use tick_params for rotation instead of set_xticklabels(get_xticklabels())
+    ax.tick_params(axis="x", rotation=45)
+    # Align labels to right
+    plt.setp(ax.get_xticklabels(), ha="right")
+    ax.grid(True, axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "throughput_overhead_comparison.png", dpi=150)
+    plt.close(fig)
+    return "throughput_overhead_comparison.png"
+
+
+def _generate_accuracy_dist_comparison(experiments_data, group_name, output_dir):
+    """Generate Accuracy Distribution Comparison (Box Plot)."""
+    dist_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty or "test_accuracy" not in df.columns:
+            continue
+        wafl_df = df[df["phase"] == "WAFL"].dropna(subset=["test_accuracy"])
+        if wafl_df.empty:
+            continue
+
+        # We want distribution of FINAL accuracy per node? Or distribution across all epochs?
+        # Typically "Per-node accuracy" implies how well each node did.
+        # Let's take the mean accuracy of each node over the last 10% of epochs or just all epochs?
+        # Or simply the distribution of test_accuracy of all nodes in all epochs to show stability?
+        # Let's show distribution of MEAN accuracy per node (Node Fairness).
+
+        node_means = wafl_df.groupby("node")["test_accuracy"].mean().reset_index()
+        node_means["experiment"] = _get_short_name(exp_id)
+        dist_data.append(node_means)
+
+    if not dist_data:
+        return None
+
+    full_df = pd.concat(dist_data)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    # Fix: Slice palette to match number of experiments to avoid warning
+    palette = NODE_PALETTE[: len(full_df["experiment"].unique())]
+    sns.boxplot(data=full_df, x="experiment", y="test_accuracy", hue="experiment", legend=False, palette=palette, ax=ax)
+
+    ax.set_title(f"Node-wise Mean Accuracy Distribution - {group_name}")
+    ax.set_ylabel("Mean Test Accuracy")
+    # Fix: Use tick_params
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
+
+    fig.tight_layout()
+    plt.savefig(output_dir / "accuracy_dist_comparison.png", dpi=150)
+    plt.close(fig)
+    return "accuracy_dist_comparison.png"
+
+
+def _generate_fec_overhead_comparison(experiments_data, group_name, output_dir):
+    """Generate FEC Overhead Comparison."""
+    fec_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty:
+            continue
+        wafl_df = df[df["phase"] == "WAFL"]
+
+        enc = wafl_df["fec_encode_time_ms"].mean() if "fec_encode_time_ms" in wafl_df.columns else 0
+        dec = wafl_df["fec_decode_time_ms"].mean() if "fec_decode_time_ms" in wafl_df.columns else 0
+
+        if enc > 0 or dec > 0:
+            fec_data.append({"experiment": _get_short_name(exp_id), "Encode": enc, "Decode": dec})
+
+    if not fec_data:
+        return None
+
+    fec_df = pd.DataFrame(fec_data)
+    fec_df = fec_df.set_index("experiment")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fec_df.plot(kind="bar", stacked=True, color=[COLORS["bar_primary"], COLORS["bar_secondary"]], ax=ax)
+
+    ax.set_title(f"FEC Processing Overhead Comparison - {group_name}")
+    ax.set_ylabel("Time [ms]")
+    # Fix: Use tick_params
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
+
+    fig.tight_layout()
+    plt.savefig(output_dir / "fec_overhead_comparison.png", dpi=150)
+    plt.close(fig)
+    return "fec_overhead_comparison.png"
+
+
+def _generate_compression_comparison(experiments_data, group_name, output_dir):
+    """Generate Compression Stats Comparison."""
+    comp_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty:
+            continue
+        wafl_df = df[df["phase"] == "WAFL"]
+
+        ratio = wafl_df["compression_ratio"].mean() if "compression_ratio" in wafl_df.columns else 1.0
+        time = wafl_df["compression_time_ms"].mean() if "compression_time_ms" in wafl_df.columns else 0
+
+        comp_data.append({"experiment": _get_short_name(exp_id), "Ratio": ratio, "Time (ms)": time})
+
+    if not comp_data:
+        return None
+
+    comp_df = pd.DataFrame(comp_data)
+
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    # Plot Ratio as Bar
+    sns.barplot(data=comp_df, x="experiment", y="Ratio", color=COLORS["goodput"], alpha=0.6, ax=ax1)
+    ax1.set_ylabel("Compression Ratio (Lower is better)", color=COLORS["goodput"])
+    ax1.set_ylim(0, 1.2)
+
+    # Plot Time as Line on secondary axis
+    ax2 = ax1.twinx()
+    sns.lineplot(data=comp_df, x="experiment", y="Time (ms)", color=COLORS["wasted_bar"], marker="o", linewidth=2, ax=ax2)
+    ax2.set_ylabel("Compression Time [ms]", color=COLORS["wasted_bar"])
+
+    ax1.set_title(f"Compression Statistics Comparison - {group_name}")
+    # Fix: Use tick_params
+    ax1.tick_params(axis="x", rotation=45)
+    plt.setp(ax1.get_xticklabels(), ha="right")
+
+    fig.tight_layout()
+    plt.savefig(output_dir / "compression_comparison.png", dpi=150)
+    plt.close(fig)
+    return "compression_comparison.png"
+
+
+def _generate_protocol_distribution_comparison(experiments_data, group_name, output_dir):
+    """Generate Protocol Distribution Comparison (TCP vs UDP)."""
+    dist_data = []
+
+    for exp_id, df in experiments_data.items():
+        if df.empty:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"]
+        tcp = wafl_df["protocol_tcp_count"].sum() if "protocol_tcp_count" in wafl_df.columns else 0
+        udp = wafl_df["protocol_udp_count"].sum() if "protocol_udp_count" in wafl_df.columns else 0
+        # RUDP removed
+
+        total = tcp + udp
+        if total > 0:
+            dist_data.append({"experiment": _get_short_name(exp_id), "TCP": tcp / total * 100, "UDP": udp / total * 100})
+
+    if not dist_data:
+        return None
+
+    dist_df = pd.DataFrame(dist_data).set_index("experiment")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Custom colors: TCP(primary), UDP(goodput)
+    colors = [COLORS["bar_primary"], COLORS["goodput"]]
+
+    dist_df.plot(kind="bar", stacked=True, color=colors, ax=ax)
+
+    ax.set_title(f"Protocol Distribution Comparison - {group_name}")
+    ax.set_ylabel("Usage Percentage [%]")
+    ax.set_ylim(0, 100)
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha="right")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+
+    fig.tight_layout()
+    plt.savefig(output_dir / "protocol_distribution_comparison.png", dpi=150)
+    plt.close(fig)
+    return "protocol_distribution_comparison.png"
 
 
 def _generate_comparison_report(experiments_data, group_name, group_dir):
@@ -3573,7 +4004,7 @@ def _generate_comparison_report(experiments_data, group_name, group_dir):
     # Build detailed comparison table - Communication
     lines.append("### Communication & Network")
     lines.append("")
-    headers3 = ["Experiment", "Total Traffic (MB)", "Avg Goodput (Mbps)", "Avg Survival", "RUDP Retrans"]
+    headers3 = ["Experiment", "Total Traffic (MB)", "Avg Goodput (Mbps)", "Avg Phy Throughput (Mbps)", "Overhead Ratio", "Avg Survival"]
     lines.append("| " + " | ".join(headers3) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers3)) + " |")
 
@@ -3583,8 +4014,9 @@ def _generate_comparison_report(experiments_data, group_name, group_dir):
         row = [short_name]
         row.append(f"{metrics.get('total_traffic_mb', 0):.2f}" if "total_traffic_mb" in metrics else "N/A")
         row.append(f"{metrics.get('avg_goodput_mbps', 0):.2f}" if "avg_goodput_mbps" in metrics else "N/A")
+        row.append(f"{metrics.get('avg_phy_throughput_mbps', 0):.2f}" if "avg_phy_throughput_mbps" in metrics else "N/A")
+        row.append(f"{metrics.get('traffic_overhead_ratio', 0):.2f}x" if "traffic_overhead_ratio" in metrics else "N/A")
         row.append(f"{metrics.get('avg_survival_rate', 0) * 100:.1f}%" if "avg_survival_rate" in metrics else "N/A")
-        row.append(f"{metrics.get('rudp_retransmissions', 0)}" if "rudp_retransmissions" in metrics else "N/A")
         lines.append("| " + " | ".join(row) + " |")
 
     lines.append("")
@@ -3596,17 +4028,20 @@ def _generate_comparison_report(experiments_data, group_name, group_dir):
     graph_descriptions = {
         "accuracy_comparison.png": "Test Accuracy Comparison",
         "loss_comparison.png": "Test Loss Comparison",
+        "accuracy_dist_comparison.png": "Accuracy Distribution (Node Fairness)",
+        "accuracy_time.png": "Accuracy vs Time Comparison",
+        "traffic_overhead_comparison.png": "Traffic Overhead Ratio Comparison",
+        "throughput_overhead_comparison.png": "Throughput Overhead Comparison",
         "epoch_duration_comparison.png": "Epoch Duration Comparison",
-        "time_to_accuracy_comparison.png": "Time to Target Accuracy",
         "survival_rate_comparison.png": "Survival Rate Comparison",
-        "throughput_comparison.png": "Throughput Comparison",
-        "accuracy_vs_time_comparison.png": "Accuracy vs Time Comparison",
-        "cumulative_sent_data_comparison.png": "Cumulative Sent Data",
-        "idle_time_comparison.png": "Idle Time Comparison",
-        "wasted_computation_comparison.png": "Wasted Computation",
         "goodput_comparison.png": "Goodput Comparison",
         "traffic_volume_comparison.png": "Traffic Volume Comparison",
         "compute_comm_comparison.png": "Compute vs Communication Time",
+        "wasted_computation_comparison.png": "Wasted Computation (SSP)",
+        "fec_overhead_comparison.png": "FEC Processing Overhead Comparison",
+        "compression_comparison.png": "Compression Stats Comparison",
+        "effective_goodput_comparison.png": "Effective Goodput (Original/Time) Comparison",
+        "protocol_distribution_comparison.png": "Protocol Distribution Comparison",
     }
 
     for graph_file, description in graph_descriptions.items():
@@ -3660,23 +4095,20 @@ def compare_experiments():
         plots = [
             ("accuracy_comparison.png", _generate_accuracy_comparison),
             ("loss_comparison.png", _generate_loss_comparison),
+            ("accuracy_dist_comparison.png", _generate_accuracy_dist_comparison),
             ("epoch_duration_comparison.png", _generate_duration_comparison),
-            ("time_to_accuracy_comparison.png", _generate_time_to_accuracy_comparison),
+            ("accuracy_time.png", _generate_accuracy_time_comparison),
             ("survival_rate_comparison.png", _generate_survival_rate_comparison),
-            ("throughput_comparison.png", _generate_throughput_comparison),
-            ("accuracy_vs_time_comparison.png", _generate_accuracy_vs_time_comparison),
-            (
-                "cumulative_sent_data_comparison.png",
-                _generate_cumulative_sent_data_comparison,
-            ),
-            ("idle_time_comparison.png", _generate_idle_time_comparison),
-            (
-                "wasted_computation_comparison.png",
-                _generate_wasted_computation_comparison,
-            ),
+            ("traffic_overhead_comparison.png", _generate_traffic_overhead_comparison),
+            ("throughput_overhead_comparison.png", _generate_throughput_overhead_comparison),
             ("goodput_comparison.png", _generate_goodput_comparison),
             ("traffic_volume_comparison.png", _generate_traffic_volume_comparison),
             ("compute_comm_comparison.png", _generate_compute_comm_comparison),
+            ("wasted_computation_comparison.png", _generate_wasted_computation_comparison),
+            ("fec_overhead_comparison.png", _generate_fec_overhead_comparison),
+            ("compression_comparison.png", _generate_compression_comparison),
+            ("effective_goodput_comparison.png", _generate_effective_goodput_comparison),
+            ("protocol_distribution_comparison.png", _generate_protocol_distribution_comparison),
         ]
 
         # Execute comparison plot generation in parallel using multiprocessing

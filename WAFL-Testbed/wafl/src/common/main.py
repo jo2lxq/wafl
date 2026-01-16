@@ -700,30 +700,21 @@ class ModelSharingUtils:
                         self.rudp_enabled = False
                         self.fast_mode = False
 
-                        # FEC 設定: bool または dict 形式に対応
-                        if isinstance(fec_val, bool):
-                            self.fec_enabled = fec_val
-                        else:
-                            self.fec_enabled = fec_val.get("enabled", True)
+                        # FEC 設定 (bool 形式のみ)
+                        self.fec_enabled = fec_val
                         self.fec_mode = "adaptive"  # Fast モードと統一: 常に adaptive
                         self.fec_fixed_redundancy = 0.0625  # 未使用だが互換性のため保持
 
-                        # NACK 設定: bool または dict 形式に対応 (MDLREQ 再送も連動)
-                        if isinstance(nack_val, bool):
-                            self.nack_enabled = nack_val
-                        else:
-                            self.nack_enabled = nack_val.get("enabled", True)
+                        # NACK 設定 (bool 形式のみ, MDLREQ 再送も連動)
+                        self.nack_enabled = nack_val
                         self.mdlreq_retransmit_enabled = self.nack_enabled  # NACK と MDLREQ 再送を一体化
 
                         if self.udp_enabled:
                             self.udp_fec_m = 16
                             self.udp_max_packet_size = None
 
-                        # 圧縮設定: bool または dict 形式に対応 (zlib 固定)
-                        if isinstance(comp_val, bool):
-                            self.compression_enabled = comp_val
-                        else:
-                            self.compression_enabled = comp_val.get("enabled", False)
+                        # 圧縮設定 (bool 形式のみ, zlib 固定)
+                        self.compression_enabled = comp_val
                         self.initial_comp_method = "zlib"  # Fast モードと統一
 
                         # active_protocol 設定（ログ用ではなく内部ロジック用）
@@ -747,49 +738,8 @@ class ModelSharingUtils:
                         self.auto_compression_allowed = False
 
                     else:
-                        # === 旧形式（後方互換性） ===
-                        tcp_config = method_config.get("tcp", {})
-                        udp_config = method_config.get("udp", {})
-                        rudp_config = method_config.get("rudp", {})
-                        comp_config = method_config.get("compression", {})
-
-                        # Ablation パラメータをデフォルト値で初期化（既存動作維持）
-                        self.fec_enabled = True
-                        self.fec_mode = "adaptive"
-                        self.fec_fixed_redundancy = 0.0625
-                        self.nack_enabled = True
-
-                        # TCP is enabled by default if no explicit config (backward compatibility)
-                        self.tcp_enabled = tcp_config.get("enabled", True) if tcp_config else True
-
-                        self.udp_enabled = udp_config.get("enabled", False)
-                        fec_m_config = udp_config.get("fec_m", 16)
-                        self.udp_max_packet_size = udp_config.get("max_packet_size", None)
-
-                        if self.udp_enabled:
-                            if fec_m_config != "auto":
-                                # Warn instead of raise? No, strictly auto now.
-                                self.logger.warning('Fixed UDP fec_m values are deprecated. Forcing "auto".')
-                            self.udp_fec_m = 16
-                            self.udp_adaptive_fec = True
-                        else:
-                            self.udp_fec_m = 16
-                            self.udp_adaptive_fec = False
-
-                        self.rudp_enabled = rudp_config.get("enabled", False)
-                        self.rudp_mode = rudp_config.get("mode", "rudp")
-                        self.rudp_max_retries = rudp_config.get("max_retries", 10)
-
-                        self.compression_enabled = comp_config.get("enabled", False)
-                        self.initial_comp_method = comp_config.get("initial_method", "zlib")
-
-                        # Deduce active protocol for compat
-                        if self.rudp_enabled:
-                            self.active_protocol = "RUDP"  # normalize?
-                        elif self.udp_enabled:
-                            self.active_protocol = "UDP"
-                        else:
-                            self.active_protocol = "TCP"
+                        # 旧形式（tcp/udp/rudp 個別設定）は廃止
+                        raise ValueError('Unsupported method format. Use: {"base": "udp", "fec": true, "compression": false, "nack": true}')
 
                 self.logger.info(f"🔌 Active transport protocol: {self.active_protocol} (TCP={self.tcp_enabled}, UDP={self.udp_enabled}, RUDP={self.rudp_enabled})")
 
@@ -1844,27 +1794,8 @@ class ModelSharingUtils:
             agg_sent_failed += delta_rudp.get("sent_failed", 0)
             agg_received_models += delta_rudp.get("received_models", 0)
             agg_timeout_models += delta_rudp.get("timeout_models", 0)
-            agg_app_bytes_sent += delta_rudp.get("bytes_sent", 0)
+            agg_app_bytes_sent += delta_rudp.get("app_bytes_sent", delta_rudp.get("bytes_sent", 0))
             agg_app_bytes_received += delta_rudp.get("bytes_received", 0)
-
-            proto_specific_metrics.update(
-                {
-                    "fec_recovery_success": delta_rudp.get("fec_recoveries", 0),
-                    "fec_recovery_fail": 0,
-                    # RUDP-specific metrics
-                    "rudp_retransmissions": delta_rudp.get("retransmissions", 0),
-                    "rudp_acks_sent": delta_rudp.get("acks_sent", 0),
-                    "rudp_acks_received": delta_rudp.get("acks_received", 0),
-                    "rudp_eaks_sent": delta_rudp.get("eaks_sent", 0),
-                    "rudp_eaks_received": delta_rudp.get("eaks_received", 0),
-                    "rudp_aged_packets": delta_rudp.get("aged_packets", 0),
-                    # Gauges
-                    "rudp_connect_time_ms": current_rudp.get("connect_time_ms", 0),
-                    "rudp_avg_rtt_ms": current_rudp.get("avg_rtt_ms", 0),
-                    "rudp_max_retries_reached": delta_rudp.get("max_retries_reached", 0),
-                    "rudp_nacks_sent": delta_rudp.get("nacks_sent", 0),
-                }
-            )
 
         # 2. UDP Statistics
         if self.udp_sharing is not None:
@@ -1876,7 +1807,7 @@ class ModelSharingUtils:
             agg_sent_failed += delta_udp.get("sent_failed", 0)
             agg_received_models += delta_udp.get("received_models", 0)
             agg_timeout_models += delta_udp.get("timeout_models", 0)
-            agg_app_bytes_sent += delta_udp.get("bytes_sent", 0)
+            agg_app_bytes_sent += delta_udp.get("app_bytes_sent", delta_udp.get("bytes_sent", 0))
             agg_app_bytes_received += delta_udp.get("bytes_received", 0)
 
             # For specific metrics, we might overwrite RUDP ones if both active (unlikely)
@@ -1944,10 +1875,22 @@ class ModelSharingUtils:
                     "compression_method": "none",
                     "compression_ratio": 1.0,
                     "compression_time_ms": 0,
-                    "original_size": 0,
-                    "compressed_size": 0,
+                    "original_size": agg_app_bytes_sent,  # Fallback to payload size
+                    "compressed_size": agg_app_bytes_sent,
                 }
             )
+
+        # --- Effective Goodput (Thesis Strategy) ---
+        # Calculate Goodput based on ORIGINAL (uncompressed) size to show true application efficiency.
+        # This highlights Fast mode's speed advantage despite UDP overhead.
+        original_size_bits = metrics.get("original_size", 0) * 8
+        comm_time_sec = metrics.get("comm_time_ms", 0) / 1000.0
+
+        effective_goodput = 0.0
+        if comm_time_sec > 0:
+            effective_goodput = (original_size_bits / 1e6) / comm_time_sec
+
+        metrics.update({"effective_goodput_mbps": effective_goodput})
 
         # Log packet loss for observation (adaptive adjustment disabled)
         if self.udp_sharing is not None:

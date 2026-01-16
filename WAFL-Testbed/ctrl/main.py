@@ -1930,18 +1930,23 @@ if __name__ == "__main__":
                 rudp_settings = {"mode": "rudp", "max_retries": 20, "window_size": 16}
 
         elif isinstance(method, dict):
-            # Backward compatibility
-            ssp_settings = method.get("ssp", {})
-            udp_settings = method.get("udp", {})
-            tcp_settings = method.get("tcp", {})
-            rudp_settings = method.get("rudp", {})
-            comp_settings = method.get("compression", {})
+            # 新形式: {"base": "udp", "fec": true, "compression": false, "nack": true}
+            if "base" in method:
+                base = method.get("base", "tcp")
+                fec_enabled = method.get("fec", True)
+                comp_enabled = method.get("compression", False)
+                nack_enabled = method.get("nack", True)
 
-            tcp_enabled = tcp_settings.get("enabled", True)
-            udp_enabled = udp_settings.get("enabled", False)
-            rudp_enabled = rudp_settings.get("enabled", False)
-            rudp_mode = rudp_settings.get("mode", "rudp")
-            comp_enabled = comp_settings.get("enabled", False)
+                tcp_enabled = base == "tcp"
+                udp_enabled = base == "udp"
+                rudp_enabled = False
+
+                print(f"   - Configuration Mode: Ablation (base={base})")
+                print(f"   - FEC: {'Enabled' if fec_enabled else 'Disabled'}")
+                print(f"   - Compression: {'Enabled' if comp_enabled else 'Disabled'}")
+                print(f"   - NACK: {'Enabled' if nack_enabled else 'Disabled'}")
+            else:
+                raise ValueError('Unsupported method format. Use: {"base": "udp", "fec": true, "compression": false, "nack": true}')
 
         # SSP (Common logic)
         ssp_enabled = ssp_settings.get("enabled", False)
