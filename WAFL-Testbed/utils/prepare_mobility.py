@@ -368,6 +368,9 @@ def convert_osm_to_network(osm_path: str, output_net_path: str):
             text=True,
         )
         print("✅ OSM conversion successful.")
+
+        # Prune dead ends (recursively remove degree-1 nodes)
+        prune_dead_ends(output_net_path)
         if result.stderr:
             # Print warnings if any
             for line in result.stderr.strip().split("\n")[:5]:
@@ -384,6 +387,144 @@ def convert_osm_to_network(osm_path: str, output_net_path: str):
         print("    sudo apt-get update", file=sys.stderr)
         print("    sudo apt-get install sumo sumo-tools sumo-doc", file=sys.stderr)
         sys.exit(1)
+
+
+def prune_dead_ends(net_xml_path: str):
+    """Recursively prune dead-end roads (degree-1 nodes) from the network."""
+    print(f"✂️  Pruning dead-end roads from {net_xml_path}...")
+
+    try:
+        tree = ET.parse(net_xml_path)
+    except ET.ParseError as e:
+        print(f"❌ Error parsing XML for pruning: {e}", file=sys.stderr)
+        return
+
+    root = tree.getroot()
+
+    # Build graph: Junction -> Set of Neighbors
+    adj = defaultdict(set)
+    all_edges = []
+
+    for edge in root.findall("edge"):
+        # Skip internal edges
+        if "function" in edge.attrib and edge.attrib["function"] == "internal":
+            continue
+
+        edge_id = edge.attrib["id"]
+        # Skip internal edges (junction crossings)
+        if edge_id.startswith(":"):
+            continue
+
+        u = edge.attrib["from"]
+        v = edge.attrib["to"]
+
+        # Add undirected connection
+        # Self-loops (u==v) are valid for driving but don't connect different nodes
+        if u != v:
+            adj[u].add(v)
+            adj[v].add(u)
+
+        all_edges.append(edge_id)
+
+    # Iteratively remove degree-1 nodes (leaves)
+    nodes = list(adj.keys())
+    removed_nodes = set()
+
+    changed = True
+    iteration = 0
+    total_pruned_junctions = 0
+
+    while changed:
+        changed = False
+        iteration += 1
+        leaves = []
+
+        # Identify current leaves
+        for n in nodes:
+            if n in removed_nodes:
+                continue
+
+            active_neighbors = 0
+            for neighbor in adj[n]:
+                if neighbor not in removed_nodes:
+                    active_neighbors += 1
+
+            if active_neighbors <= 1:
+                leaves.append(n)
+
+        # Remove leaves
+        if leaves:
+            changed = True
+            for leaf in leaves:
+                removed_nodes.add(leaf)
+            total_pruned_junctions += len(leaves)
+
+    print(f"   Pruned {total_pruned_junctions} dead-end junctions in {iteration} iterations.")
+
+    # Identify edges to keep
+    # Edge is kept if BOTH 'from' and 'to' are NOT in removed_nodes
+    edges_to_keep = []
+
+    original_edge_count = 0
+    for edge in root.findall("edge"):
+        if "function" in edge.attrib and edge.attrib["function"] == "internal":
+            continue
+        edge_id = edge.attrib.get("id")
+        if not edge_id or edge_id.startswith(":"):
+            continue
+
+        original_edge_count += 1
+
+        u = edge.attrib["from"]
+        v = edge.attrib["to"]
+
+        if u not in removed_nodes and v not in removed_nodes:
+            edges_to_keep.append(edge_id)
+
+    if len(edges_to_keep) == len(all_edges):
+        print("   No dead-end roads found to remove.")
+        return
+
+    print(f"   Removing {original_edge_count - len(edges_to_keep)} dead-end edges (keeping {len(edges_to_keep)}/{original_edge_count}).")
+
+    # Generate selection file for netconvert
+    selection_file = net_xml_path + ".keep"
+    with open(selection_file, "w") as f:
+        for eid in edges_to_keep:
+            f.write(f"edge:{eid}\n")
+
+    # Run netconvert to regenerate network with only kept edges
+    cmd = [
+        "netconvert",
+        "--sumo-net-file",
+        net_xml_path,
+        "--keep-edges.input-file",
+        selection_file,
+        "--output-file",
+        net_xml_path,
+        "--xml-validation",
+        "never",
+        "--ignore-errors",
+        "true",
+        "--no-internal-links",
+        "false",
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        print(f"✅ Network updated: removed dead ends. {result.stdout}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error pruning network: {e.stderr}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        if os.path.exists(selection_file):
+            os.remove(selection_file)
 
 
 def get_all_edges(net_xml_path: str) -> List[str]:
