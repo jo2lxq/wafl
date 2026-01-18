@@ -2,7 +2,7 @@
   "experiment_name": "Experiment 3: SUMO-osm Mobility - Proposed Full (SSP + Fast)",
   "epochs": {
     "self": 64,
-    "wafl": 2048
+    "wafl": 1024
   },
   "contact_pattern": "sumo_real/contact_pattern_mobility.json",
   "wafl_phase": {

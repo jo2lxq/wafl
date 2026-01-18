@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 1: UDP (FEC + Compression)",
+  "experiment_name": "Experiment 1: UDP (NACK)",
   "epochs": {
     "self": 16,
     "wafl": 128
@@ -22,8 +22,8 @@
   },
   "method": {
     "base": "udp",
-    "fec": true,
-    "compression": true,
-    "nack": false
+    "fec": false,
+    "compression": false,
+    "nack": true
   }
 }

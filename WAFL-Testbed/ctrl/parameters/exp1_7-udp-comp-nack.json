@@ -1,8 +1,8 @@
 {
-  "experiment_name": "Experiment 1: UDP (Compression)",
+  "experiment_name": "Experiment 1: UDP (Compression + NACK)",
   "epochs": {
-    "self": 8,
-    "wafl": 64
+    "self": 16,
+    "wafl": 128
   },
   "contact_pattern": "contact_pattern/rwp_n50_a1000_r100_p10_s01.json",
   "wafl_phase": {
@@ -24,6 +24,6 @@
     "base": "udp",
     "fec": false,
     "compression": true,
-    "nack": false
+    "nack": true
   }
 }

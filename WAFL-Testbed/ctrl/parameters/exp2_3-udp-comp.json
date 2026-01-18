@@ -1,5 +1,5 @@
 {
-  "experiment_name": "Experiment 2: SUMO Mobility - TCP",
+  "experiment_name": "Experiment 2: SUMO - UDP (Compression)",
   "epochs": {
     "self": 32,
     "wafl": 640
@@ -20,5 +20,10 @@
     "network_conditions_file": "sumo/network_conditions_mobility.json",
     "path_loss_model_file": "sumo/path_loss_model.json"
   },
-  "method": "tcp"
+  "method": {
+    "base": "udp",
+    "fec": false,
+    "compression": true,
+    "nack": false
+  }
 }
