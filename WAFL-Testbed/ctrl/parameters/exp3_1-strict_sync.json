@@ -1,0 +1,26 @@
+{
+  "experiment_name": "Experiment 3: TCP-BSP",
+  "execution_config": "ssp_0.8",
+  "epochs": {
+    "self": 16,
+    "wafl": 128
+  },
+  "contact_pattern": "contact_pattern/rwp_n50_a1000_r100_p10_s01.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": false
+  },
+  "mobility_aware": {
+    "enabled": false
+  },
+  "method": "tcp",
+  "ssp": {
+    "enabled": true,
+    "ssp_threshold": 1.0
+  }
+}

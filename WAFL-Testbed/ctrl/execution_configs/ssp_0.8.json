@@ -16,43 +16,53 @@
   "nodes": [
     {
       "name": 0,
-      "physical_ip": "192.168.11.100"
+      "physical_ip": "192.168.11.100",
+      "cpu_limit": 0.5
     },
     {
       "name": 1,
-      "physical_ip": "192.168.11.101"
+      "physical_ip": "192.168.11.101",
+      "cpu_limit": 0.5
     },
     {
       "name": 2,
-      "physical_ip": "192.168.11.102"
+      "physical_ip": "192.168.11.102",
+      "cpu_limit": 0.5
     },
     {
       "name": 3,
-      "physical_ip": "192.168.11.103"
+      "physical_ip": "192.168.11.103",
+      "cpu_limit": 0.5
     },
     {
       "name": 4,
-      "physical_ip": "192.168.11.104"
+      "physical_ip": "192.168.11.104",
+      "cpu_limit": 0.5
     },
     {
       "name": 5,
-      "physical_ip": "192.168.11.105"
+      "physical_ip": "192.168.11.105",
+      "cpu_limit": 0.5
     },
     {
       "name": 6,
-      "physical_ip": "192.168.11.106"
+      "physical_ip": "192.168.11.106",
+      "cpu_limit": 0.5
     },
     {
       "name": 7,
-      "physical_ip": "192.168.11.107"
+      "physical_ip": "192.168.11.107",
+      "cpu_limit": 0.5
     },
     {
       "name": 8,
-      "physical_ip": "192.168.11.108"
+      "physical_ip": "192.168.11.108",
+      "cpu_limit": 0.5
     },
     {
       "name": 9,
-      "physical_ip": "192.168.11.109"
+      "physical_ip": "192.168.11.109",
+      "cpu_limit": 0.5
     },
     {
       "name": 10,

@@ -165,7 +165,18 @@ def run_experiment(
         print(f"📄 Updating {parameters_json.name}...")
         shutil.copy2(param_file, parameters_json)
 
-        # Step 2: Update execution_config.json with experiment_name
+        # Step 2: Check if experiment specifies a custom execution_config
+        ctrl_dir = get_script_dir()
+        exec_config_name = params.get("execution_config", None)
+        if exec_config_name:
+            exec_config_src = ctrl_dir / "execution_configs" / f"{exec_config_name}.json"
+            if exec_config_src.exists():
+                print(f"⚙️  Using execution_config: {exec_config_name}")
+                shutil.copy2(exec_config_src, execution_config)
+            else:
+                print(f"⚠️  execution_config '{exec_config_name}' not found, using current config")
+
+        # Step 3: Update execution_config.json with experiment_name
         print(f"⚙️  Updating experiment_name in {execution_config.name}...")
         update_execution_config(execution_config, experiment_name)
 

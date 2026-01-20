@@ -1893,7 +1893,7 @@ if __name__ == "__main__":
         print("\n🔧 Method Parameters:")
 
         # Initialize defaults
-        ssp_settings = {}
+        ssp_settings = experiment_parameters.get("ssp", {})
         udp_settings = {}
         tcp_settings = {}
         rudp_settings = {}

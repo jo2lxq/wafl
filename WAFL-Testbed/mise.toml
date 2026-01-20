@@ -65,6 +65,7 @@ run = [
   "rsync -arhvz --progress ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/results .",
   "echo '📊 Running analysis locally...'",
   ".venv/bin/python -u ctrl/analyze.py --generate",
+  ".venv/bin/python -u ctrl/analyze.py --additional",
   "echo '✨ Analysis complete!'",
 ]
 

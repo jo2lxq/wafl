@@ -35,7 +35,7 @@ CONFIG_FILE = CTRL_DIR / "execution_config.json"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
 # Target accuracy for Time-to-Accuracy plot
-TARGET_ACCURACY = 0.9
+TARGET_ACCURACY = 0.8
 
 # =============================================================================
 # Color Palette - Balanced contrast, readable and pleasant colors
@@ -2800,45 +2800,26 @@ def _generate_traffic_overhead_plot(df, experiment_name, analysis_dir, add_phase
 
 
 def _get_experiment_groups():
-    """Group experiments by 'Experiment X:' pattern.
-
-    For Experiment 0, further group by network condition (excellent, good, fair, poor)
-    to enable separate comparison graphs for each condition.
-    """
+    """Group experiments by 'Experiment X:' or 'Experiment X (Name):' pattern."""
     if not RESULTS_DIR.exists():
         return {}
 
     groups = {}
     for d in RESULTS_DIR.iterdir():
         if d.is_dir() and not d.name.startswith("."):
-            # Extract experiment group pattern like "Experiment 1:" or "Experiment 2:"
-            match = re.match(r"^(Experiment \d+:)", d.name)
+            # Extract experiment group pattern like "Experiment 1:" or "Experiment 1 (RWP):"
+            # Pattern matches: "Experiment N:" or "Experiment N (something):"
+            match = re.match(r"^(Experiment \d+(?:\s*\([^)]+\))?:)", d.name)
             if match:
-                base_group = match.group(1).strip(":")
-
-                # For Experiment 0, further group by network condition
-                if base_group == "Experiment 0":
-                    # Extract network condition (excellent, good, fair, poor)
-                    # Note: We want separate comparison plots for each condition because comparing
-                    # "Excellent TCP" vs "Poor UDP" in one graph is not the goal.
-                    # We want "Exp 0 (Excellent)" group containing TCP, UDP, Dynamic variants.
-                    condition_match = re.match(r"^Experiment 0: (excellent|good|fair|poor)", d.name, re.IGNORECASE)
-                    if condition_match:
-                        condition = condition_match.group(1).lower()
-                        group_name = f"Experiment 0 ({condition})"
-                    else:
-                        # Fallback if condition not found
-                        group_name = base_group
-                else:
-                    group_name = base_group
+                group_name = match.group(1).strip(":")
 
                 if group_name not in groups:
                     groups[group_name] = []
                 groups[group_name].append(d.name)
 
-    # Sort experiments within each group
+    # Sort experiments within each group using custom sort key
     for group in groups:
-        groups[group].sort()
+        groups[group].sort(key=_get_experiment_sort_key)
 
     return groups
 
@@ -2875,23 +2856,47 @@ def _load_experiment_data(experiment_id):
 def _get_short_name(experiment_id):
     """Extract short name from experiment ID for legend.
 
-    Extracts the distinguishing part from experiment names like:
-    - "Experiment 1: Synchronous Scalability Verification - SSP (p=0.6)-20251216T114459"
-      → "SSP (p=0.6)"
-    - "Experiment 3: Communication and Computation Trade-off Optimization - Adaptive Compression-20251217T031947"
-      → "Adaptive Compression"
+    Removes the 'Experiment X:' or 'Experiment X (Name):' prefix and timestamp suffix.
+    Examples:
+    - "Experiment 1 (RWP): TCP-20251216T114459" → "TCP"
+    - "Experiment 2: SUMO - Fast-20251217T031947" → "SUMO - Fast"
     """
     # First, remove timestamp suffix
     name = re.sub(r"-\d{8}T\d{6}$", "", experiment_id)
 
-    # Try to extract "Experiment X: Title - VariantName" format
-    # Use the last " - " as the separator to handle titles with hyphens
-    match = re.match(r"^Experiment \d+: .+ - (.+)$", name)
-    if match:
-        return match.group(1)
+    # Remove "Experiment X:" or "Experiment X (Name):" prefix
+    name = re.sub(r"^Experiment \d+(?:\s*\([^)]+\))?: ", "", name)
 
-    # Fallback: return the name without timestamp
-    return name
+    return name.strip()
+
+
+def _get_experiment_sort_key(experiment_id):
+    """Generate sort key for experiment ordering.
+
+    Priority order:
+    1. Network condition: Excellent < Good < Fair < Poor
+    2. Protocol: TCP < Fast
+    3. Alphabetical fallback
+    """
+    short_name = _get_short_name(experiment_id).lower()
+
+    # Network condition priority
+    condition_order = {"excellent": 0, "good": 1, "fair": 2, "poor": 3}
+    condition_key = 99
+    for cond, order in condition_order.items():
+        if cond in short_name:
+            condition_key = order
+            break
+
+    # Protocol priority
+    protocol_order = {"tcp": 0, "fast": 1}
+    protocol_key = 99
+    for proto, order in protocol_order.items():
+        if proto in short_name:
+            protocol_key = order
+            break
+
+    return (condition_key, protocol_key, short_name)
 
 
 def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
@@ -3966,7 +3971,7 @@ def _generate_comparison_report(experiments_data, group_name, group_dir):
     # Build detailed comparison table - Accuracy & Convergence
     lines.append("### Accuracy & Convergence")
     lines.append("")
-    headers1 = ["Experiment", "Final Acc", "Max Acc", "Time to 90%", "Total Epochs", "WAFL Epochs"]
+    headers1 = ["Experiment", "Final Acc", "Max Acc", "Time to 80%", "Total Epochs", "WAFL Epochs"]
     lines.append("| " + " | ".join(headers1) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers1)) + " |")
 
@@ -4157,6 +4162,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze WAFL experiment results")
     parser.add_argument("--collect", action="store_true", help="Collect results from all nodes for all experiments (Overwrites/Updates)")
     parser.add_argument("--generate", action="store_true", help="Generate analysis graphs and validation reports for all experiments (Overwrites)")
+    parser.add_argument("--additional", action="store_true", help="Generate additional plots for Experiment 1 (tradeoff and convergence)")
     args = parser.parse_args()
 
     # Load configuration
@@ -4197,8 +4203,415 @@ def main():
 
         print("✨ All generation tasks complete!")
 
-    if not args.collect and not args.generate:
+    if args.additional:
+        print("📊 Generating additional plots for Experiment 1...")
+        _generate_additional_plots()
+        print("✨ Additional plots generation complete!")
+
+    if not args.collect and not args.generate and not args.additional:
         parser.print_help()
+
+
+def _generate_additional_plots():
+    """Generate additional plots for Experiment 1 for paper/presentation."""
+    # Find Experiment 1 and Experiment 2 groups
+    groups = _get_experiment_groups()
+    target_groups = [g for g in groups.keys() if g.startswith("Experiment 1") or g.startswith("Experiment 2")]
+
+    if not target_groups:
+        print("❌ No Experiment 1 or 2 data found.")
+        return
+
+    for group_name in target_groups:
+        print(f"\n📊 Generating additional plots for: {group_name}")
+        experiments = groups[group_name]
+
+        # Load data for all experiments in this group
+        experiments_data = {}
+        for exp_id in experiments:
+            short_name = _get_short_name(exp_id)
+            data = _load_experiment_data(exp_id)
+            if data is not None and not data.empty:
+                experiments_data[exp_id] = data
+                print(f"  📂 Loading: {short_name}")
+
+        if len(experiments_data) < 2:
+            print("  ⚠️ Need at least 2 experiments, skipping.")
+            continue
+
+        # Create output directory
+        safe_group_name = group_name.replace(" ", "_").replace(":", "").replace("(", "_").replace(")", "")
+        output_dir = RESULTS_DIR / ".additional" / safe_group_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate plots based on experiment group
+        if group_name.startswith("Experiment 1"):
+            _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir)
+            _generate_convergence_curve(experiments_data, group_name, output_dir)
+        elif group_name.startswith("Experiment 2"):
+            _generate_network_quality_overhead_correlation(experiments_data, group_name, output_dir)
+            _generate_network_quality_survival_comparison(experiments_data, group_name, output_dir)
+
+        print(f"  ✅ Additional plots generated in: {output_dir}")
+
+        print(f"  ✅ Additional plots generated in: {output_dir}")
+
+
+def _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir):
+    """Generate Survival Rate, Epoch Duration, and Traffic Volume bar charts as separate files."""
+    # Collect metrics for each experiment
+    exp_names = []
+    survival_rates = []
+    epoch_durations = []
+    traffic_volumes = []
+
+    for exp_id, df in sorted(experiments_data.items(), key=lambda x: _get_experiment_sort_key(x[0])):
+        short_name = _get_short_name(exp_id)
+        exp_names.append(short_name)
+
+        # Calculate survival rate
+        if "survival_rate" in df.columns:
+            wafl_df = df[df["phase"] == "WAFL"]
+            if not wafl_df.empty:
+                survival_rates.append(wafl_df["survival_rate"].mean() * 100)
+            else:
+                survival_rates.append(0)
+        else:
+            survival_rates.append(0)
+
+        # Calculate average epoch duration
+        if "epoch_duration_ms" in df.columns:
+            wafl_df = df[df["phase"] == "WAFL"]
+            if not wafl_df.empty:
+                epoch_durations.append(wafl_df["epoch_duration_ms"].mean() / 1000)  # Convert to seconds
+            else:
+                epoch_durations.append(0)
+        else:
+            epoch_durations.append(0)
+
+        # Calculate total traffic volume (bytes_sent)
+        if "bytes_sent" in df.columns:
+            wafl_df = df[df["phase"] == "WAFL"]
+            if not wafl_df.empty:
+                total_bytes = wafl_df["bytes_sent"].sum()
+                traffic_volumes.append(total_bytes / (1024 * 1024))  # Convert to MB
+            else:
+                traffic_volumes.append(0)
+        else:
+            traffic_volumes.append(0)
+
+    x = np.arange(len(exp_names))
+
+    # Graph 1: Survival Rate (1:1 aspect ratio)
+    fig1, ax1 = plt.subplots(figsize=(8, 8))
+    color1 = COLORS["goodput"]  # Green for survival rate
+    ax1.bar(x, survival_rates, color=color1, alpha=0.8)
+    ax1.set_xlabel("Method", fontsize=14)
+    ax1.set_ylabel("Survival Rate [%]", fontsize=14)
+    ax1.set_ylim(0, 105)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
+    ax1.tick_params(axis="y", labelsize=12)
+    ax1.set_title(f"Survival Rate by Method - {group_name}", fontsize=16)
+    fig1.tight_layout()
+    fig1.savefig(output_dir / "survival_rate_comparison.png", dpi=150)
+    plt.close(fig1)
+    print("  ✅ Generated survival_rate_comparison.png")
+
+    # Graph 2: Epoch Duration (1:1 aspect ratio)
+    fig2, ax2 = plt.subplots(figsize=(8, 8))
+    color2 = COLORS["bar_secondary"]  # Orange for epoch duration
+    ax2.bar(x, epoch_durations, color=color2, alpha=0.8)
+    ax2.set_xlabel("Method", fontsize=14)
+    ax2.set_ylabel("Avg Epoch Duration [s]", fontsize=14)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
+    ax2.tick_params(axis="y", labelsize=12)
+    ax2.set_title(f"Epoch Duration by Method - {group_name}", fontsize=16)
+    fig2.tight_layout()
+    fig2.savefig(output_dir / "epoch_duration_comparison.png", dpi=150)
+    plt.close(fig2)
+    print("  ✅ Generated epoch_duration_comparison.png")
+
+    # Graph 3: Traffic Volume (1:1 aspect ratio)
+    fig3, ax3 = plt.subplots(figsize=(8, 8))
+    color3 = COLORS["traffic"]  # Teal for traffic
+    ax3.bar(x, traffic_volumes, color=color3, alpha=0.8)
+    ax3.set_xlabel("Method", fontsize=14)
+    ax3.set_ylabel("Total Traffic Volume [MB]", fontsize=14)
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
+    ax3.tick_params(axis="y", labelsize=12)
+    ax3.set_title(f"Traffic Volume by Method - {group_name}", fontsize=16)
+    fig3.tight_layout()
+    fig3.savefig(output_dir / "traffic_volume_comparison.png", dpi=150)
+    plt.close(fig3)
+    print("  ✅ Generated traffic_volume_comparison.png")
+
+
+def _generate_convergence_curve(experiments_data, group_name, output_dir):
+    """Generate convergence curve (Test Accuracy vs Wall-clock Time) for selected methods."""
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    colors_map = {
+        "tcp": COLORS["mean_line"],  # Dark slate for TCP
+        "proposed": COLORS["target_line"],  # Green for proposed
+        "raw": COLORS["loss_fill"],  # Coral for raw
+    }
+
+    plotted = False
+    for exp_id, df in sorted(experiments_data.items(), key=lambda x: _get_experiment_sort_key(x[0])):
+        short_name = _get_short_name(exp_id)
+        short_lower = short_name.lower()
+
+        # Check if this is one of the target methods
+        method_key = None
+        if "tcp" in short_lower and "baseline" in short_lower:
+            method_key = "tcp"
+        elif "proposed" in short_lower or ("fec" in short_lower and "compression" in short_lower and "nack" not in short_lower):
+            method_key = "proposed"
+        elif "raw" in short_lower:
+            method_key = "raw"
+
+        if method_key is None:
+            continue
+
+        # Get WAFL phase data
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        if wafl_df.empty or "test_accuracy" not in wafl_df.columns or "epoch" not in wafl_df.columns:
+            continue
+
+        # Aggregate by epoch to smooth the curve (like accuracy_vs_time_comparison)
+        if "wafl_relative_timestamp" in wafl_df.columns:
+            epoch_stats = wafl_df.groupby("epoch").agg({"wafl_relative_timestamp": "mean", "test_accuracy": "mean"}).reset_index()
+            x_data = epoch_stats["wafl_relative_timestamp"]
+        elif "timestamp" in wafl_df.columns:
+            epoch_stats = wafl_df.groupby("epoch").agg({"timestamp": "mean", "test_accuracy": "mean"}).reset_index()
+            start_time = epoch_stats["timestamp"].min()
+            x_data = epoch_stats["timestamp"] - start_time
+        elif "epoch_duration_ms" in wafl_df.columns:
+            epoch_stats = wafl_df.groupby("epoch").agg({"epoch_duration_ms": "mean", "test_accuracy": "mean"}).reset_index()
+            x_data = epoch_stats["epoch_duration_ms"].cumsum() / 1000
+        else:
+            continue
+
+        # Plot
+        label = short_name
+        if method_key == "tcp":
+            label = "TCP (Baseline)"
+        elif method_key == "proposed":
+            label = "UDP (FEC + Compression, Proposed)"
+        elif method_key == "raw":
+            label = "UDP (Raw)"
+
+        ax.plot(x_data, epoch_stats["test_accuracy"] * 100, label=label, color=colors_map[method_key], linewidth=2)
+        plotted = True
+
+    if not plotted:
+        print("  ⚠️ No matching experiments found for convergence curve")
+        plt.close(fig)
+        return
+
+    # Add target accuracy line
+    ax.axhline(y=TARGET_ACCURACY * 100, color=COLORS["phase_line"], linestyle="--", label=f"Target ({TARGET_ACCURACY:.0%})", alpha=0.8, linewidth=2)
+
+    ax.set_xlabel("Wall-clock Time [s]", fontsize=14)
+    ax.set_ylabel("Test Accuracy [%]", fontsize=14)
+    ax.set_title(f"Learning Convergence Curve - {group_name}", fontsize=16)
+    ax.legend(loc="lower right", fontsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(60, 90)
+    ax.tick_params(axis="both", labelsize=12)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "convergence_curve.png", dpi=150)
+    plt.close(fig)
+    print("  ✅ Generated convergence_curve.png")
+
+
+def _generate_network_quality_overhead_correlation(experiments_data, group_name, output_dir):
+    """Generate Overhead Ratio vs Network Quality correlation plot (Fig 6-3)."""
+    # Organize data by condition and method
+    data_map = _organize_exp2_data(experiments_data)
+    conditions = ["Excellent", "Good", "Fair", "Poor"]
+
+    tcp_overheads = []
+    fast_overheads = []
+    valid_conditions = []
+
+    for cond in conditions:
+        if cond not in data_map:
+            continue
+
+        methods = data_map[cond]
+        has_data = False
+
+        # Get TCP data
+        if "TCP" in methods:
+            df = methods["TCP"]
+            # Calculate overhead ratio
+            if "bytes_sent" in df.columns and "app_bytes_sent" in df.columns:
+                wafl_df = df[df["phase"] == "WAFL"]
+                total = wafl_df["bytes_sent"].sum()
+                app = wafl_df["app_bytes_sent"].sum()
+                ratio = total / (app + 1e-9) if app > 0 else 0
+                tcp_overheads.append(ratio)
+                has_data = True
+            else:
+                tcp_overheads.append(0)
+        else:
+            tcp_overheads.append(0)  # Or NaN
+
+        # Get Fast data
+        if "Fast" in methods:
+            df = methods["Fast"]
+            if "bytes_sent" in df.columns and "app_bytes_sent" in df.columns:
+                wafl_df = df[df["phase"] == "WAFL"]
+                total = wafl_df["bytes_sent"].sum()
+                app = wafl_df["app_bytes_sent"].sum()
+                ratio = total / (app + 1e-9) if app > 0 else 0
+                fast_overheads.append(ratio)
+                has_data = True
+            else:
+                fast_overheads.append(0)
+        else:
+            fast_overheads.append(0)
+
+        if has_data:
+            valid_conditions.append(cond)
+
+    if not valid_conditions:
+        print("  ⚠️ No valid data for overhead correlation plot.")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    x = range(len(valid_conditions))
+    ax.plot(x, tcp_overheads, marker="o", linewidth=3, markersize=10, label="TCP", color=COLORS["mean_line"])
+    ax.plot(x, fast_overheads, marker="s", linewidth=3, markersize=10, label="WAFL-Fast", color=COLORS["bar_secondary"])  # Orange/Yellowish
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(valid_conditions, fontsize=12)
+    ax.set_xlabel("Network Condition", fontsize=14)
+    ax.set_ylabel("Overhead Ratio (Physical/App)", fontsize=14)
+    ax.set_title(f"Network Quality vs Overhead Ratio - {group_name}", fontsize=16)
+
+    ax.legend(fontsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis="y", labelsize=12)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "network_quality_overhead.png", dpi=150)
+    plt.close(fig)
+    print("  ✅ Generated network_quality_overhead.png")
+
+
+def _generate_network_quality_survival_comparison(experiments_data, group_name, output_dir):
+    """Generate Survival Rate comparison across network conditions (Fig 6-4)."""
+    # Organize data
+    data_map = _organize_exp2_data(experiments_data)
+    conditions = ["Excellent", "Good", "Fair", "Poor"]
+
+    tcp_survival = []
+    fast_survival = []
+    valid_conditions = []
+
+    for cond in conditions:
+        if cond not in data_map:
+            continue
+
+        methods = data_map[cond]
+        has_data = False
+
+        # Get TCP data
+        if "TCP" in methods:
+            df = methods["TCP"]
+            if "survival_rate" in df.columns:
+                wafl_df = df[df["phase"] == "WAFL"]
+                val = wafl_df["survival_rate"].mean() * 100 if not wafl_df.empty else 0
+                tcp_survival.append(val)
+                has_data = True
+            else:
+                tcp_survival.append(0)
+        else:
+            tcp_survival.append(0)
+
+        # Get Fast data
+        if "Fast" in methods:
+            df = methods["Fast"]
+            if "survival_rate" in df.columns:
+                wafl_df = df[df["phase"] == "WAFL"]
+                val = wafl_df["survival_rate"].mean() * 100 if not wafl_df.empty else 0
+                fast_survival.append(val)
+                has_data = True
+            else:
+                fast_survival.append(0)
+        else:
+            fast_survival.append(0)
+
+        if has_data:
+            valid_conditions.append(cond)
+
+    if not valid_conditions:
+        print("  ⚠️ No valid data for survival comparison plot.")
+        return
+
+    # Plot Grouped Bar Chart
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    x = np.arange(len(valid_conditions))
+
+    ax.set_ylabel("Survival Rate [%]", fontsize=14)
+    ax.set_xlabel("Network Condition", fontsize=14)
+    ax.set_title(f"Survival Rate vs Network Condition - {group_name}", fontsize=16)
+    ax.set_xticks(x)
+    ax.set_xticklabels(valid_conditions, fontsize=12)
+    ax.set_ylim(0, 105)
+    ax.legend(fontsize=12)
+    ax.grid(True, axis="y", alpha=0.3)
+    ax.tick_params(axis="y", labelsize=12)
+
+    # Add target line 60% if mentioned in requirements? (Requirement said "WAFL-Fast 60% line defense")
+    ax.axhline(60, color="red", linestyle="--", alpha=0.5, label="60% Threshold")
+    # Update legend to include threshold line
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, fontsize=12, loc="upper right")
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "network_quality_survival.png", dpi=150)
+    plt.close(fig)
+    print("  ✅ Generated network_quality_survival.png")
+
+
+def _organize_exp2_data(experiments_data):
+    """Helper to organize Experiment 2 data by condition and method."""
+    data_map = {}
+    conditions = ["Excellent", "Good", "Fair", "Poor"]
+
+    for exp_id, df in experiments_data.items():
+        short_name = _get_short_name(exp_id)
+
+        # Identify Condition
+        cond = None
+        for c in conditions:
+            if c in short_name:
+                cond = c
+                break
+
+        # Identify Method
+        method = None
+        if "TCP" in short_name:
+            method = "TCP"
+        elif "Fast" in short_name:
+            method = "Fast"
+
+        if cond and method:
+            if cond not in data_map:
+                data_map[cond] = {}
+            data_map[cond][method] = df
+
+    return data_map
 
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+{
+  "experiment_name": "Experiment 2: Good (TCP)",
+  "epochs": {
+    "self": 16,
+    "wafl": 128
+  },
+  "contact_pattern": "contact_pattern/rwp_n50_a1000_r100_p10_s01.json",
+  "wafl_phase": {
+    "aggregation_strategy": "FedAvg",
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "coefficiency": 1.0
+  },
+  "network_condition": {
+    "enabled": true,
+    "rate": "5mbit",
+    "delay": "15ms",
+    "loss": "5%"
+  },
+  "mobility_aware": {
+    "enabled": false
+  },
+  "method": "tcp"
+}

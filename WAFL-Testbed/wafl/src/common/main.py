@@ -173,8 +173,10 @@ class ModelLearningUtils:
         self.logger.info(f"   - Learning Rate: {self.wafl_phase_params['learning_rate']}")
         self.logger.info(f"   - Coefficiency: {self.wafl_phase_params['coefficiency']}")
 
-        self.train_loss = 0
-        self.train_accuracy = 0
+        self.train_loss = 0.0
+        self.train_accuracy = 0.0
+        self.test_loss = 0.0
+        self.test_accuracy = 0.0
         self.epoch_number = 0
         self.stop_requested = False
         self.self_epochs = self_epochs  # Offset for WAFL phase epoch numbering
@@ -185,6 +187,9 @@ class ModelLearningUtils:
         self.batches_processed = 0
         self.current_gradient_norm = 0.0
 
+        # SSP interruption event
+        self.interrupt_event = threading.Event()
+
     def stop_current_epoch(self) -> dict:
         """Stops the current learning epoch immediately and returns wasted metrics.
 
@@ -192,6 +197,7 @@ class ModelLearningUtils:
             dict: Contains 'wasted_ms' and 'wasted_norm' for SSP logging
         """
         self.stop_requested = True
+        self.interrupt_event.set()
         self.logger.info("🛑 Stop requested for current epoch (SSP Reset).")
 
         # Calculate wasted metrics
@@ -270,6 +276,7 @@ class ModelLearningUtils:
 
         # Reset SSP tracking
         self.stop_requested = False
+        self.interrupt_event.clear()
         self.epoch_start_time = time.time()
         self.batches_processed = 0
         self.current_gradient_norm = 0.0
@@ -313,7 +320,7 @@ class ModelLearningUtils:
                     self.logger.debug(f"Running Loss: {running_loss / 50:.5f}")
                     running_loss = 0.0
 
-                if self.stop_requested:
+                if self.stop_requested or self.interrupt_event.is_set():
                     self.logger.warning("⚠️ Epoch interrupted by stop request (SSP Reset).")
                     # Re-enable GC before returning
                     gc.enable()
@@ -324,6 +331,10 @@ class ModelLearningUtils:
 
             # Always evaluate the model to get test metrics
             test_loss, test_accuracy = self._evaluate_model()
+
+            # Store test metrics for SSP interruption persistence
+            self.test_loss = test_loss
+            self.test_accuracy = test_accuracy
 
             if not WAFL_LEARN:
                 self.logger.info(f"🏁 Completed the Self-Learning Epoch: {display_epoch}")
@@ -371,6 +382,11 @@ class ModelLearningUtils:
                 self.model_instance_path,
             )
             self.model_sharing.update_model_instance(self.net.state_dict(), "Testing", epoch_number=display_epoch)
+
+            # SSP Distributed: Send FORCE_NEXT to neighbors after epoch completion
+            if WAFL_LEARN and hasattr(self, "current_neighbors") and self.current_neighbors:
+                self._send_force_next_to_neighbors(self.current_neighbors)
+
             SUCCESS = True
         except Exception as exc:
             self.logger.error(f"The following error occurred in self_learn: {str(exc)[:100]}...")
@@ -394,11 +410,17 @@ class ModelLearningUtils:
         # Note: Adaptive FEC is now updated at epoch END in get_epoch_metrics()
         # This ensures stats are available before reset
 
+        # Clear interruption event at start of epoch
+        self.interrupt_event.clear()
+
         SUCCESS = False
         try:
             neighbours = self.get_neighbour_list(five_digit_number_str)
             n_nbr = len(neighbours)
             local_model = copy.deepcopy(self.net.state_dict())
+
+            # Store current neighbors for SSP distributed FORCE_NEXT
+            self.current_neighbors = neighbours
 
             # Resolve current epoch peers (for connection management + logging)
             peer_ips: list[str] = []
@@ -490,15 +512,36 @@ class ModelLearningUtils:
 
                     wait_start = time.time()
 
-                    # Enforce strict timeout using wait()
-                    # return_when=ALL_COMPLETED not used because we want to stop exactly at timeout
-                    from concurrent.futures import wait
+                    # Enforce strict timeout using wait() with interruption support
+                    # Loop with small timeout to check interrupt_event
+                    step_timeout = 0.1
+                    elapsed = 0.0
 
-                    done, not_done = wait(futures, timeout=strict_timeout)
+                    while elapsed < strict_timeout:
+                        if self.interrupt_event.is_set():
+                            self.logger.warning("⚠️ Epoch interrupted by FORCE_NEXT during model exchange. Aborting aggregation.")
+                            for f in futures:
+                                f.cancel()
+                            return False  # Return immediately, skipping aggregation
+
+                        done_count = sum(1 for f in futures if f.done())
+                        if done_count == len(futures):
+                            break
+
+                        time.sleep(step_timeout)
+                        elapsed += step_timeout
+
+                    # Check interruption one last time
+                    if self.interrupt_event.is_set():
+                        self.logger.warning("⚠️ Epoch interrupted by FORCE_NEXT during model exchange (post-wait).")
+                        return False
 
                     waiting_time_ms = (time.time() - wait_start) * 1000
 
                     # Process completed futures
+                    done = [f for f in futures if f.done()]
+                    not_done = [f for f in futures if not f.done()]
+
                     for future in done:
                         try:
                             neighbour, model = future.result()
@@ -873,6 +916,8 @@ class ModelSharingUtils:
             self.udp_sharing.start_listener(self._on_udp_model_received)
             # Register MDLREQ callback for pure UDP model requests
             self.udp_sharing.set_mdlreq_callback(self._on_udp_mdlreq)
+            # Register FORCE_NEXT callback for SSP distributed mode
+            self.udp_sharing.set_force_next_callback(self._handle_peer_force_next)
         else:
             self.udp_sharing = None
 
@@ -1011,6 +1056,71 @@ class ModelSharingUtils:
         with self.received_models_cv:
             self.received_models[source_ip] = future
             self.received_models_cv.notify_all()
+
+    def _handle_peer_force_next(self):
+        """Handle FORCE_NEXT signal received from peer via UDP.
+
+        This is invoked when a peer sends FORCE_NEXT to signal that
+        they have completed the epoch and we should skip to next.
+        """
+        self.logger.info("⚠️ Received FORCE_NEXT signal from peer. Resetting current epoch (SSP Reset).")
+
+        wasted_metrics = None
+
+        if self.learning_thread and self.learning_thread.is_alive():
+            if self.model_learning:
+                # Get wasted metrics before stopping
+                wasted_metrics = self.model_learning.stop_current_epoch()
+
+            # Wait for thread to finish
+            self.learning_thread.join(timeout=10)
+            if self.learning_thread.is_alive():
+                self.logger.error("Failed to stop learning thread gracefully.")
+            else:
+                self.logger.info("Learning thread stopped successfully.")
+
+            # Store SSP metrics to be logged at next epoch start
+            epoch_num = int(self.current_epoch_number) if self.current_epoch_number else 0
+            phase = self.current_epoch_type or "UNKNOWN"
+            self._pending_ssp_metrics = {
+                "epoch": epoch_num,
+                "phase": phase,
+                "wasted_ms": wasted_metrics.get("wasted_ms", 0.0) if wasted_metrics else 0.0,
+                "wasted_norm": wasted_metrics.get("wasted_norm", 0.0) if wasted_metrics else 0.0,
+                "batches_processed": wasted_metrics.get("batches_processed", 0) if wasted_metrics else 0,
+                "was_force_stopped": True,
+            }
+            self.logger.info(f"📊 SSP Metrics stored for epoch {epoch_num}: wasted_ms={self._pending_ssp_metrics['wasted_ms']:.2f}, batches={self._pending_ssp_metrics['batches_processed']}")
+
+    def _send_force_next_to_neighbors(self, neighbors: list):
+        """Send FORCE_NEXT to all neighbors for this epoch.
+
+        This is used for SSP distributed mode where peers notify each other
+        to skip to the next epoch when they complete their epoch.
+
+        Args:
+            neighbors: List of neighbor node names (indices)
+        """
+        for neighbor in neighbors:
+            peer_ip = self.ctrl_tcp.get_device_ip(neighbor)
+            if peer_ip:
+                if self.udp_enabled and self.udp_sharing:
+                    self.udp_sharing.send_force_next(peer_ip)
+                elif self.tcp_enabled:
+                    # For TCP mode, use existing TCP connection mechanism
+                    self._send_tcp_force_next(peer_ip)
+
+    def _send_tcp_force_next(self, peer_ip: str):
+        """Send FORCE_NEXT signal to a peer via TCP."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            sock.connect((peer_ip, self.port))
+            sock.sendall(b"FORCE_NEXT\r\n")
+            sock.close()
+            self.logger.debug(f"📤 Sent FORCE_NEXT to {peer_ip} via TCP")
+        except Exception as e:
+            self.logger.warning(f"Failed to send FORCE_NEXT to {peer_ip} via TCP: {e}")
 
     def _on_udp_mdlreq(self, requester_ip: str):
         """
@@ -2523,8 +2633,26 @@ class CTRL_TCP:
                         "wasted_ms": wasted_metrics.get("wasted_ms", 0.0) if wasted_metrics else 0.0,
                         "wasted_norm": wasted_metrics.get("wasted_norm", 0.0) if wasted_metrics else 0.0,
                         "batches_processed": wasted_metrics.get("batches_processed", 0) if wasted_metrics else 0,
-                        "was_force_stopped": True,
+                        "was_force_stopped": 1,
+                        # Fill in other metrics from previous epoch to avoid NaNs
+                        "train_loss": self.model_learning.train_loss,
+                        "train_accuracy": self.model_learning.train_accuracy,
+                        "test_loss": self.model_learning.test_loss,
+                        "test_accuracy": self.model_learning.test_accuracy,
+                        # Fill elapsed time metrics with "wasted" time
+                        # This ensures analysis scripts see the time spent on this abandoned epoch
+                        "epoch_duration_ms": wasted_metrics.get("wasted_ms", 0.0) if wasted_metrics else 0.0,
+                        "compute_time_ms": wasted_metrics.get("wasted_ms", 0.0) if wasted_metrics else 0.0,
                     }
+
+                    # Store target epoch if provided in command_str (e.g. FORCE_NEXT-phase-epoch)
+                    # Currently FORCE_NEXT has no arguments but standard WAFL FORCE_NEXT might need one
+                    # For now, we rely on the subsequent BEGIN command to sync, but we record the current 'epoch_num'
+                    # as the one being skipped. The 'epoch' field in metrics is correct (current).
+
+                    # Clear pending metrics so they are ready for next epoch start?
+                    # Actually _pending_ssp_metrics serves this purpose.
+
                     self.logger.info(f"📊 SSP Metrics stored for epoch {epoch_num}: wasted_ms={self._pending_ssp_metrics['wasted_ms']:.2f}, batches={self._pending_ssp_metrics['batches_processed']}")
 
                 conn.sendall("OK\r\n".encode("utf-8"))
@@ -2638,6 +2766,16 @@ class CTRL_TCP:
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
 
+        # SSP: Sync epoch number for skipped nodes
+        try:
+            target_epoch = int(five_digit_number_str)
+            # display_epoch = epoch_number + 1, so internal epoch_number = target - 1
+            if self.model_learning.epoch_number != target_epoch - 1:
+                self.logger.warning(f"🔄 SSP Sync: Adjusting epoch number from {self.model_learning.epoch_number} to {target_epoch - 1}")
+                self.model_learning.epoch_number = target_epoch - 1
+        except Exception as e:
+            self.logger.error(f"Error syncing epoch number: {e}")
+
         # --- Log pending SSP metrics from previous FORCE_NEXT (if any) ---
         if self._pending_ssp_metrics:
             pending = self._pending_ssp_metrics
@@ -2650,6 +2788,13 @@ class CTRL_TCP:
                     "wasted_norm": pending["wasted_norm"],
                     "batches_processed": pending["batches_processed"],
                     "was_force_stopped": 1,
+                    # Include previously captured metrics from aborted epoch
+                    "train_loss": pending.get("train_loss", 0.0),
+                    "train_accuracy": pending.get("train_accuracy", 0.0),
+                    "test_loss": pending.get("test_loss", 0.0),
+                    "test_accuracy": pending.get("test_accuracy", 0.0),
+                    "epoch_duration_ms": pending.get("epoch_duration_ms", 0.0),
+                    "compute_time_ms": pending.get("compute_time_ms", 0.0),
                 },
             )
             self._pending_ssp_metrics = None
@@ -2678,6 +2823,16 @@ class CTRL_TCP:
         self.current_epoch_number = five_digit_number_str
         self.status_logs = [f"Log for {self.current_epoch_type} epoch {self.current_epoch_number} started at {time.ctime()}"]
 
+        # SSP: Sync epoch number for skipped nodes
+        try:
+            target_epoch = int(five_digit_number_str)
+            # display_epoch = epoch_number + 1, so internal epoch_number = target - 1
+            if self.model_learning.epoch_number != target_epoch - 1:
+                self.logger.warning(f"🔄 SSP Sync: Adjusting epoch number from {self.model_learning.epoch_number} to {target_epoch - 1}")
+                self.model_learning.epoch_number = target_epoch - 1
+        except Exception as e:
+            self.logger.error(f"Error syncing epoch number: {e}")
+
         # --- Log pending SSP metrics from previous FORCE_NEXT (if any) ---
         if self._pending_ssp_metrics:
             pending = self._pending_ssp_metrics
@@ -2690,6 +2845,13 @@ class CTRL_TCP:
                     "wasted_norm": pending["wasted_norm"],
                     "batches_processed": pending["batches_processed"],
                     "was_force_stopped": 1,
+                    # Include previously captured metrics from aborted epoch
+                    "train_loss": pending.get("train_loss", 0.0),
+                    "train_accuracy": pending.get("train_accuracy", 0.0),
+                    "test_loss": pending.get("test_loss", 0.0),
+                    "test_accuracy": pending.get("test_accuracy", 0.0),
+                    "epoch_duration_ms": pending.get("epoch_duration_ms", 0.0),
+                    "compute_time_ms": pending.get("compute_time_ms", 0.0),
                 },
             )
             self._pending_ssp_metrics = None

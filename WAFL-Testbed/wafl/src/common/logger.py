@@ -184,13 +184,13 @@ class MetricsLogger:
             "phase": phase,
             "epoch": epoch,
             # Core training (provided or empty)
-            "train_loss": metrics.get("train_loss", ""),
-            "train_accuracy": metrics.get("train_accuracy", ""),
-            "test_loss": metrics.get("test_loss", ""),
-            "test_accuracy": metrics.get("test_accuracy", ""),
+            "train_loss": metrics.get("train_loss", 0.0),
+            "train_accuracy": metrics.get("train_accuracy", 0.0),
+            "test_loss": metrics.get("test_loss", 0.0),
+            "test_accuracy": metrics.get("test_accuracy", 0.0),
             # Timing
-            "epoch_duration_ms": metrics.get("epoch_duration_ms", ""),
-            "compute_time_ms": metrics.get("compute_time_ms", ""),
+            "epoch_duration_ms": metrics.get("epoch_duration_ms", 0.0),
+            "compute_time_ms": metrics.get("compute_time_ms", 0.0),
             "comm_time_ms": metrics.get("comm_time_ms", 0),
             "waiting_time_ms": metrics.get("waiting_time_ms", 0),
             # SSP metrics - default to 0 so graphs can show "no waste"

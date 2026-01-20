@@ -30,6 +30,7 @@ class UDPModelSharing:
     PTYPE_END = 4  # End of Transfer (Fast NACK trigger)
     PTYPE_MDLREQ = 5  # Model Request (UDP-based MDLREQ)
     PTYPE_ABORT = 6  # Abort signal (receiver timed out)
+    PTYPE_FORCE_NEXT = 7  # SSP Force Next signal (P2P)
 
     MAX_RETRIES = 10  # Max NACK attempts
     BATCH_SIZE = 16  # Number of packets to send before sleeping (Batch Pacing)
@@ -187,9 +188,37 @@ class UDPModelSharing:
         # Activity tracking for smart retransmission
         self.peer_last_activity = {}  # {peer_ip: timestamp}
 
+        # SSP Distributed: FORCE_NEXT callback
+        self._force_next_callback = None
+
     def get_last_peer_activity(self, peer_ip: str) -> float:
         """Return the timestamp of the last packet received from this peer."""
         return self.peer_last_activity.get(peer_ip, 0.0)
+
+    def set_force_next_callback(self, callback):
+        """Set callback function to be invoked when FORCE_NEXT is received from peer."""
+        self._force_next_callback = callback
+
+    def send_force_next(self, peer_ip: str) -> bool:
+        """Send FORCE_NEXT signal to a peer via UDP.
+
+        This is used for SSP distributed mode where peers notify each other
+        to skip to the next epoch.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.5)
+        try:
+            # FORCE_NEXT packet: header only (no payload)
+            # Format: ptype(1B), flags(1B), seq(4B), chunk_idx(2B), total_chunks(2B)
+            header = struct.pack("!BBIHH", self.PTYPE_FORCE_NEXT, 0, 0, 0, 0)
+            sock.sendto(header, (peer_ip, self.port))
+            self.logger.debug(f"📤 Sent FORCE_NEXT to {peer_ip}")
+            return True
+        except Exception as e:
+            self.logger.warning(f"Failed to send FORCE_NEXT to {peer_ip}: {e}")
+            return False
+        finally:
+            sock.close()
 
     def _get_encoder(self, k: int, m: int):
         """Get or create cached encoder."""
@@ -624,6 +653,16 @@ class UDPModelSharing:
                     with self.abort_lock:
                         self.abort_peers[peer_ip] = True
                     self.logger.info(f"🛑 ABORT received from {peer_ip}, stopping sends")
+                    continue
+
+                # Handle FORCE_NEXT signal (SSP distributed mode)
+                if ptype == self.PTYPE_FORCE_NEXT:
+                    self.logger.info(f"⚠️ FORCE_NEXT received from {peer_ip}")
+                    if self._force_next_callback:
+                        try:
+                            self._force_next_callback()
+                        except Exception as e:
+                            self.logger.error(f"Error in FORCE_NEXT callback: {e}")
                     continue
 
             except socket.timeout:
