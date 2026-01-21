@@ -2304,7 +2304,7 @@ def _generate_compression_stats_plot(df, experiment_name, analysis_dir, add_phas
     return "compression_stats.png"
 
 
-def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
+def _calculate_metrics_summary(df, wafl_phase_start_relative=None, group_name=""):
     """Calculate summary metrics for reporting."""
     metrics = {}
 
@@ -2333,10 +2333,13 @@ def _calculate_metrics_summary(df, wafl_phase_start_relative=None):
     if "test_accuracy" in wafl_clean.columns and not wafl_clean[wafl_clean["test_accuracy"].notna()].empty:
         metrics["max_accuracy"] = wafl_clean["test_accuracy"].max()
 
-    # 3. Time to Target Accuracy (90%)
+    # 3. Time to Target Accuracy
     if "wafl_relative_timestamp" in wafl_clean.columns and "test_accuracy" in wafl_clean.columns:
+        # Determine target based on group name
+        target_val = 0.90 if "Experiment 4" in group_name else TARGET_ACCURACY
+
         epoch_acc = wafl_clean.groupby("epoch").agg({"test_accuracy": "mean", "wafl_relative_timestamp": "mean"}).reset_index()
-        reached = epoch_acc[epoch_acc["test_accuracy"] >= TARGET_ACCURACY]
+        reached = epoch_acc[epoch_acc["test_accuracy"] >= target_val]
         if not reached.empty:
             metrics["time_to_target"] = reached["wafl_relative_timestamp"].iloc[0]
 
@@ -3971,13 +3974,15 @@ def _generate_comparison_report(experiments_data, group_name, group_dir):
     # Build detailed comparison table - Accuracy & Convergence
     lines.append("### Accuracy & Convergence")
     lines.append("")
-    headers1 = ["Experiment", "Final Acc", "Max Acc", "Time to 80%", "Total Epochs", "WAFL Epochs"]
+    # Determine target threshold to display in header
+    target_str = "90%" if "Experiment 4" in group_name else "80%"
+    headers1 = ["Experiment", "Final Acc", "Max Acc", f"Time to {target_str}", "Total Epochs", "WAFL Epochs"]
     lines.append("| " + " | ".join(headers1) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers1)) + " |")
 
     all_metrics = {}
     for exp_id, df in experiments_data.items():
-        metrics = _calculate_metrics_summary(df)
+        metrics = _calculate_metrics_summary(df, group_name=group_name)
         all_metrics[exp_id] = metrics
         short_name = _get_short_name(exp_id)
         row = [short_name]
@@ -4214,9 +4219,9 @@ def main():
 
 def _generate_additional_plots():
     """Generate additional plots for Experiment 1 for paper/presentation."""
-    # Find Experiment 1 and Experiment 2 groups
+    # Find Experiment 1, 2, 3, and 4 groups
     groups = _get_experiment_groups()
-    target_groups = [g for g in groups.keys() if g.startswith("Experiment 1") or g.startswith("Experiment 2")]
+    target_groups = [g for g in groups.keys() if g.startswith("Experiment 1") or g.startswith("Experiment 2") or g.startswith("Experiment 3") or g.startswith("Experiment 4")]
 
     if not target_groups:
         print("❌ No Experiment 1 or 2 data found.")
@@ -4251,6 +4256,12 @@ def _generate_additional_plots():
         elif group_name.startswith("Experiment 2"):
             _generate_network_quality_overhead_correlation(experiments_data, group_name, output_dir)
             _generate_network_quality_survival_comparison(experiments_data, group_name, output_dir)
+        elif group_name.startswith("Experiment 3"):
+            _generate_epoch_breakdown_comparison(experiments_data, group_name, output_dir)
+            _generate_convergence_curve(experiments_data, group_name, output_dir)
+        elif group_name.startswith("Experiment 4"):
+            _generate_epoch_breakdown_comparison(experiments_data, group_name, output_dir)
+            _generate_convergence_curve(experiments_data, group_name, output_dir)
 
         print(f"  ✅ Additional plots generated in: {output_dir}")
 
@@ -4348,6 +4359,77 @@ def _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir):
     plt.close(fig3)
     print("  ✅ Generated traffic_volume_comparison.png")
 
+    plt.close(fig3)
+    print("  ✅ Generated traffic_volume_comparison.png")
+
+
+def _generate_epoch_breakdown_comparison(experiments_data, group_name, output_dir):
+    """Generate Stacked Bar Chart for Epoch Duration Breakdown (Compute vs Comm)."""
+    breakdown_data = []
+
+    for exp_id, df in sorted(experiments_data.items(), key=lambda x: _get_experiment_sort_key(x[0])):
+        if df.empty or "compute_time_ms" not in df.columns or "comm_time_ms" not in df.columns:
+            continue
+
+        wafl_df = df[df["phase"] == "WAFL"].copy()
+        valid = wafl_df[(wafl_df["compute_time_ms"].notna()) & (wafl_df["comm_time_ms"].notna())]
+        if valid.empty:
+            continue
+
+        # Get short name
+        short_name = _get_short_name(exp_id)
+
+        # Calculate means in seconds
+        avg_compute = valid["compute_time_ms"].mean() / 1000
+        avg_comm = valid["comm_time_ms"].mean() / 1000
+
+        if "Experiment 4" in group_name:
+            # Swap name format: Role (Method) -> Method (Role)
+            if "Traditional (TCP)" in short_name:
+                short_name = "TCP (Traditional)"
+            elif "Competitor (TCP + SSP)" in short_name:
+                short_name = "TCP + SSP (Competitor)"
+            elif "Proposed (WAFL-Fast + SSP)" in short_name:
+                short_name = "WAFL-Fast + SSP (Proposed)"
+
+        breakdown_data.append({"Method": short_name, "Compute Time": avg_compute, "Comm Time": avg_comm})
+
+    if not breakdown_data:
+        return
+
+    # Custom sort for Experiment 4
+    if "Experiment 4" in group_name:
+        order_map = {"TCP (Traditional)": 0, "TCP + SSP (Competitor)": 1, "WAFL-Fast + SSP (Proposed)": 2}
+        # Sort breakdown_data based on the map, default to infinity if not found
+        breakdown_data.sort(key=lambda x: order_map.get(x["Method"], float("inf")))
+
+    df = pd.DataFrame(breakdown_data).set_index("Method")
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Plot stacked bar
+    # Using specific colors: Compute (Blue/Dark), Comm (Orange/Highlight)
+    colors = [COLORS["bar_primary"], COLORS["bar_secondary"]]
+    df.plot(kind="bar", stacked=True, color=colors, ax=ax, alpha=0.9, width=0.6)
+
+    ax.set_ylabel("Time [s]", fontsize=14)
+    ax.set_xlabel("Method", fontsize=14)
+    ax.set_title(f"Epoch Duration Breakdown - {group_name}", fontsize=16)
+
+    # X-axis formatting
+    ax.tick_params(axis="x", rotation=0, labelsize=12)
+    ax.tick_params(axis="y", labelsize=12)
+
+    # Legend
+    ax.legend(title="Component", fontsize=12, loc="upper left")
+
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    fig.savefig(output_dir / "epoch_breakdown_comparison.png", dpi=150)
+    plt.close(fig)
+    print("  ✅ Generated epoch_breakdown_comparison.png")
+
 
 def _generate_convergence_curve(experiments_data, group_name, output_dir):
     """Generate convergence curve (Test Accuracy vs Wall-clock Time) for selected methods."""
@@ -4357,10 +4439,31 @@ def _generate_convergence_curve(experiments_data, group_name, output_dir):
         "tcp": COLORS["mean_line"],  # Dark slate for TCP
         "proposed": COLORS["target_line"],  # Green for proposed
         "raw": COLORS["loss_fill"],  # Coral for raw
+        "competitor": COLORS["bar_primary"],  # Blue for competitor
     }
 
     plotted = False
-    for exp_id, df in sorted(experiments_data.items(), key=lambda x: _get_experiment_sort_key(x[0])):
+    plotted = False
+
+    # Custom sort items for Experiment 4
+    items = list(experiments_data.items())
+    if "Experiment 4" in group_name:
+
+        def exp4_sort_key(item):
+            short_name = _get_short_name(item[0])
+            if "Traditional" in short_name:
+                return 0
+            if "Competitor" in short_name:
+                return 1
+            if "Proposed" in short_name:
+                return 2
+            return 3  # Other
+
+        items.sort(key=exp4_sort_key)
+    else:
+        items.sort(key=lambda x: _get_experiment_sort_key(x[0]))
+
+    for exp_id, df in items:
         short_name = _get_short_name(exp_id)
         short_lower = short_name.lower()
 
@@ -4368,8 +4471,16 @@ def _generate_convergence_curve(experiments_data, group_name, output_dir):
         method_key = None
         if "tcp" in short_lower and "baseline" in short_lower:
             method_key = "tcp"
+        elif "tcp" in short_lower and "bsp" in short_lower:  # Handle Experiment 3 naming
+            method_key = "tcp"
+        elif "traditional" in short_lower:  # Handle Experiment 4 naming
+            method_key = "tcp"
         elif "proposed" in short_lower or ("fec" in short_lower and "compression" in short_lower and "nack" not in short_lower):
             method_key = "proposed"
+        elif "wafl-fast" in short_lower:  # Handle Experiment 3 naming
+            method_key = "proposed"
+        elif "competitor" in short_lower:  # Handle Experiment 4 naming
+            method_key = "competitor"
         elif "raw" in short_lower:
             method_key = "raw"
 
@@ -4398,9 +4509,11 @@ def _generate_convergence_curve(experiments_data, group_name, output_dir):
         # Plot
         label = short_name
         if method_key == "tcp":
-            label = "TCP (Baseline)"
+            label = "TCP (Traditional)"
         elif method_key == "proposed":
-            label = "UDP (FEC + Compression, Proposed)"
+            label = "WAFL-Fast + SSP (Proposed)"
+        elif method_key == "competitor":
+            label = "TCP + SSP (Competitor)"
         elif method_key == "raw":
             label = "UDP (Raw)"
 
@@ -4412,15 +4525,18 @@ def _generate_convergence_curve(experiments_data, group_name, output_dir):
         plt.close(fig)
         return
 
+    # Determine target accuracy based on group
+    target_acc = 0.90 if "Experiment 4" in group_name else TARGET_ACCURACY
+
     # Add target accuracy line
-    ax.axhline(y=TARGET_ACCURACY * 100, color=COLORS["phase_line"], linestyle="--", label=f"Target ({TARGET_ACCURACY:.0%})", alpha=0.8, linewidth=2)
+    ax.axhline(y=target_acc * 100, color=COLORS["phase_line"], linestyle="--", label=f"Target ({target_acc:.0%})", alpha=0.8, linewidth=2)
 
     ax.set_xlabel("Wall-clock Time [s]", fontsize=14)
     ax.set_ylabel("Test Accuracy [%]", fontsize=14)
     ax.set_title(f"Learning Convergence Curve - {group_name}", fontsize=16)
     ax.legend(loc="lower right", fontsize=12)
     ax.grid(True, alpha=0.3)
-    ax.set_ylim(60, 90)
+    ax.set_ylim(60, 100 if target_acc > 0.85 else 90)  # Adjust Y-limit for higher target
     ax.tick_params(axis="both", labelsize=12)
 
     fig.tight_layout()

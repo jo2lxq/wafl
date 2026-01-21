@@ -144,12 +144,15 @@ class MetricsLogger:
             f.flush()
             os.fsync(f.fileno())
 
-        # Log to WandB
+        # Log to WandB with explicit step to avoid misalignment on SSP skips
         try:
-            # Convert empty strings to None or 0 where appropriate, or let wandb handle it.
-            # Wandb handles dicts well. We should filter out internal CSV artifacts if any.
-            # But here `entry` is cleaner than `full_entry` because it doesn't have empty strings for missing values yet.
-            wandb.log(entry)
+            # Use epoch as the step to ensure consistent x-axis in WandB graphs
+            # This prevents step/epoch mismatch when FORCE_NEXT creates extra log entries
+            epoch_step = entry.get("epoch", None)
+            if epoch_step is not None:
+                wandb.log(entry, step=int(epoch_step))
+            else:
+                wandb.log(entry)
         except Exception:
             pass
 

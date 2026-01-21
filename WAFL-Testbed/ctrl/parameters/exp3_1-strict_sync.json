@@ -13,7 +13,10 @@
     "coefficiency": 1.0
   },
   "network_condition": {
-    "enabled": false
+    "enabled": true,
+    "rate": "5mbit",
+    "delay": "15ms",
+    "loss": "5%"
   },
   "mobility_aware": {
     "enabled": false
