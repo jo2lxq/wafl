@@ -558,7 +558,8 @@ class WaflAgent:
         Returns:
             bool: True if successful, False otherwise
         """
-        command = f"BEGIN-{phase}-{epoch:05d}"
+        # Modified the BEGIN Command to also send the timestamp of epoch-start for synchronized traffic measurment.
+        command = f"BEGIN-{phase}-{epoch:05d}-{datetime.datetime.now().isoformat().replace('-', '#')}"
 
         self.logger.info(f"🎯 Starting epoch {epoch} for agent {self.name} (phase: {phase})")
 
