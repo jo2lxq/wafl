@@ -2,16 +2,16 @@
 """
 Random Geometric Graph (RGG) Contact Pattern Generator for WAFL Testbed
 
-研究計画書の要件:
-- ノード位置を固定
-- 通信範囲内のノードと常に接続 (静的トポロジー)
-- Dense (平均次数 ≥ 10) と Sparse (平均次数 ≤ 4) の両方をサポート
+Requirements:
+- Fixed node positions
+- Persistent connections within radio range (static topology)
+- Supports both Dense (avg degree ≥ 10) and Sparse (avg degree ≤ 4)
 
-使用例:
-  # Dense topology (平均次数 ≥ 10)
+Usage:
+  # Dense topology (avg degree ≥ 10)
   python generate_rgg_topology.py --nodes 28 --density dense --epochs 5000
 
-  # Sparse topology (平均次数 ≤ 4)
+  # Sparse topology (avg degree ≤ 4)
   python generate_rgg_topology.py --nodes 28 --density sparse --epochs 5000
 """
 

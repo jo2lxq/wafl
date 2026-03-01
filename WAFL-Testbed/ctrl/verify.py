@@ -266,7 +266,7 @@ class ConfigValidator:
         if "method" in self.params:
             method_val = self.params["method"]
             if isinstance(method_val, str):
-                valid_methods = ["tcp", "udp", "rudp", "dynamic", "fast"]
+                valid_methods = ["tcp", "udp", "fast"]
                 if method_val not in valid_methods:
                     self.errors.append(f"Invalid method string: {method_val}. Must be one of {valid_methods}")
                     log_error(f"Invalid method string: {method_val}")
@@ -285,7 +285,7 @@ class ConfigValidator:
                 comp = method_val.get("compression", False)
                 nack = method_val.get("nack", True)
 
-                # bool 形式のみ対応
+                # Boolean format only
                 log_success(f"method (ablation): base={base}, fec={fec}, comp={comp}, nack={nack}")
             else:
                 self.errors.append(f"Invalid method type: {type(method_val)}")

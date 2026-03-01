@@ -8,7 +8,7 @@
 
 ### 概要
 
-WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワーク上でエミュレートするための研究プラットフォームである．シミュレーションでは再現困難な**実環境制約**（OS レイヤ遅延，物理リソース競合，ネットワークスタック挙動）を定量化できる．
+WAFL-Testbed は，Device-to-Device (D2D) 連合学習を実 TCP/IP ネットワーク上でエミュレートするための研究プラットフォームである．シミュレーションでは再現困難な実環境制約（OS レイヤ遅延，物理リソース競合，ネットワークスタック挙動）を定量化できる．
 
 ---
 
@@ -62,11 +62,12 @@ flowchart TB
 **役割**: 実験のオーケストレーター
 
 **責務**:
-- 全エージェントへの設定・コードデプロイ
-- 実験ライフサイクル管理（開始，停止，クリーンアップ）
-- ログ・結果の収集
-- 学習プロセスの同期制御（SSP, BSP）
-- ネットワーク条件のエミュレーション制御
+- 全エージェントへの設定・コードデプロイを行う．
+- 実験ライフサイクル管理（開始，停止，クリーンアップ）を担う．
+- ログおよび結果の収集を行う．
+- 学習プロセスの同期制御（BSP）を実行する．
+- SSP 設定の実行サーバへの共有を行う（実際の SSP 制御は各実行サーバが自律的に実行する）．
+- ネットワーク条件（帯域・遅延・損失）のエミュレーション制御を行う．
 
 **実装**: `ctrl/main.py`
 
@@ -80,23 +81,23 @@ flowchart TB
 | `SSHConnectionManager` | SSH 接続のプーリングと再利用           |
 
 **動作フロー**:
-1. `execution_config.json` と `parameters.json` を読み込み
-2. 全エージェントに SSH 経由で設定をデプロイ
-3. Docker コンテナを起動（リソース制限適用）
-4. ネットワークエミュレーション (tc/netem) を適用
-5. SELF フェーズ → WAFL フェーズの順に実行を指示
-6. エポックごとに同期制御（SSP 閾値チェック，FORCE_NEXT 発行）
-7. 実験終了後，全エージェントを正常終了
+1. `execution_config.json` と `parameters.json` を読み込む．
+2. 全エージェントに SSH 経由で設定をデプロイする．
+3. Docker コンテナを起動する（リソース制限を適用する）．
+4. ネットワークエミュレーション (tc/netem) を適用する．
+5. SELF フェーズおよび WAFL フェーズの順に実行を指示する．
+6. エポックごとに同期制御を行う（BSP: 全ノード待機，SSP: 各実行サーバが自律的に判定）．
+7. 実験終了後，全エージェントを正常終了させる．
 
 #### 2. 実行サーバー (Execution Servers / Agents)
 
 **役割**: 実際のモデル学習を実行するワーカーノード
 
 **責務**:
-- ローカル学習（SELF フェーズ）
-- モデルパラメータ交換（WAFL フェーズ）
-- リソース使用量のモニタリング
-- 構造化ログの出力（JSON Lines）
+- ローカル学習（SELF フェーズ）を実行する．
+- モデルパラメータ交換（WAFL フェーズ）を実行する．
+- リソース使用量のモニタリングを行う．
+- 構造化ログ（JSON Lines）を出力する．
 
 **実装**: `wafl/src/common/main.py`
 
@@ -106,13 +107,13 @@ flowchart TB
 | -------------------- | ---------------------------- |
 | `CTRL_TCP`           | コントロールサーバーとの通信 |
 | `ModelLearningUtils` | 学習ロジック (SELF/WAFL)     |
-| `ModelSharingUtils`  | P2P モデル交換 (TCP/UDP)     |
-| `UDPModelSharing`    | UDP+FEC によるモデル共有     |
+| `ModelSharingUtils`  | P2P モデル交換 (TCP / UDP)   |
+| `UDPModelSharing`    | UDP + FEC によるモデル共有   |
 | `CompressionManager` | 適応的圧縮                   |
 | `NetworkEstimator`   | ネットワーク状態推定         |
 | `MetricsLogger`      | JSON Lines 形式のログ出力    |
 
-**デプロイ方式**: Docker コンテナとして起動（環境の一貫性と分離を保証）
+**デプロイ方式**: Docker コンテナとして起動し，環境の一貫性と分離を保証する．
 
 ---
 
@@ -138,13 +139,13 @@ sequenceDiagram
 **デフォルトポート**: 10001（コンテナ内），設定可能（ホスト側）
 
 **コマンド (Control Server → Agent)**:
-| コマンド             | 形式               | 説明                                |
-| -------------------- | ------------------ | ----------------------------------- |
-| `BEGIN-SELF-{epoch}` | `BEGIN-SELF-00001` | SELF 学習開始                       |
-| `BEGIN-WAFL-{epoch}` | `BEGIN-WAFL-00100` | WAFL 学習開始                       |
-| `STAT`               | `STAT`             | ステータス要求                      |
-| `FORCE_NEXT`         | `FORCE_NEXT`       | SSP Reset: 現在のエポックを強制終了 |
-| `KILL`               | `KILL`             | プロセス正常終了                    |
+| コマンド             | 形式               | 説明                                                                  |
+| -------------------- | ------------------ | --------------------------------------------------------------------- |
+| `BEGIN-SELF-{epoch}` | `BEGIN-SELF-00001` | SELF 学習開始                                                         |
+| `BEGIN-WAFL-{epoch}` | `BEGIN-WAFL-00100` | WAFL 学習開始                                                         |
+| `STAT`               | `STAT`             | ステータス要求                                                        |
+| `FORCE_NEXT`         | `FORCE_NEXT`       | SSP Reset: 現在のエポックを強制終了（後方互換用，通常は使用されない） |
+| `KILL`               | `KILL`             | プロセス正常終了                                                      |
 
 **レスポンス (Agent → Control Server)**:
 | ステータス             | 形式              | 説明       |
@@ -178,9 +179,9 @@ sequenceDiagram
 
 ```json
 {
-  "method": "tcp"      // TCP モード
-  "method": "dynamic"  // Dynamic モード
-  "method": "fast"     // Fast モード
+  "method": "tcp",      // TCP モード
+  "method": "udp",      // UDP モード
+  "method": "fast"      // Fast モード
 }
 ```
 
@@ -190,24 +191,24 @@ sequenceDiagram
 flowchart TB
     MSU["ModelSharingUtils"]
     
-    MSU --> TCP["TCP Mode"]
-    MSU --> Dynamic["Dynamic Mode"]
-    MSU --> Fast["Fast Mode"]
+    MSU --> TCP["TCP モード"]
+    MSU --> UDP["UDP モード"]
+    MSU --> Fast["Fast モード"]
     
-    subgraph TCP["TCP Mode"]
+    subgraph TCP["TCP モード"]
         tcp_socket["TCP Socket"]
     end
     
-    subgraph Dynamic["Dynamic Mode"]
-        comp_mgr["Compression Manager<br/>(Adaptive)"]
-        fec_adaptive["FEC<br/>(Adaptive)"]
+    subgraph UDP["UDP モード"]
+        comp_mgr["Compression Manager (Adaptive)"]
+        fec_adaptive["FEC (Adaptive)"]
         udp_nack["UDP + NACK"]
         comp_mgr --> fec_adaptive --> udp_nack
     end
     
-    subgraph Fast["Fast Mode"]
-        lz4["LZ4<br/>(条件付き)"]
-        fec_fixed["FEC<br/>(Fixed)"]
+    subgraph Fast["Fast モード"]
+        lz4["LZ4 (条件付き)"]
+        fec_fixed["FEC (Fixed)"]
         udp_nack2["UDP + NACK"]
         lz4 --> fec_fixed --> udp_nack2
     end
@@ -258,23 +259,23 @@ flowchart LR
 
 ### リソース制限
 
-Docker の `--cpus` オプションで CPU 使用率を制限し，異なる性能のデバイスを模擬する．
+Docker の `--cpus` オプションで CPU 使用率を制限し，性能が異なる種々のデバイスを模擬する．
 
-> **Note**: CPU 制限は **WAFL フェーズ開始時** に `docker update` で動的に適用される．SELF フェーズでは制限なしで実行されるため，事前学習が高速化される．
+> **Note**: CPU 制限は WAFL フェーズ開始時に `docker update` で動的に適用される．SELF フェーズ（ローカル学習）では制限なしで実行されるため，事前学習の時間を短縮できる．
 
 **設定例**:
 ```json
 {
   "name": 0,
-  "cpu_limit": "1.0"  // 1 コア分
+  "cpu_limit": "1.0"  // 1 コア分に制限
 }
 ```
 
-| cpu_limit | 意味                |
-| --------- | ------------------- |
-| `"1.0"`   | 1 CPU コア（100%）  |
-| `"0.5"`   | 0.5 CPU コア（50%） |
-| `"2.0"`   | 2 CPU コア（200%）  |
+| cpu_limit | 意味                 |
+| --------- | -------------------- |
+| `"1.0"`   | 1 CPU コア（100 %）  |
+| `"0.5"`   | 0.5 CPU コア（50 %） |
+| `"2.0"`   | 2 CPU コア（200 %）  |
 
 ---
 
@@ -334,9 +335,8 @@ sequenceDiagram
 
     A0-->>CS: DONE-WAFL-00001
     A1-->>CS: DONE-WAFL-00001
-    Note over CS: A2 が遅い（SSP Check）
-    CS->>A2: FORCE_NEXT (SSP Reset)
-    A2-->>CS: OK
+    Note over A2: SSP: モデル交換の閾値を達成，残りをキャンセル
+    A2-->>CS: DONE-WAFL-00001
 
     Note over CS: 5. 実験終了
     CS->>A0: KILL
@@ -348,26 +348,28 @@ sequenceDiagram
 
 ### SSP (Semi-Synchronous Protocol) 実装
 
-#### 動作原理
+#### 動作原理（実行サーバ自律型）
 
-1. **完了率チェック**: 完了ノード数が `len(agents) × ssp_threshold` に達したか確認
-2. **強制進行**: 閾値達成時，未完了ノードに `FORCE_NEXT` コマンドを送信
-3. **計算破棄**: 未完了ノードは現在の学習を中断し，同じエポックにスキップ（1エポック以上遅れるノードは存在しない）
+1. **設定受信**: 管理サーバから `config.json` 経由で `ssp_enabled` と `ssp_threshold` を受け取る
+2. **モデル交換監視**: 各実行サーバが `wafl_learn` のモデル交換時に完了ピアの割合を監視
+3. **閾値判定**: `完了ピア数 / 総ピア数 >= ssp_threshold` に達したら残りのモデル交換をキャンセル
 4. **メトリクス記録**: 破棄された計算量（`wasted_ms`, `wasted_norm`）を記録
 
 ```mermaid
 flowchart TD
-    Start["エポック開始"]
-    Check["完了ノード数 >= N × threshold?"]
+    Start["モデル交換開始"]
+    Fetch["ピアからモデルフェッチ"]
+    Check["完了ピア数 >= N x threshold?"]
     Wait["待機継続"]
-    Force["未完了ノードに FORCE_NEXT 送信"]
-    Next["次のエポックへ"]
+    Cancel["残りのモデル交換をキャンセル"]
+    Aggregate["取得済みモデルで集約・学習"]
     
-    Start --> Check
+    Start --> Fetch
+    Fetch --> Check
     Check -->|No| Wait
     Wait --> Check
-    Check -->|Yes| Force
-    Force --> Next
+    Check -->|Yes| Cancel
+    Cancel --> Aggregate
 ```
 
 #### SSP vs BSP 比較
@@ -395,7 +397,7 @@ WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federat
 - Deploy configuration and code to all agents
 - Manage experiment lifecycle (Start, Stop, Cleanup)
 - Collect logs and results
-- Control learning process synchronization (SSP, BSP)
+- Share SSP settings with execution servers (SSP control is autonomous per execution server)
 
 **Implementation**: [`ctrl/main.py`](file:///home/ktakahashi/workspace/wafl/WAFL-Testbed/ctrl/main.py)
 
@@ -420,7 +422,7 @@ WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federat
 **Main Classes**:
 - `CTRL_TCP`: Communication with Control Server
 - `ModelLearningUtils`: Learning logic (SELF/WAFL)
-- `ModelSharingUtils`: P2P model exchange (TCP/UDP)
+- `ModelSharingUtils`: P2P model exchange (TCP / UDP)
 - `UDPModelSharing`: UDP+FEC model sharing
 - `CompressionManager`: Adaptive compression
 - `NetworkEstimator`: Network state estimation
@@ -430,17 +432,17 @@ WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federat
 
 ### Three Communication Modes
 
-| Mode        | Protocol           | Reliability   | Use Case                |
-| ----------- | ------------------ | ------------- | ----------------------- |
-| **TCP**     | Standard TCP       | TCP guarantee | Stable networks         |
-| **Dynamic** | UDP + Adaptive FEC | FEC + NACK    | Unstable networks       |
-| **Fast**    | UDP + Fixed FEC    | Minimal FEC   | High-bandwidth networks |
+| Mode     | Protocol           | Reliability   | Use Case                |
+| -------- | ------------------ | ------------- | ----------------------- |
+| **TCP**  | Standard TCP       | TCP guarantee | Stable networks         |
+| **UDP**  | UDP + Adaptive FEC | FEC + NACK    | Unstable networks       |
+| **Fast** | UDP + Fixed FEC    | Minimal FEC   | High-bandwidth networks |
 
 Details: [docs/protocol.md](protocol.md)
 
 ### SSP (Semi-Synchronous Protocol)
 
-1. **Completion Rate Check**: Verify if completed nodes ≥ `len(agents) × ssp_threshold`
-2. **Force Progress**: Send `FORCE_NEXT` command to incomplete nodes when threshold reached
-3. **Computation Discard**: Incomplete nodes interrupt current learning and skip to the same epoch
+1. **Configuration Sharing**: Each execution server receives `ssp_enabled` and `ssp_threshold` from control server via `config.json`
+2. **Model Exchange Monitoring**: Each execution server monitors completed peer ratio during `wafl_learn` model exchange
+3. **Threshold Decision**: When `completed_peers / total_peers >= ssp_threshold`, remaining model exchanges are cancelled
 4. **Metrics Logging**: Record discarded computation (`wasted_ms`, `wasted_norm`)

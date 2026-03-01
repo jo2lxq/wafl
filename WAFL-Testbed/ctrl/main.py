@@ -120,6 +120,10 @@ class WaflAgent:
             "timeouts": self.config["TIMEOUTS"],
         }
 
+        # Add SSP configuration if provided
+        if "ssp" in experiment_parameters:
+            unified_config["ssp"] = experiment_parameters["ssp"]
+
         # Add mobility-aware configuration if provided
         if "mobility_aware" in experiment_parameters:
             unified_config["mobility_aware"] = experiment_parameters["mobility_aware"]
@@ -1060,6 +1064,7 @@ class ControlServer:
                 "epochs": epochs,
                 "wafl_phase": wafl_phase,
                 "contact_pattern": contact_pattern,
+                "ssp": ssp_config,
             }
 
             self.agents = self._create_agents(experiment_parameters)
@@ -1096,7 +1101,7 @@ class ControlServer:
             self.logger.info("📊 WAFL Strategy Configuration:")
             self.logger.info(f"   - Aggregation: {aggregation}")
             if ssp_enabled:
-                self.logger.info(f"   - Synchronization: SSP (Threshold={ssp_threshold:.1%})")
+                self.logger.info(f"   - Synchronization: SSP Autonomous (Threshold={ssp_threshold:.1%}, managed by each execution server)")
             else:
                 self.logger.info("   - Synchronization: BSP (Strict Sync - all nodes synchronized per epoch)")
             self.logger.info(f"   - Batch Size: {wafl_phase.get('batch_size', 32)}")
@@ -1319,18 +1324,18 @@ echo "TC applied successfully with peer filters"
         Synchronization Modes:
         - BSP (ssp_enabled=False): Bulk Synchronous Parallel
           All nodes must complete the current epoch before any node can proceed to the next.
-        - SSP (ssp_enabled=True): Semi-Synchronous Parallel
-          When 'ssp_threshold' fraction of nodes complete an epoch, slow nodes are force-skipped.
-          This ensures no node is ever more than 1 epoch behind.
+        - SSP (ssp_enabled=True): Semi-Synchronous Parallel (Autonomous)
+          Each execution server autonomously manages SSP during model exchange.
+          The control server does NOT send FORCE_NEXT; it only provides the threshold.
 
         Args:
             phase_name: "SELF" or "WAFL"
             total_epochs: Total number of epochs to run
-            ssp_threshold: Fraction of agents (0.0-1.0) required before forcing slow agents to skip (SSP only)
-            ssp_enabled: Whether SSP mode is enabled
+            ssp_threshold: Fraction of agents (0.0-1.0) for SSP (passed to execution servers via config)
+            ssp_enabled: Whether SSP mode is enabled (passed to execution servers via config)
         """
         if ssp_enabled:
-            self.logger.info(f"🔄 {phase_name} Phase: SSP Mode (threshold={ssp_threshold:.1%})")
+            self.logger.info(f"🔄 {phase_name} Phase: SSP Autonomous Mode (threshold={ssp_threshold:.1%}, managed by execution servers)")
         else:
             self.logger.info(f"🔄 {phase_name} Phase: BSP Mode (strict epoch synchronization)")
 
@@ -1390,63 +1395,17 @@ echo "TC applied successfully with peer filters"
                     # Log with 1-indexed epoch number for display
                     display_epoch = min_epoch + epoch_offset
                     if ssp_enabled:
-                        self.logger.debug(f"{phase_name} Epoch {display_epoch}: SSP mode (threshold={ssp_threshold:.1%})")
+                        self.logger.debug(f"{phase_name} Epoch {display_epoch}: SSP autonomous mode (threshold={ssp_threshold:.1%}, managed by execution servers)")
                     else:
                         self.logger.debug(f"{phase_name} Epoch {display_epoch}: All nodes synchronized (BSP)")
                     last_epoch_logged = min_epoch
                 if min_epoch >= total_epochs:
                     break
 
-                # ========== SSP Mode: Threshold-based force skip ==========
-                # When ssp_threshold fraction of nodes complete an epoch, force remaining nodes
-                # to skip to that epoch. This ensures no node is more than 1 epoch behind.
-                if ssp_enabled and ssp_threshold < 1.0:
-                    # Find the highest epoch where threshold is met
-                    # Count agents who have completed each epoch level or higher
-                    target_epoch = -1
-                    for check_epoch in range(max_epoch, min_epoch, -1):
-                        # Count agents who have completed check_epoch OR HIGHER
-                        count = sum(1 for ae in epochs_completed.values() if ae >= check_epoch)
-
-                        if count >= len(self.agents) * ssp_threshold:
-                            target_epoch = check_epoch
-                            break
-
-                    if target_epoch != -1 and target_epoch > min_epoch:
-                        # Identify slow agents (those who haven't completed target_epoch)
-                        slow_agents = [name for name, e in epochs_completed.items() if e < target_epoch]
-
-                        if slow_agents:
-                            self.logger.info(f"⚡ SSP Threshold ({ssp_threshold:.0%}) reached for epoch {target_epoch}. Forcing {len(slow_agents)} slow agents to skip.")
-                            self.logger.debug(f"   Slow agents: {slow_agents}")
-
-                            # Force slow agents to skip to target_epoch (PARALLEL using shared executor)
-                            def force_skip_agent(agent):
-                                """Send FORCE_NEXT to a slow agent."""
-                                if epochs_completed[agent.name] >= target_epoch:
-                                    return (agent.name, False, None)
-
-                                self.logger.warning(f"⏩ Forcing agent {agent.name} (epoch {epochs_completed[agent.name]}) to skip to {target_epoch}")
-
-                                result = None
-                                if agent_status[agent.name] == "RUNNING":
-                                    success, response = agent._send_command("FORCE_NEXT\r\n")
-                                    result = (agent.name, True, success)
-                                else:
-                                    result = (agent.name, True, None)
-                                return result
-
-                            slow_agent_objs = [a for a in self.agents if epochs_completed[a.name] < target_epoch]
-
-                            # Use shared executor instead of creating new one
-                            futures = {shared_executor.submit(force_skip_agent, agent): agent for agent in slow_agent_objs}
-                            for future in as_completed(futures):
-                                agent_name, was_slow, cmd_success = future.result()
-                                if was_slow:
-                                    if cmd_success:
-                                        self.logger.debug(f"   FORCE_NEXT sent to {agent_name}")
-                                    agent_status[agent_name] = "IDLE"
-                                    epochs_completed[agent_name] = target_epoch
+                # NOTE: SSP is now managed autonomously by each execution server.
+                # Each server checks if completed peer ratio >= ssp_threshold during model exchange
+                # and cancels remaining exchanges when the threshold is met.
+                # The control server no longer sends FORCE_NEXT commands.
 
                 # Apply dynamic network conditions if mobility-aware mode is enabled (once per epoch)
                 if self.mobility_aware_config and phase_name == "WAFL":
@@ -1568,7 +1527,7 @@ echo "TC applied successfully with peer filters"
                     # Display with 1-indexed epoch number (continuous across phases)
                     display_epoch = min_epoch + epoch_offset
                     if ssp_enabled:
-                        self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (SSP threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
+                        self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (SSP autonomous, threshold={ssp_threshold:.1%}, running={running_count}, idle={idle_count}, error={error_count})")
                     else:
                         self.logger.info(f"📊 {phase_name} Progress: Epoch {display_epoch}/{total_epochs + epoch_offset} (BSP sync, running={running_count}, idle={idle_count}, error={error_count})")
 
@@ -1896,14 +1855,11 @@ if __name__ == "__main__":
         ssp_settings = experiment_parameters.get("ssp", {})
         udp_settings = {}
         tcp_settings = {}
-        rudp_settings = {}
         comp_settings = {}
 
         tcp_enabled = True
         udp_enabled = False
-        rudp_enabled = False
         comp_enabled = False
-        rudp_mode = "rudp"
 
         # Parse method configuration
         if isinstance(method, str):
@@ -1911,26 +1867,21 @@ if __name__ == "__main__":
             print(f"   - Configuration Mode: Simple ({method})")
 
             # Set enable flags based on method string
-            if method_str == "dynamic":
-                tcp_enabled = True
-                udp_enabled = True  # Dynamic uses both
-            elif method_str == "udp":
+            if method_str == "udp":
                 tcp_enabled = False
                 udp_enabled = True
-            elif method_str == "rudp":
-                tcp_enabled = False
-                rudp_enabled = True
             elif method_str == "tcp":
                 tcp_enabled = True
+            elif method_str == "fast":
+                tcp_enabled = False
+                udp_enabled = True
 
             # Simple schema assumes defaults for sub-settings
             if udp_enabled:
                 udp_settings = {"fec_m": "auto"}
-            if rudp_enabled:
-                rudp_settings = {"mode": "rudp", "max_retries": 20, "window_size": 16}
 
         elif isinstance(method, dict):
-            # 新形式: {"base": "udp", "fec": true, "compression": false, "nack": true}
+            # Ablation format: {"base": "udp", "fec": true, "compression": false, "nack": true}
             if "base" in method:
                 base = method.get("base", "tcp")
                 fec_enabled = method.get("fec", True)
@@ -1939,7 +1890,6 @@ if __name__ == "__main__":
 
                 tcp_enabled = base == "tcp"
                 udp_enabled = base == "udp"
-                rudp_enabled = False
 
                 print(f"   - Configuration Mode: Ablation (base={base})")
                 print(f"   - FEC: {'Enabled' if fec_enabled else 'Disabled'}")
@@ -1959,22 +1909,7 @@ if __name__ == "__main__":
         if udp_enabled:
             print(f"     • FEC M: {udp_settings.get('fec_m', 'auto')}")
 
-        # RUDP / E-RUDP
-        if rudp_enabled:
-            mode_display = "E-RUDP" if rudp_mode == "erudp" else "RUDP"
-            print(f"   - {mode_display}: Enabled")
-            print(f"     • Window Size: {rudp_settings.get('window_size', 16)}")
-            print(f"     • Max Retries: {rudp_settings.get('max_retries', 10)}")
-            if rudp_mode == "erudp":
-                print(f"     • Aging Limit: {rudp_settings.get('aging_limit', 0.5) * 1000:.0f}ms")
-        else:
-            print("   - RUDP: Disabled")
-
-        # TCP Logic
-        # RUDP takes precedence over TCP if strictly one protocol allowed,
-        # but for logging we just show status.
-        # Dynamic mode enables both TCP and UDP.
-
+        # TCP
         print(f"   - TCP: {'Enabled' if tcp_enabled else 'Disabled'}")
 
         # Protocol validation / Display Active
@@ -1983,16 +1918,10 @@ if __name__ == "__main__":
             active_protocols.append("TCP")
         if udp_enabled:
             active_protocols.append("UDP")
-        if rudp_enabled:
-            active_protocols.append("RUDP")
 
-        if isinstance(method, str) and method == "dynamic":
-            print("\n✅ Active Transport Protocol: DYNAMIC (TCP/UDP switching)")
-        elif len(active_protocols) == 1:
+        if len(active_protocols) == 1:
             print(f"\n✅ Active Transport Protocol: {active_protocols[0]}")
         elif len(active_protocols) > 1:
-            # This happens in dynamic mode or misconfig (legacy)
-            # If dynamic, handled above.
             print(f"\n✅ Active Transport Protocols: {', '.join(active_protocols)}")
         else:
             print("\n⚠️  WARNING: No transport protocol enabled!")

@@ -10,151 +10,119 @@
 
 ### 基本ワークフロー
 
+実験は以下のライフサイクルに従って進行する．
+
 ```
-準備 → デプロイ → 実験実行 → 結果分析 → クリーンアップ
+準備 (Configure) → デプロイ (Deploy) → 実行 (Start/Run) → 分析 (Analyze) → クリーンアップ (Cleanup)
 ```
 
 ---
 
-### 1. デプロイ (Deploy)
-
-最新のコードと設定ファイルを全実行サーバーに配布する．
+最新のソースコード，データセット，および設定ファイルを全実行サーバーへ一括配布する．
 
 ```bash
 mise deploy
 ```
 
-#### 実行内容
+#### 動作詳細
 
-1. `ctrl/execution_config.json` を読み込み
-2. 管理サーバー上で Docker イメージをビルド
-3. Docker Registry にプッシュ
-4. 各ノードで Docker イメージをプル
-5. 各エージェント用の設定ファイルを生成・配置
+1. **設定の読み込み**: `ctrl/execution_config.json` をパースし，デプロイ対象のノード群を特定する．
+2. **イメージのビルド**: 管理サーバー上で Docker イメージをビルドする．このイメージには学習に必要なライブラリ群が含まれる．
+3. **レジストリ操作**: ビルドライドされたイメージを Docker Registry (管理サーバー上で稼働) へプッシュする．
+4. **同期とプル**: 全ノードに対し，`rsync` を用いて設定ファイルを同期し，同時に Docker イメージをレジストリからプルさせる．
+5. **個別設定の生成**: 各エージェント（コンテナ）ごとに固有のポート番号や IP アドレスを書き込んだ設定ファイルを自動生成し，配置する．
 
-#### 転送されるファイル
+#### ログ出力の確認
 
-- `wafl/` ディレクトリ（全 Python コード）
-- `data/` ディレクトリ（データセット，接触パターン）
-- エージェント固有の設定ファイル（自動生成）
-
-#### ログ出力例
+デプロイ処理中は以下のようなステータスが表示される．
 
 ```
-📦 Setting up Python environment on management server...
-🏗️  Building Docker image on management server...
-📤 Pushing Docker image to registry...
-🚀 Pulling image and syncing files on all nodes...
-🧹 Cleaning up...
-🎉 Deployment completed!
+Setting up Python environment on management server...
+Building Docker image on management server...
+Pushing Docker image to registry...
+Pulling image and syncing files on all nodes...
+Cleaning up...
+Deployment completed!
 ```
 
-> **Note**: デプロイは実験開始前に毎回実行すること．設定ファイルやコードを変更した場合は再デプロイが必要．
+> **Note**: コードの修正や `parameters.json` の設定変更を行った後は，必ず再デプロイを実行する必要がある．
 
 ---
 
-### 2. 実験開始 (Start Experiment)
-
-実験を開始する．
+実験フェーズ（SELF および WAFL）を順次実行する．
 
 ```bash
 mise start
 ```
 
-このコマンドは `mise deploy` を自動実行後，実験を開始する．
+このコマンドは内部的に `mise deploy` を呼び出した後，以下のオーケストレーションを実行する．
 
-#### 自動実行される処理
+#### 自動化されるプロセス
 
-1. **コンテナ起動**: 全リモートノードで Docker コンテナを起動
-   ```bash
-   docker run -d --name wafl-node-0 \
-     --cap-add=NET_ADMIN \
-     -p 10001:10001 \
-     -p 10002:10002 \
-     wafl-node:latest
-   ```
+1. **コンテナのライフサイクル管理**: 全リモートホストで Docker コンテナを起動する．各コンテナにはネットワーク管理者権限 (`NET_ADMIN`) が付与される．
+2. **計算リソースの動的制御**: WAFL フェーズ（連合学習）の開始時に，`parameters.json` の定義に基づいて各コンテナの CPU 使用率を `docker update --cpus` により制限する．
+3. **ネットワーク条件のエミュレーション**: Linux カーネルの `tc` (Traffic Control) 機能を用いて，帯域制限・遅延・パケットロスを指定通りに適用する．
+4. **連合学習の同期制御**:
+   - **SELF フェーズ**: 各エージェントが独立してローカル学習を実行する．
+   - **WAFL フェーズ**: P2P 通信によるモデル交換を行う．SSP が有効な場合，各エージェントは自律的にピアの完了率を監視し，規定の閾値を超えた時点で次のエポックへ移行する．
 
-2. **CPU 制限の適用** (WAFL フェーズ開始時):
-   ```bash
-   docker update --cpus="1.0" wafl-node-0
-   ```
+#### 実行ログのモニタリング
 
-3. **ネットワークエミュレーション**: `tc` ルールを適用
-   ```bash
-   tc qdisc add dev eth0 root netem \
-     delay 50ms \
-     loss 3% \
-     rate 10mbit
-   ```
-
-4. **オーケストレーション**: ControlServer をローカルで起動し，実験を調整
-   - SELF フェーズ → WAFL フェーズの順に実行
-   - エポックごとに各エージェントの完了確認
-   - SSP 有効時は閾値チェックと `FORCE_NEXT` 発行
-
-#### モニタリング
-
-コントロールサーバーのログがターミナルに表示される：
+ターミナルには実験の進行状況がリアルタイムで表示される．
 
 ```
-🚀 Starting experiment: wafl-experiment-20251125T195801 (SELF epochs: 64, WAFL epochs: 4096)
-📋 Phase 0: Creating agents and deploying configurations
-✅ All agents created and configured successfully
-🏃 Phase 1: Starting SELF phase (64 epochs)
-✅ Agent 0 completed SELF epoch 00001
-✅ Agent 1 completed SELF epoch 00001
-✅ Agent 2 completed SELF epoch 00001
+Starting experiment: wafl-experiment-20251125T195801 (SELF epochs: 64, WAFL epochs: 4096)
+Phase 0: Creating agents and deploying configurations
+All agents created and configured successfully
+Phase 1: Starting SELF phase (64 epochs)
+Agent 0 completed SELF epoch 00001
+Agent 1 completed SELF epoch 00001
+Agent 2 completed SELF epoch 00001
 ...
-🎉 All SELF training epochs completed successfully
-🤝 Phase 2: Starting WAFL phase (4096 epochs)
-⚙️  Synchronization: SSP (Threshold: 80%)
-✅ Agent 0 completed WAFL epoch 00001
-⚡ SSP Threshold reached for epoch 00005. Forcing slow agents to skip.
-⏩ Forcing agent 2 (epoch 00004) to skip to 00005
+All SELF training epochs completed successfully
+Phase 2: Starting WAFL phase (4096 epochs)
+Synchronization: SSP Autonomous (Threshold: 80 %, managed by execution servers)
+Agent 0 completed WAFL epoch 00001
+Agent 2: SSP threshold reached (4 / 5 peers completed). Cancelling remaining exchanges.
 ...
 ```
 
-#### 停止方法
+#### 停止コマンド
 
-**正常停止**: `Ctrl+C` を押す
-- Control Server が全エージェントに `KILL` コマンドを送信
-- 各エージェントは現在のエポックを完了してから終了
-- ログとモデルチェックポイントが保存される
-
-**強制停止**: `Ctrl+C` を 2 回押す
-- 即座に全プロセスを強制終了（データ損失の可能性あり）
+- **正常終了 (`Ctrl+C` 1 回)**: Control Server が全エージェントに停止信号を送信する．各ノードが現在の処理を安全に完了し，チェックポイントを保存してから終了する．
+- **強制終了 (`Ctrl+C` 2 回)**: 全てのリモートプロセスおよびコンテナを即座に破棄する．未保存のデータは消失する可能性がある．
 
 ---
 
 ### 3. 複数実験の自動実行 (Run Experiments)
 
-`ctrl/parameters/` ディレクトリ内の全パラメータファイルを順次実行する．
+`ctrl/parameters/` ディレクトリ内に配置された複数の JSON パラメータファイルをアルファベット順に順次実行する．
 
 ```bash
 mise experiments
 ```
 
-#### パラメータファイルの配置
+#### 推奨されるファイル構成例
 
 ```
 ctrl/parameters/
 ├── exp0_1-excellent-1-tcp.json
-├── exp0_1-excellent-3-dynamic.json
+├── exp0_1-excellent-3-udp.json
 ├── exp0_1-excellent-4-fast.json
 ├── exp0_2-good-1-tcp.json
-├── exp0_2-good-3-dynamic.json
+├── exp0_2-good-3-udp.json
 ├── exp0_2-good-4-fast.json
 ├── exp0_3-fair-1-tcp.json
-├── exp0_3-fair-3-dynamic.json
+├── exp0_3-fair-3-udp.json
 ├── exp0_3-fair-4-fast.json
 └── exp0_4-poor-1-tcp.json
 ```
 
-#### パラメータファイル例
+#### パラメータファイルの定義例
 
 ```json
 {
-  "experiment_name": "Experiment 0: excellent (dynamic)",
+  "experiment_name": "Experiment 0: excellent (udp)",
   "epochs": {
     "self": 8,
     "wafl": 64
@@ -172,7 +140,7 @@ ctrl/parameters/
     "delay": "5ms",
     "loss": "2%"
   },
-  "method": "dynamic",
+  "method": "udp",
   "ssp": {
     "enabled": true,
     "ssp_threshold": 0.8
@@ -180,23 +148,22 @@ ctrl/parameters/
 }
 ```
 
-#### 実行順序
+#### 実行順序と命名規則
 
-- ファイル名のアルファベット順で実行
-- 命名規則: `exp{実験番号}_{条件番号}-{条件名}-{手法番号}-{手法名}.json`
-- 例: `exp0_1-excellent-3-dynamic.json`
-  - 実験 0: 基本比較実験
-  - 条件 1: excellent (高帯域・低損失)
-  - 手法 3: dynamic モード
+- ファイル名は `exp{実験番号}_{条件番号}-{条件名}-{手法番号}-{手法名}.json` の形式を推奨する．
+- 例: `exp0_1-excellent-3-udp.json`
+  - 第 0 実験（基本性能評価）
+  - 条件 1: Excellent（高品質ネットワーク）
+  - 手法 3: UDP (適応的 FEC) モード
 
-#### ログ出力例
+#### ステータス確認例
 
 ```
-📋 Found 12 parameter files in ctrl/parameters/
-🔄 Running experiment 1/12: exp0_1-excellent-1-tcp.json
+Found 12 parameter files in ctrl/parameters/
+Running experiment 1/12: exp0_1-excellent-1-tcp.json
 ...
-✅ Experiment completed: exp0_1-excellent-1-tcp
-🔄 Running experiment 2/12: exp0_1-excellent-3-dynamic.json
+Experiment completed: exp0_1-excellent-1-tcp
+Running experiment 2/12: exp0_1-excellent-3-udp.json
 ...
 ```
 
@@ -303,25 +270,25 @@ mise verify
 #### ログ出力例
 
 ```
-🔍 WAFL-Testbed Verification & Benchmark Tool
+WAFL-Testbed Verification & Benchmark Tool
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 Configuration Validation
-  ✅ parameters.json: Valid
-  ✅ execution_config.json: Valid
-  ✅ Contact pattern file exists
+Configuration Validation
+  parameters.json: Valid
+  execution_config.json: Valid
+  Contact pattern file exists
 
-🔗 Infrastructure Verification
-  ✅ Node 0 (192.168.11.100): SSH OK, Docker OK
-  ✅ Node 1 (192.168.11.101): SSH OK, Docker OK
-  ✅ Node 2 (192.168.11.102): SSH OK, Docker OK
+Infrastructure Verification
+  Node 0 (192.168.11.100): SSH OK, Docker OK
+  Node 1 (192.168.11.101): SSH OK, Docker OK
+  Node 2 (192.168.11.102): SSH OK, Docker OK
 
-📊 Network Benchmarks
+Network Benchmarks
   Node 0 ↔ Node 1: RTT 0.5ms, Bandwidth 943 Mbps
   Node 0 ↔ Node 2: RTT 0.6ms, Bandwidth 941 Mbps
   Node 1 ↔ Node 2: RTT 0.4ms, Bandwidth 945 Mbps
 
-✅ All verifications passed!
+All verifications passed!
 ```
 
 #### オプション
@@ -430,12 +397,12 @@ mise start
 }
 ```
 
-#### 7.3 3 モード（TCP/Dynamic/Fast）の比較
+#### 7.3 3 モード (TCP / UDP / Fast) の比較
 
-1. 各手法用のパラメータファイルを作成
-2. `ctrl/parameters/` に配置
-3. `mise experiments` で順次実行
-4. `mise analyze` で比較レポート生成
+1. 各手法に対応するパラメータファイルを個別に作成する．
+2. `ctrl/parameters/` ディレクトリへ配置する．
+3. `mise experiments` コマンドでバッチ実行を開始する．
+4. 終了後，`mise analyze --compare` にて比較レポートを生成する．
 
 ---
 
@@ -445,7 +412,7 @@ mise start
 
 **症状**:
 ```
-🔒 SSH connection error to agent 0: [Errno 111] Connection refused
+SSH connection error to agent 0: [Errno 111] Connection refused
 ```
 
 **確認事項**:
@@ -477,7 +444,7 @@ docker stop {container_id}
 
 **症状**:
 ```
-❌ Timed out waiting for agent 2 to be ready
+Timed out waiting for agent 2 to be ready
 ```
 
 **原因と対処**:

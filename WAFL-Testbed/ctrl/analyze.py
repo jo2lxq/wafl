@@ -429,23 +429,12 @@ def _load_metrics_and_resources(exp_dir):
                         "bytes_sent",
                         "bytes_received",
                         "timeout_models",
-                        "rudp_nacks_sent",
                         "fec_recoveries",
-                        "rudp_retransmissions",
-                        "rudp_acks_sent",
-                        "rudp_acks_received",
-                        "rudp_eaks_sent",
-                        "rudp_eaks_received",
-                        "rudp_aged_packets",
-                        "rudp_connect_time_ms",
-                        "rudp_avg_rtt_ms",
-                        "rudp_max_retries_reached",
-                        # New Metrics
+                        # Application-layer metrics
                         "app_bytes_sent",
                         "app_bytes_received",
                         "protocol_tcp_count",
                         "protocol_udp_count",
-                        "protocol_rudp_count",
                         "udp_avg_parity",
                         "udp_avg_pacing_ms",
                         "compression_ratio",
@@ -2048,7 +2037,7 @@ def _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_
     has_meaningful_data = False
 
     # Check columns existence
-    cols = ["protocol_tcp_count", "protocol_udp_count", "protocol_rudp_count"]
+    cols = ["protocol_tcp_count", "protocol_udp_count"]
     avail_cols = [c for c in cols if c in df.columns]
 
     if not df.empty and avail_cols:
@@ -2064,8 +2053,8 @@ def _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_
             proto_agg = wafl_df.groupby("epoch").agg(agg_funcs).reset_index()
 
             bottom = None
-            labels = {"protocol_tcp_count": "TCP", "protocol_udp_count": "UDP", "protocol_rudp_count": "RUDP"}
-            colors = {"protocol_tcp_count": "#3498db", "protocol_udp_count": "#e67e22", "protocol_rudp_count": "#9b59b6"}  # Blue, Orange, Purple
+            labels = {"protocol_tcp_count": "TCP", "protocol_udp_count": "UDP"}
+            colors = {"protocol_tcp_count": "#3498db", "protocol_udp_count": "#e67e22"}  # Blue, Orange
 
             for col in avail_cols:
                 if col not in proto_agg.columns:
@@ -2094,14 +2083,14 @@ def _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_
             ax.set_ylabel("Total Transfers (Count)")
             ax.set_xlabel("Epoch")
             ax.legend()
-            ax.set_title(f"Dynamic Protocol Distribution - {experiment_name}")
+            ax.set_title(f"Protocol Distribution - {experiment_name}")
             ax.grid(True, axis="y", alpha=0.3)
 
     if not has_meaningful_data:
         ax.text(
             0.5,
             0.5,
-            "Dynamic Protocol Distribution N/A\n(Stats not collected or Single Protocol)",
+            "Protocol Distribution N/A\n(Stats not collected or Single Protocol)",
             ha="center",
             va="center",
             fontsize=14,
@@ -2109,7 +2098,7 @@ def _generate_protocol_distribution_plot(df, experiment_name, analysis_dir, add_
             transform=ax.transAxes,
         )
         ax.axis("off")
-        ax.set_title(f"Dynamic Protocol Distribution - {experiment_name}")
+        ax.set_title(f"Protocol Distribution - {experiment_name}")
 
     fig.tight_layout()
     fig.savefig(analysis_dir / "protocol_distribution.png", dpi=150)
@@ -2182,82 +2171,6 @@ def _generate_udp_recovery_plot(df, experiment_name, analysis_dir, add_phase_lin
     fig.savefig(analysis_dir / "udp_recovery.png", dpi=150)
     plt.close(fig)
     return "udp_recovery.png"
-
-
-def _generate_rudp_failure_plot(df, experiment_name, analysis_dir, add_phase_line_func):
-    """Generate RUDP failure (Max Retries Reached) plot."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_meaningful_data = False
-
-    if not df.empty and "rudp_max_retries_reached" in df.columns:
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        if wafl_df["rudp_max_retries_reached"].sum() > 0:
-            has_meaningful_data = True
-
-            agg = wafl_df.groupby("epoch").agg({"rudp_max_retries_reached": "sum"}).reset_index()
-
-            ax.bar(
-                agg["epoch"],
-                agg["rudp_max_retries_reached"],
-                color=COLORS["control_server"],
-                alpha=0.8,
-                edgecolor=COLORS["control_server"],
-                linewidth=0.5,
-                width=0.6,
-            )
-
-            add_phase_line_func(ax, df, "epoch")
-            ax.set_ylabel("Max Retries Reached (Count)")
-            ax.set_xlabel("Epoch")
-            ax.set_title(f"RUDP Max Retry Failures - {experiment_name}")
-            ax.grid(True, axis="y", alpha=0.3)
-
-    if not has_meaningful_data:
-        ax.text(0.5, 0.5, "RUDP Failures N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
-        ax.axis("off")
-        ax.set_title(f"RUDP Max Retry Failures - {experiment_name}")
-
-    fig.tight_layout()
-    fig.savefig(analysis_dir / "rudp_failures.png", dpi=150)
-    plt.close(fig)
-    return "rudp_failures.png"
-
-
-def _generate_rudp_control_overhead_plot(df, experiment_name, analysis_dir, add_phase_line_func):
-    """Generate RUDP Control Packet Overhead plot."""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    has_meaningful_data = False
-
-    cols = ["rudp_acks_sent", "rudp_eaks_sent", "rudp_nacks_sent"]
-    avail_cols = [c for c in cols if c in df.columns]
-
-    if not df.empty and avail_cols:
-        wafl_df = df[df["phase"] == "WAFL"].copy()
-        if wafl_df[avail_cols].sum().sum() > 0:
-            has_meaningful_data = True
-
-            sns.lineplot(data=wafl_df, x="epoch", y="rudp_acks_sent", label="ACKs", errorbar=None, ax=ax)
-            if "rudp_eaks_sent" in wafl_df.columns:
-                sns.lineplot(data=wafl_df, x="epoch", y="rudp_eaks_sent", label="EAKs", errorbar=None, ax=ax)
-            if "rudp_nacks_sent" in wafl_df.columns:
-                sns.lineplot(data=wafl_df, x="epoch", y="rudp_nacks_sent", label="NACKs", errorbar=None, ax=ax)
-
-            add_phase_line_func(ax, df, "epoch")
-            ax.set_ylabel("Control Packets (Avg per Node)")
-            ax.set_xlabel("Epoch")
-            ax.set_title(f"RUDP Control Overhead - {experiment_name}")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-
-    if not has_meaningful_data:
-        ax.text(0.5, 0.5, "RUDP Overhead N/A", ha="center", va="center", color=COLORS["no_data"], transform=ax.transAxes)
-        ax.axis("off")
-        ax.set_title(f"RUDP Control Overhead - {experiment_name}")
-
-    fig.tight_layout()
-    fig.savefig(analysis_dir / "rudp_control_overhead.png", dpi=150)
-    plt.close(fig)
-    return "rudp_control_overhead.png"
 
 
 def _generate_compression_stats_plot(df, experiment_name, analysis_dir, add_phase_line_func):
@@ -2964,7 +2877,7 @@ def _generate_accuracy_comparison(experiments_data, group_name, output_dir):
         label=f"Target ({TARGET_ACCURACY:.0%})",
     )
 
-    ax.set_title(f"Test Accuracy Comparison - {group_name}")
+    ax.set_title("Test Accuracy Comparison")
     ax.set_ylabel("Test Accuracy")
     ax.set_xlabel("Epoch")
     ax.set_ylim(0, 1.05)
@@ -3028,7 +2941,7 @@ def _generate_loss_comparison(experiments_data, group_name, output_dir):
             va="top",
         )
 
-    ax.set_title(f"Test Loss Comparison - {group_name}")
+    ax.set_title("Test Loss Comparison")
     ax.set_ylabel("Test Loss")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3089,7 +3002,7 @@ def _generate_duration_comparison(experiments_data, group_name, output_dir):
             va="top",
         )
 
-    ax.set_title(f"Epoch Duration Comparison - {group_name}")
+    ax.set_title("Epoch Duration Comparison")
     ax.set_ylabel("Duration [sec]")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3153,7 +3066,7 @@ def _generate_time_to_accuracy_comparison(experiments_data, group_name, output_d
             fontsize=9,
         )
 
-    ax.set_title(f"Time to {TARGET_ACCURACY * 100:.0%} Accuracy (from WAFL Start) - {group_name}")
+    ax.set_title(f"Time to {TARGET_ACCURACY * 100:.0%} Accuracy (from WAFL Start)")
     ax.set_ylabel("Time from WAFL Start [sec]")
     ax.set_xlabel("Experiment")
     # Explicitly set tick labels to ensure they are correct when rotated
@@ -3199,7 +3112,7 @@ def _generate_survival_rate_comparison(experiments_data, group_name, output_dir)
         plt.close(fig)
         return None
 
-    ax.set_title(f"Survival Rate Comparison (UDP/FEC) - {group_name}")
+    ax.set_title("Survival Rate Comparison (UDP/FEC)")
     ax.set_ylabel("Survival Rate")
     ax.set_xlabel("Epoch")
     ax.set_ylim(0, 1.05)
@@ -3242,7 +3155,7 @@ def _generate_throughput_comparison(experiments_data, group_name, output_dir):
         plt.close(fig)
         return None
 
-    ax.set_title(f"Throughput Comparison - {group_name}")
+    ax.set_title("Throughput Comparison")
     ax.set_ylabel("Throughput [Mbps]")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3289,7 +3202,7 @@ def _generate_accuracy_time_comparison(experiments_data, group_name, output_dir)
         label=f"Target ({TARGET_ACCURACY:.0%})",
     )
 
-    ax.set_title(f"Test Accuracy vs Time (from WAFL Start) - {group_name}")
+    ax.set_title("Test Accuracy vs Time (from WAFL Start)")
     ax.set_ylabel("Test Accuracy")
     ax.set_xlabel("Time from WAFL Start [sec]")
     ax.set_ylim(0, 1.05)
@@ -3348,7 +3261,7 @@ def _generate_cumulative_sent_data_comparison(experiments_data, group_name, outp
             fontsize=9,
         )
 
-    ax.set_title(f"Total Sent Data Comparison - {group_name}")
+    ax.set_title("Total Sent Data Comparison")
     ax.set_ylabel("Cumulative Sent Data [MB]")
     ax.set_xlabel("Experiment")
 
@@ -3425,7 +3338,7 @@ def _generate_idle_time_comparison(experiments_data, group_name, output_dir):
             va="top",
         )
 
-    ax.set_title(f"Idle Time Ratio Comparison - {group_name}")
+    ax.set_title("Idle Time Ratio Comparison")
     ax.set_ylabel("Idle Time Ratio")
     ax.set_xlabel("Epoch")
     ax.set_ylim(0, 1)
@@ -3476,7 +3389,7 @@ def _generate_wasted_computation_comparison(experiments_data, group_name, output
             fontsize=9,
         )
 
-    ax.set_title(f"Total Wasted Computation (SSP) - {group_name}")
+    ax.set_title("Total Wasted Computation (SSP)")
     ax.set_ylabel("Wasted Time [sec]")
     ax.set_xlabel("Experiment")
 
@@ -3524,7 +3437,7 @@ def _generate_traffic_volume_comparison(experiments_data, group_name, output_dir
         plt.close(fig)
         return None
 
-    ax.set_title(f"Traffic Volume per Epoch (WAFL Phase) - {group_name}")
+    ax.set_title("Traffic Volume per Epoch (WAFL Phase)")
     ax.set_ylabel("Sent Data [MB]")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3585,7 +3498,7 @@ def _generate_compute_comm_comparison(experiments_data, group_name, output_dir):
 
     ax.set_ylabel("Average Time [sec]")
     ax.set_xlabel("Experiment")
-    ax.set_title(f"Compute vs Communication Time (WAFL Phase) - {group_name}")
+    ax.set_title("Compute vs Communication Time (WAFL Phase)")
     ax.set_xticks(x)
     ax.set_xticklabels(breakdown_df["experiment"])
     ax.tick_params(axis="x", rotation=45)
@@ -3639,7 +3552,7 @@ def _generate_goodput_comparison(experiments_data, group_name, output_dir):
         plt.close(fig)
         return None
 
-    ax.set_title(f"Goodput Comparison (Payload) - {group_name}")
+    ax.set_title("Goodput Comparison (Payload)")
     ax.set_ylabel("Goodput [Mbps]")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3680,7 +3593,7 @@ def _generate_effective_goodput_comparison(experiments_data, group_name, output_
         plt.close(fig)
         return None
 
-    ax.set_title(f"Effective Goodput Comparison (Original / Time) - {group_name}")
+    ax.set_title("Effective Goodput Comparison (Original / Time)")
     ax.set_ylabel("Effective Goodput [Mbps]")
     ax.set_xlabel("Epoch")
     ax.legend(loc="upper right")
@@ -3727,7 +3640,7 @@ def _generate_traffic_overhead_comparison(experiments_data, group_name, output_d
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width() / 2, height, f"{height:.2f}x", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
-    ax.set_title(f"Traffic Overhead Ratio Comparison (Physical / App) - {group_name}")
+    ax.set_title("Traffic Overhead Ratio Comparison (Physical / App)")
     ax.set_ylabel("Overhead Ratio")
     ax.set_xlabel("Experiment")
     ax.axhline(y=1.0, color="gray", linestyle="--", label="Ideal (1.0)")
@@ -3776,7 +3689,7 @@ def _generate_throughput_overhead_comparison(experiments_data, group_name, outpu
     fig, ax = plt.subplots(figsize=(12, 6))
     sns.barplot(data=melted, x="experiment", y="Mbps", hue="Metric", palette=[COLORS["traffic"], COLORS["goodput"]], ax=ax)
 
-    ax.set_title(f"Throughput Comparison (Physical vs Goodput) - {group_name}")
+    ax.set_title("Throughput Comparison (Physical vs Goodput)")
     # Fix: Use tick_params for rotation instead of set_xticklabels(get_xticklabels())
     ax.tick_params(axis="x", rotation=45)
     # Align labels to right
@@ -3820,7 +3733,7 @@ def _generate_accuracy_dist_comparison(experiments_data, group_name, output_dir)
     palette = NODE_PALETTE[: len(full_df["experiment"].unique())]
     sns.boxplot(data=full_df, x="experiment", y="test_accuracy", hue="experiment", legend=False, palette=palette, ax=ax)
 
-    ax.set_title(f"Node-wise Mean Accuracy Distribution - {group_name}")
+    ax.set_title("Node-wise Mean Accuracy Distribution")
     ax.set_ylabel("Mean Test Accuracy")
     # Fix: Use tick_params
     ax.tick_params(axis="x", rotation=45)
@@ -3856,7 +3769,7 @@ def _generate_fec_overhead_comparison(experiments_data, group_name, output_dir):
     fig, ax = plt.subplots(figsize=(12, 6))
     fec_df.plot(kind="bar", stacked=True, color=[COLORS["bar_primary"], COLORS["bar_secondary"]], ax=ax)
 
-    ax.set_title(f"FEC Processing Overhead Comparison - {group_name}")
+    ax.set_title("FEC Processing Overhead Comparison")
     ax.set_ylabel("Time [ms]")
     # Fix: Use tick_params
     ax.tick_params(axis="x", rotation=45)
@@ -3899,7 +3812,7 @@ def _generate_compression_comparison(experiments_data, group_name, output_dir):
     sns.lineplot(data=comp_df, x="experiment", y="Time (ms)", color=COLORS["wasted_bar"], marker="o", linewidth=2, ax=ax2)
     ax2.set_ylabel("Compression Time [ms]", color=COLORS["wasted_bar"])
 
-    ax1.set_title(f"Compression Statistics Comparison - {group_name}")
+    ax1.set_title("Compression Statistics Comparison")
     # Fix: Use tick_params
     ax1.tick_params(axis="x", rotation=45)
     plt.setp(ax1.get_xticklabels(), ha="right")
@@ -3921,7 +3834,6 @@ def _generate_protocol_distribution_comparison(experiments_data, group_name, out
         wafl_df = df[df["phase"] == "WAFL"]
         tcp = wafl_df["protocol_tcp_count"].sum() if "protocol_tcp_count" in wafl_df.columns else 0
         udp = wafl_df["protocol_udp_count"].sum() if "protocol_udp_count" in wafl_df.columns else 0
-        # RUDP removed
 
         total = tcp + udp
         if total > 0:
@@ -3939,7 +3851,7 @@ def _generate_protocol_distribution_comparison(experiments_data, group_name, out
 
     dist_df.plot(kind="bar", stacked=True, color=colors, ax=ax)
 
-    ax.set_title(f"Protocol Distribution Comparison - {group_name}")
+    ax.set_title("Protocol Distribution Comparison")
     ax.set_ylabel("Usage Percentage [%]")
     ax.set_ylim(0, 100)
     ax.tick_params(axis="x", rotation=45)
@@ -4323,7 +4235,7 @@ def _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir):
     ax1.set_xticks(x)
     ax1.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
     ax1.tick_params(axis="y", labelsize=12)
-    ax1.set_title(f"Survival Rate by Method - {group_name}", fontsize=16)
+    ax1.set_title("Survival Rate by Method", fontsize=16)
     fig1.tight_layout()
     fig1.savefig(output_dir / "survival_rate_comparison.png", dpi=150)
     plt.close(fig1)
@@ -4338,7 +4250,7 @@ def _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir):
     ax2.set_xticks(x)
     ax2.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
     ax2.tick_params(axis="y", labelsize=12)
-    ax2.set_title(f"Epoch Duration by Method - {group_name}", fontsize=16)
+    ax2.set_title("Epoch Duration by Method", fontsize=16)
     fig2.tight_layout()
     fig2.savefig(output_dir / "epoch_duration_comparison.png", dpi=150)
     plt.close(fig2)
@@ -4353,7 +4265,7 @@ def _generate_survival_epoch_tradeoff(experiments_data, group_name, output_dir):
     ax3.set_xticks(x)
     ax3.set_xticklabels(exp_names, rotation=45, ha="right", fontsize=12)
     ax3.tick_params(axis="y", labelsize=12)
-    ax3.set_title(f"Traffic Volume by Method - {group_name}", fontsize=16)
+    ax3.set_title("Traffic Volume by Method", fontsize=16)
     fig3.tight_layout()
     fig3.savefig(output_dir / "traffic_volume_comparison.png", dpi=150)
     plt.close(fig3)
@@ -4414,7 +4326,7 @@ def _generate_epoch_breakdown_comparison(experiments_data, group_name, output_di
 
     ax.set_ylabel("Time [s]", fontsize=14)
     ax.set_xlabel("Method", fontsize=14)
-    ax.set_title(f"Epoch Duration Breakdown - {group_name}", fontsize=16)
+    ax.set_title("Epoch Duration Breakdown", fontsize=16)
 
     # X-axis formatting
     ax.tick_params(axis="x", rotation=0, labelsize=12)
@@ -4533,7 +4445,7 @@ def _generate_convergence_curve(experiments_data, group_name, output_dir):
 
     ax.set_xlabel("Wall-clock Time [s]", fontsize=14)
     ax.set_ylabel("Test Accuracy [%]", fontsize=14)
-    ax.set_title(f"Learning Convergence Curve - {group_name}", fontsize=16)
+    ax.set_title("Learning Convergence Curve", fontsize=16)
     ax.legend(loc="lower right", fontsize=12)
     ax.grid(True, alpha=0.3)
     ax.set_ylim(60, 100 if target_acc > 0.85 else 90)  # Adjust Y-limit for higher target
@@ -4611,7 +4523,7 @@ def _generate_network_quality_overhead_correlation(experiments_data, group_name,
     ax.set_xticklabels(valid_conditions, fontsize=12)
     ax.set_xlabel("Network Condition", fontsize=14)
     ax.set_ylabel("Overhead Ratio (Physical/App)", fontsize=14)
-    ax.set_title(f"Network Quality vs Overhead Ratio - {group_name}", fontsize=16)
+    ax.set_title("Network Quality vs Overhead Ratio", fontsize=16)
 
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3)
@@ -4680,7 +4592,7 @@ def _generate_network_quality_survival_comparison(experiments_data, group_name, 
 
     ax.set_ylabel("Survival Rate [%]", fontsize=14)
     ax.set_xlabel("Network Condition", fontsize=14)
-    ax.set_title(f"Survival Rate vs Network Condition - {group_name}", fontsize=16)
+    ax.set_title("Survival Rate vs Network Condition", fontsize=16)
     ax.set_xticks(x)
     ax.set_xticklabels(valid_conditions, fontsize=12)
     ax.set_ylim(0, 105)

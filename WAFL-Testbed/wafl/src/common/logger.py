@@ -37,37 +37,24 @@ class MetricsLogger:
         "received_models",
         "fec_recovery_success",
         "fec_recovery_fail",
-        "fec_encode_time_ms",  # FEC エンコード処理時間
-        "fec_decode_time_ms",  # FEC デコード処理時間
+        "fec_encode_time_ms",  # FEC encoding time
+        "fec_decode_time_ms",  # FEC decoding time
         "bytes_sent",
         "bytes_received",
         "app_bytes_sent",  # Application payload sent (metric for useful data)
         "app_bytes_received",  # Application payload received (metric for goodput)
-        "app_bytes_received",  # Application payload received (metric for goodput)
-        "timeout_models",  # 追加
-        "fast_mode_discarded",  # 追加: Fast modeで破棄されたモデル数
-        # RUDP/E-RUDP metrics
-        "rudp_retransmissions",
-        "rudp_acks_sent",
-        "rudp_acks_received",
-        "rudp_eaks_sent",
-        "rudp_eaks_received",
-        "rudp_aged_packets",
-        "rudp_connect_time_ms",
-        "rudp_avg_rtt_ms",
-        "rudp_max_retries_reached",
-        "rudp_nacks_sent",  # 追加
-        "fec_recoveries",  # 追加
+        "timeout_models",
+        "fast_mode_discarded",  # Number of models discarded in Fast mode
+        "fec_recoveries",
         # Compression metrics
         "compression_method",
         "compression_ratio",
         "compression_time_ms",
         "original_size",
         "compressed_size",
-        # Dynamic Protocol Counts
+        # Protocol Counts
         "protocol_tcp_count",
         "protocol_udp_count",
-        "protocol_rudp_count",
         # UDP Dynamic Params
         "udp_avg_parity",
         "udp_avg_pacing_ms",
@@ -219,18 +206,7 @@ class MetricsLogger:
             # UDP Dynamic Params
             "udp_avg_parity": metrics.get("udp_avg_parity", 0),
             "udp_avg_pacing_ms": metrics.get("udp_avg_pacing_ms", 0),
-            # RUDP specific
-            "rudp_nacks_sent": metrics.get("rudp_nacks_sent", 0),
             "fec_recoveries": metrics.get("fec_recoveries", 0),
-            "rudp_retransmissions": metrics.get("rudp_retransmissions", 0),
-            "rudp_acks_sent": metrics.get("rudp_acks_sent", 0),
-            "rudp_acks_received": metrics.get("rudp_acks_received", 0),
-            "rudp_eaks_sent": metrics.get("rudp_eaks_sent", 0),
-            "rudp_eaks_received": metrics.get("rudp_eaks_received", 0),
-            "rudp_aged_packets": metrics.get("rudp_aged_packets", 0),
-            "rudp_connect_time_ms": metrics.get("rudp_connect_time_ms", 0),
-            "rudp_avg_rtt_ms": metrics.get("rudp_avg_rtt_ms", 0),
-            "rudp_max_retries_reached": metrics.get("rudp_max_retries_reached", 0),
             # Compression metrics
             "compression_method": metrics.get("compression_method", "none"),
             "compression_ratio": metrics.get("compression_ratio", 1.0),
@@ -240,7 +216,6 @@ class MetricsLogger:
             # Protocol Counts
             "protocol_tcp_count": metrics.get("protocol_tcp_count", 0),
             "protocol_udp_count": metrics.get("protocol_udp_count", 0),
-            "protocol_rudp_count": metrics.get("protocol_rudp_count", 0),
         }
         self._write_row(entry)
 

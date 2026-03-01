@@ -1,7 +1,7 @@
 """
-ネットワーク状態推定器．
+Network state estimator.
 
-実測データからネットワーク条件を推定し，動的パラメータ調整に使用する．
+Estimates network conditions from observed measurements for dynamic parameter tuning.
 """
 
 import logging
@@ -14,15 +14,15 @@ from typing import Optional
 
 @dataclass
 class NetworkMetrics:
-    """ネットワークメトリクス"""
+    """Network quality metrics."""
 
-    packet_loss_rate: float = 0.0  # パケットロス率 (0.0-1.0)
-    rtt_ms: float = 100.0  # RTT (ms)
-    bandwidth_mbps: float = 10.0  # 帯域 (Mbps)
-    jitter_ms: float = 0.0  # ジッター (ms)
+    packet_loss_rate: float = 0.0  # Packet loss rate (0.0-1.0)
+    rtt_ms: float = 100.0  # Round-trip time (ms)
+    bandwidth_mbps: float = 10.0  # Bandwidth (Mbps)
+    jitter_ms: float = 0.0  # Jitter (ms)
 
     def get_quality_level(self) -> str:
-        """ネットワーク品質レベルを返す"""
+        """Return the network quality level."""
         # User defined reference: Ex(2%,5ms), Good(5%,15ms), Fair(8%,30ms), Poor(12%,50ms)
         # Thresholds set strictly based on definition (RTT roughly 2x one-way delay)
         if self.packet_loss_rate <= 0.02 and self.rtt_ms <= 10:
@@ -267,13 +267,13 @@ class NetworkEstimator:
         return max(0.0, min(0.01, pacing_delay))
 
 
-# グローバルインスタンス (シングルトン)
+# Global singleton instance
 _global_estimator: Optional[NetworkEstimator] = None
 _estimator_lock = threading.Lock()
 
 
 def get_network_estimator() -> NetworkEstimator:
-    """グローバル NetworkEstimator を取得"""
+    """Get the global NetworkEstimator instance."""
     global _global_estimator
     with _estimator_lock:
         if _global_estimator is None:

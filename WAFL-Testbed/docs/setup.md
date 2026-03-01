@@ -9,19 +9,19 @@
 ### 前提条件
 
 #### コントロールサーバー
-- **OS**: Linux (Ubuntu 20.04 LTS 以降推奨)
+- **OS**: Linux (Ubuntu 20.04 LTS 以降を推奨する)
 - **Python**: 3.11 以上
-- **ネットワーク**: 全実行サーバーへ SSH 接続可能
-- **ディレクトリ**: 任意の作業ディレクトリ（Docker は不要）
+- **ネットワーク**: 全ての実行サーバーへ SSH 接続が可能であること
+- **ディレクトリ**: 任意の作業ディレクトリ（Docker のインストールは不要である）
 
 #### 実行サーバー（エージェント）
-- **OS**: Linux (Ubuntu 20.04 LTS 以降推奨)
-- **Docker**: インストール済み＆バックグラウンドで実行中
-- **権限**: Docker コマンドを非 root で実行可能（docker グループに所属）
-- **ポート**: 10001〜13999 が空いている（設定による）
+- **OS**: Linux (Ubuntu 20.04 LTS 以降を推奨する)
+- **Docker**: インストール済みであり，バックグラウンドでデーモンが実行中であること
+- **権限**: Docker コマンドを非 root ユーザーで実行可能であること（docker グループへの所属）
+- **ポート**: 10001 〜 13999 の範囲が利用可能であること（設定により変動する）
 
 #### ネットワーク要件
-- コントロールサーバー→全実行サーバーへの**パスワードなし SSH アクセス**（公開鍵認証）
+- コントロールサーバーから全ての実行サーバーに対し，公開鍵認証による**パスワードなし SSH アクセス**が可能であること
 
 ---
 
@@ -29,11 +29,13 @@
 
 #### ステップ 1: mise のインストール（コントロールサーバー）
 
+`mise` はランタイム管理およびタスク実行のためのツールである．
+
 ```bash
-# 1. mise をインストール
+# 1. mise をインストールする
 curl https://mise.run | sh
 
-# 2. シェルで mise を有効化
+# 2. シェルに mise を登録する
 # bash の場合:
 echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
 source ~/.bashrc
@@ -41,10 +43,6 @@ source ~/.bashrc
 # zsh の場合:
 echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc
 source ~/.zshrc
-
-# fish の場合:
-echo 'mise activate fish | source' >> ~/.config/fish/config.fish
-source ~/.config/fish/config.fish
 ```
 
 **確認**:
@@ -52,59 +50,52 @@ source ~/.config/fish/config.fish
 mise --version
 ```
 
-#### ステップ 2: プロジェクトセットアップ（コントロールサーバー）
+#### ステップ 2: プロジェクトのセットアップ（コントロールサーバー）
 
 ```bash
-# 1. プロジェクトディレクトリに移動
+# 1. プロジェクトディレクトリへ移動する
 cd WAFL-Testbed
 
-# 2. 依存関係を自動インストール
+# 2. 依存関係の自動インストールを実行する
 mise setup
 ```
 
-`mise setup` コマンドが自動的に行うこと:
-- ✅ Python 3.11 のインストール
-- ✅ `uv` のインストール
-- ✅ 仮想環境 `.venv` の作成
-- ✅ `pyproject.toml` で定義された全 Python 依存関係のインストール
-- ✅ pre-commit フックのインストール
+`mise setup` コマンドは以下の処理を自動的に実行する．
+- Python 3.11 のインストール
+- 高速なパッケージ管理ツール `uv` の導入
+- 仮想環境 `.venv` の構築
+- `pyproject.toml` に定義された全ての Python 依存ライブラリのインストール
+- 開発用 pre-commit フックの登録
 
 **確認**:
 ```bash
-# Python バージョン確認
-python --version  # Python 3.11.x 以上
+# Python バージョンの確認
+python --version  # Python 3.11.x 以上であることを確認する
 
-# 依存パッケージ確認
+# インストール済みパッケージの確認
 uv pip list
 ```
 
-#### ステップ 3: SSH 設定（コントロールサーバー）
+#### ステップ 3: SSH 鍵の設定（コントロールサーバー）
 
-各実行サーバーへパスワードなしで SSH 接続できるように設定する．
+実行サーバー群に対し，パスワード入力を省略して SSH 接続できるように設定する．
 
 ```bash
-# 1. SSH キーペアを生成（既存のキーがない場合）
+# 1. SSH キーペアの生成（未作成の場合のみ）
 ssh-keygen -t ed25519 -C "wafl-testbed"
-# Enter キーを 3 回押してデフォルト設定で生成
+# 全てのプロンプトで Enter を押し，デフォルト設定を適用する
 
-# 2. 各実行サーバーに公開鍵をコピー
+# 2. 公開鍵を実行サーバーへ配布する
 # 例: ノード 0 (192.168.11.100)
-ssh-copy-id denjo@192.168.11.100
+ssh-copy-id -i ~/.ssh/id_ed25519.pub denjo@192.168.11.100
 
-# 例: ノード 1 (192.168.11.101)
-ssh-copy-id denjo@192.168.11.101
-
-# 例: ノード 2 (192.168.11.102)
-ssh-copy-id denjo@192.168.11.102
-
-# ... 全ノードで繰り返し
+# 実行サーバーの IP アドレスごとに上記を繰り返す
 ```
 
 **確認**:
 ```bash
-# パスワードなしで SSH 接続できることを確認
-ssh denjo@192.168.11.100 "echo 'SSH接続成功'"
-# → "SSH接続成功" と表示されれば OK
+# パスワードなしでリモートコマンドが実行できることを確認する
+ssh denjo@192.168.11.100 "echo 'Successfully connected via SSH'"
 ```
 
 **トラブルシューティング**:
@@ -149,52 +140,44 @@ sudo apt-get install -y jq sshpass
 
 #### ステップ 5: 設定ファイルの編集（コントロールサーバー）
 
-実験環境に合わせて設定ファイルを編集する．
+実験構成およびパラメータを自環境に合わせて調整する．
 
-**`ctrl/execution_config.json`** - インフラ設定:
+**`ctrl/execution_config.json`** - インフラ構成定義:
 
 ```json
 {
   "nodes": [
     {
       "name": 0,
-      "physical_ip": "192.168.11.100",  // 実際の IP アドレスに変更
+      "physical_ip": "192.168.11.100",  // 実際の IP アドレスへ変更する
       "container_port_ctrl": 10001,
       "host_port_ctrl": 10001,
       "host_port_p2p": 10002,
       "cpu_limit": "1.0"
-    },
-    {
-      "name": 1,
-      "physical_ip": "192.168.11.101",  // 実際の IP アドレスに変更
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 11001,
-      "host_port_p2p": 11002
     }
-    // ... 使用するノード数だけ追加
   ],
-  "deployment_location": "/home/denjo",  // 実際のパスに変更
-  "user": "denjo"  // 実際のユーザー名に変更
+  "deployment_location": "/home/denjo/wafl",  // デプロイ先パス
+  "user": "denjo"  // SSH ユーザー名
 }
 ```
 
-**`ctrl/parameters.json`** - 実験パラメータ:
+**`ctrl/parameters.json`** - 実験パラメータ定義:
 
 ```json
 {
   "epochs": {
-    "self": 64,      // 必要に応じて調整
-    "wafl": 4096     // 必要に応じて調整
+    "self": 64,
+    "wafl": 4096
   },
-  "contact_pattern": "rgg_n03_a1000_d10_s01.json",  // 生成したファイル名
+  "contact_pattern": "rgg_n03_a1000_d10_s01.json",
   "wafl_phase": {
     "batch_size": 32,
     "learning_rate": 0.001
   },
-  "method": {
-    "ssp": {"enabled": true, "ssp_threshold": 0.9},
-    "udp": {"enabled": false},
-    "compression": {"enabled": false}
+  "method": "udp",
+  "ssp": {
+    "enabled": true,
+    "ssp_threshold": 0.8
   }
 }
 ```
@@ -319,7 +302,7 @@ sudo ufw allow 22/tcp
 - [システムアーキテクチャ](architecture.md) - 設計とコンポーネント
 - [設定ガイド](configuration.md) - パラメータ詳細
 - [使用方法](usage.md) - 実験実行手順
-- [通信プロトコル詳細](protocol.md) - TCP/Dynamic/Fast モードの実装詳細
+- [通信プロトコル詳細](protocol.md) - TCP / UDP / Fast モードの実装詳細
 - [結果分析ガイド](analysis.md) - グラフ・レポートの解釈方法
 
 ---

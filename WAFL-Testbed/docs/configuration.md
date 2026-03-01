@@ -10,7 +10,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 
 ### 1. `ctrl/execution_config.json` - インフラ設定
 
-物理インフラ，ノードトポロジー，リソース制限を定義する．
+物理インフラの構成（IP アドレス，ポート番号），コンテナトポロジー，およびノードごとの CPU リソース制限を定義する．
 
 #### 設定例
 
@@ -80,13 +80,13 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
 
 ### 2. `ctrl/parameters.json` - 実験パラメータ
 
-実験設定，ハイパーパラメータ，ネットワーク条件，通信モードを定義する．
+機械学習のハイパーパラメータ，ネットワークエミュレーション条件，および通信プロトコルの動作モードを定義する．
 
 #### 設定例
 
 ```json
 {
-  "experiment_name": "Experiment 0: excellent (dynamic)",
+  "experiment_name": "Experiment 0: excellent (udp)",
   "epochs": {
     "self": 8,
     "wafl": 64
@@ -107,7 +107,7 @@ WAFL-Testbed は 2 つの主要 JSON 設定ファイルで構成される．
   "mobility_aware": {
     "enabled": false
   },
-  "method": "dynamic",
+  "method": "udp",
   "ssp": {
     "enabled": true,
     "ssp_threshold": 0.8
@@ -187,32 +187,32 @@ WAFL-Testbed は 3 つの通信モードを提供する．`method` パラメー�
 - パケットロス時は TCP 再送により復元
 - 高損失環境では再送遅延が累積しやすい
 
-#### 3.2 Dynamic モード
+#### 3.2 UDP モード
 
 ```json
 {
-  "method": "dynamic"
+  "method": "udp"
 }
 ```
 
-| 項目           | 内容                                 |
-| -------------- | ------------------------------------ |
-| **プロトコル** | UDP + zfec FEC                       |
-| **信頼性**     | FEC + Proactive NACK                 |
-| **圧縮**       | Adaptive（zlib/LZ4/none を動的選択） |
-| **FEC**        | ネットワーク品質に応じた適応的冗長度 |
-| **適用環境**   | 不安定なネットワーク環境             |
+| 項目           | 内容                                       |
+| -------------- | ------------------------------------------ |
+| **プロトコル** | UDP + zfec による FEC                      |
+| **信頼性**     | 適応的 FEC + Proactive NACK                |
+| **圧縮**       | Adaptive（zlib / LZ4 / none を動的に選択） |
+| **FEC**        | ネットワーク品質に応じた適応的冗長度調整   |
+| **適用環境**   | パケットロスが発生しやすい不安定な無線環境 |
 
 **特徴**:
-- ネットワーク状態を実測し，パラメータを自動調整
-- 高損失環境では FEC 冗長度を増加
-- 低帯域環境では圧縮を強化（zlib）
-- 高帯域環境では圧縮を軽減（LZ4）または無効化
+- 実行時にネットワーク状態を継続的に実測し，通信パラメータを最適化する．
+- パケット損失率が高い環境では，自動的に FEC のパリティパケット数を増やして再送を抑制する．
+- 通信帯域が狭い場合には zlib による高圧縮を行い，帯域が十分な場合には LZ4 等の低負荷な方式へ切り替える．
+- 以前は `dynamic` という名称で提供されていたモードに相当する．
 
-**内部パラメータ（自動調整）**:
-- FEC 冗長度: 損失率に応じて 6.25%〜25%
-- 圧縮方式: 帯域に応じて zlib/LZ4/none
-- ペーシング間隔: RTT に応じて動的調整
+**内部調整ロジック（自動）**:
+- FEC 冗長度: 損失率実測値に基づき 6.25 % 〜 25 % の範囲で調整する．
+- 圧縮アルゴリズム: 推定転送時間が最小となる方式（zlib / LZ4 / none）を選択する．
+- ペーシング機能: 送信パケットの間隔を制御し，ネットワーク輻輳を回避する．
 
 #### 3.3 Fast モード
 
@@ -222,36 +222,35 @@ WAFL-Testbed は 3 つの通信モードを提供する．`method` パラメー�
 }
 ```
 
-| 項目           | 内容                       |
-| -------------- | -------------------------- |
-| **プロトコル** | UDP + zfec FEC（高速設定） |
-| **信頼性**     | 最小限の FEC               |
-| **圧縮**       | LZ4（条件付きスキップ）    |
-| **FEC**        | 低冗長度（6.25%固定）      |
-| **適用環境**   | 高帯域・低損失環境         |
+| 項目           | 内容                             |
+| -------------- | -------------------------------- |
+| **プロトコル** | UDP + zfec による FEC (高速設定) |
+| **信頼性**     | 固定された最小限の FEC           |
+| **圧縮**       | LZ4（条件付きでスキップ）        |
+| **FEC**        | 低冗長度（6.25 % 固定）          |
+| **適用環境**   | 高帯域・低損失な良好な環境       |
 
 **特徴**:
-- 最小限のオーバーヘッドで高速転送を実現
-- 高帯域環境では圧縮をスキップ（帯域 > 50Mbps）
-- FEC 冗長度は固定で最小限
-- 損失率が高い環境では性能が劣化する可能性あり
+- オーバーヘッドを最小化することで，極めて高いスループットを実現する．
+- 推定帯域幅が 50 Mbps を超える良好な環境では，圧縮処理をスキップして遅延を短縮する．
+- ネットワーク品質が劣化した場合でも FEC 冗長度は増加しないため，損失率の高い環境には不向きである．
 
 #### 3 モードの比較
 
-| 比較項目           | TCP    | Dynamic        | Fast     |
-| ------------------ | ------ | -------------- | -------- |
-| **転送速度**       | 中     | 中〜高         | 高       |
-| **信頼性**         | 最高   | 高             | 中       |
-| **適応性**         | -      | 高             | 低       |
-| **オーバーヘッド** | 低     | 中             | 最低     |
-| **推奨損失率**     | 0%〜3% | 1%〜10%        | 0%〜2%   |
-| **推奨帯域**       | 任意   | 1Mbps〜100Mbps | 10Mbps〜 |
+| 項目                 | TCP        | UDP                | Fast       |
+| -------------------- | ---------- | ------------------ | ---------- |
+| **転送スループット** | 中         | 中 〜 高           | 最高       |
+| **通信信頼性**       | 最高       | 高                 | 中         |
+| **パラメータ適応性** | なし       | あり（動的）       | なし       |
+| **オーバーヘッド**   | 低         | 中                 | 最低       |
+| **動作可能損失率**   | 0 % 〜 3 % | 1 % 〜 10 %        | 0 % 〜 2 % |
+| **推奨通信帯域**     | 制限なし   | 1 Mbps 〜 100 Mbps | 10 Mbps 〜 |
 
 ---
 
 ### 4. SSP (Semi-Synchronous Protocol) の設定
 
-**目的**: 遅延ノードを切り捨てて学習速度を優先（1エポック以上の遅れは発生しない）
+**目的**: 各実行サーバがモデル交換時に自律的に分散型 SSP 制御を実行し，計算効率と学習速度を最適化する．
 
 ```json
 {
@@ -262,16 +261,16 @@ WAFL-Testbed は 3 つの通信モードを提供する．`method` パラメー�
 }
 ```
 
-| パラメータ      | 説明                     | 範囲           | 推奨値    |
-| --------------- | ------------------------ | -------------- | --------- |
-| `enabled`       | SSP 有効化               | `true`/`false` | -         |
-| `ssp_threshold` | 強制進行の閾値（完了率） | 0.0〜1.0       | 0.8〜0.95 |
+| パラメータ      | 説明                               | 範囲           | 推奨値      |
+| --------------- | ---------------------------------- | -------------- | ----------- |
+| `enabled`       | SSP 機能の有効化                   | `true`/`false` | -           |
+| `ssp_threshold` | 早期集約を開始するピア完了率の閾値 | 0.0 〜 1.0     | 0.8 〜 0.95 |
 
-**動作**:
-- 完了ノード数が `ノード総数 × ssp_threshold` に達したら，未完了ノードに `FORCE_NEXT` を送信
-- 未完了ノードは現在の計算を破棄して同じエポックにスキップ
-- これにより、1エポック以上遅れるノードは存在しない
-- 破棄された計算量（`wasted_ms`, `wasted_norm`）がログに記録される
+**同期動作の特性**:
+- 各実行サーバは `wafl_learn` のプロセスにおいて，通信中の各ピアの完了状況を監視する．
+- モデル受領済みのピア数が全体の `ssp_threshold` （百分率）に達した時点で，未完了の通信をすべて中断し，集約フェーズへと移行する．
+- 管理サーバは SSP 設定を周知するのみであり，同期タイミングの決定には一切関知しない完全分散型の制御方式を採用している．
+- 破棄された計算量や batches processed 等のメトリクスがログに詳細に記録され，効率性の分析に利用できる．
 
 **実験例**:
 | ノード数 | 閾値 | 強制進行タイミング |
@@ -331,14 +330,14 @@ TCP 通信を維持しつつ，遅延ノードを切り捨て．
 }
 ```
 
-#### シナリオ 3: Dynamic（劣化環境）
+#### シナリオ 3: UDP（劣化環境）
 
 不安定なネットワーク環境での適応的通信．
 
 ```json
 {
-  "experiment_name": "Dynamic Mode - Fair",
-  "method": "dynamic",
+  "experiment_name": "UDP Mode - Fair",
+  "method": "udp",
   "ssp": {"enabled": true, "ssp_threshold": 0.8},
   "network_condition": {"enabled": true, "delay": "50ms", "loss": "5%", "rate": "5mbit"}
 }
@@ -365,7 +364,7 @@ SUMO モビリティトレースに基づく動的ネットワーク条件．
 {
   "experiment_name": "Mobility-Aware Experiment",
   "contact_pattern": "sumo/contact_pattern_mobility.json",
-  "method": "dynamic",
+  "method": "udp",
   "ssp": {"enabled": true, "ssp_threshold": 0.8},
   "mobility_aware": {
     "enabled": true,
@@ -385,10 +384,10 @@ SUMO モビリティトレースに基づく動的ネットワーク条件．
 ```
 ctrl/parameters/
 ├── exp0_1-excellent-1-tcp.json
-├── exp0_1-excellent-3-dynamic.json
+├── exp0_1-excellent-3-udp.json
 ├── exp0_1-excellent-4-fast.json
 ├── exp0_2-good-1-tcp.json
-├── exp0_2-good-3-dynamic.json
+├── exp0_2-good-3-udp.json
 ...
 ```
 
@@ -431,24 +430,26 @@ Defines experiment settings, hyperparameters, network conditions, and algorithms
 ```
 Standard TCP connections, reliable but slower under packet loss.
 
-#### Dynamic Mode
+#### UDP Mode
 ```json
-{"method": "dynamic"}
+{"method": "udp"}
 ```
-Adaptive UDP+FEC with automatic parameter tuning based on network conditions.
+Adaptive UDP + FEC with automatic parameter tuning based on network conditions (previously termed 'dynamic').
 
 #### Fast Mode
 ```json
 {"method": "fast"}
 ```
-High-speed UDP+FEC optimized for high-bandwidth, low-loss environments.
+High-speed UDP + FEC optimized for high-bandwidth, low-loss environments.
 
 ---
 
 ### 4. SSP (Semi-Synchronous Protocol) Configuration
 
-- `ssp_threshold`: Completion rate threshold (0.0〜1.0)
-- When threshold is reached, slow nodes are force-skipped to ensure no node is more than 1 epoch behind
+- Each execution server autonomously manages SSP during model exchange
+- `ssp_threshold`: Peer completion rate threshold (0.0〜1.0)
+- When the threshold is reached, remaining model exchanges are cancelled
+- Control server only shares SSP configuration, no control involvement
 
 ---
 

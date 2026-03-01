@@ -16,52 +16,56 @@ WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は�
 
 #### 3 つの通信モード
 
-WAFL-Testbed は用途に応じて 3 つの通信モードを提供する：
+WAFL-Testbed は用途に応じて 3 つの通信モードを提供する．RUDP プロトコルは廃止され，現在は TCP，UDP，および Fast モードのみをサポートする．
 
-| モード      | 説明                                                                   | 適用環境                 |
-| ----------- | ---------------------------------------------------------------------- | ------------------------ |
-| **TCP**     | 標準 TCP 接続による信頼性重視の通信                                    | 安定したネットワーク環境 |
-| **Dynamic** | UDP+FEC による適応的通信（ネットワーク推定に基づくパラメータ自動調整） | 不安定なネットワーク環境 |
-| **Fast**    | UDP+FEC による高速通信（高帯域環境向け最適化）                         | 高帯域・低損失環境       |
+| モード   | 説明                                                                       | 適用環境                 |
+| -------- | -------------------------------------------------------------------------- | ------------------------ |
+| **TCP**  | 標準 TCP 接続による信頼性重視の通信．OS のスタックをそのまま使用する．     | 安定したネットワーク環境 |
+| **UDP**  | UDP + FEC による適応的通信．ネットワーク推定に基づき冗長度を自動調整する． | 不安定なネットワーク環境 |
+| **Fast** | UDP + FEC による高速通信．高帯域環境向けに最適化されたパラメータを使用．   | 高帯域・低損失環境       |
 
 詳細: [docs/protocol.md](docs/protocol.md)
 
-#### Semi-Synchronous Protocol (SSP) - Reset Model
+#### Semi-Synchronous Protocol (SSP) - Autonomous
 
-- 遅延ノードを切り捨てて学習速度を優先
-- 閾値 `ssp_threshold` で完了率を制御（例: 0.8 = 80% 完了で強制進行）
-- 1 エポック以上遅れるノードは存在しない設計
-- 破棄された計算量の詳細メトリクス（`wasted_ms`, `wasted_norm`, `batches_processed`）
+従来の中央集権型 SSP ではなく，各実行サーバが自律的に同期を制御する分散型 SSP を実装している．
+- 各実行サーバがモデル交換時に自律的に SSP 制御を実行する．
+- 閾値 `ssp_threshold` で完了率を制御する（例: 0.8 = 80 % のピアが完了した時点で残りをキャンセルする）．
+- 管理サーバは SSP 設定の共有のみを行い，実際の同期タイミング制御には関与しない．
+- 完了したピアから順次集約を開始するため，ストラグラー（遅延ノード）による全体的な停滞を回避できる．
+- 破棄された計算量の詳細メトリクス（`wasted_ms`，`wasted_norm`，`batches_processed`）を記録する．
 
 #### UDP + XOR-based FEC (Forward Error Correction)
 
-- TCP 再送遅延を回避した高速 UDP 通信
-- zfec ライブラリによる Block-based XOR 冗長パケット
-- ネットワーク品質に基づく適応的 FEC 冗長度調整
-- Proactive NACK による効率的なパケットロス回復
-- 生存率 (Survival Rate) と FEC 復元統計の記録
+パケットロスが発生しやすい無線環境において，再送による遅延を回避するために FEC を導入している．
+- zfec ライブラリによる Block-based XOR 冗長パケットを生成する．
+- $k$ 個のデータパケットに対して $m$ 個のパリティパケットを付加し，任意の $k$ 個を受信できれば復元可能である．
+- ネットワーク品質（損失率）に基づく適応的 FEC 冗長度調整（UDP モード）を行う．
+- パケット受信の停滞を検知して早期に再送を要求する Proactive NACK 機構を備える．
 
 #### Adaptive Compression
 
-- 帯域と計算負荷に応じた動的圧縮方式選択
-- サポート方式: None, LZ4 (高速), zlib (高圧縮)
-- 実測ベースの最適化: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
+通信帯域と CPU 負荷のトレードオフを考慮し，動的に圧縮方式を選択する．
+- サポート方式: None，LZ4 (高速)，zlib (高圧縮)
+- 数理モデルに基づく最適化: $T_{est} = T_{comp} + (Size_{comp} \times R) / BW$
+- ここで $R$ は FEC 冗長率，$BW$ は推定帯域，$T_{comp}$ は圧縮にかかる予測時間である．
 
 #### Mobility-Aware Network Emulation
 
-- SUMO シミュレーションによるモビリティトレース生成
-- ノード間距離に基づく動的ネットワーク品質エミュレーション
-- Per-Peer Limitation: HTB + Filter による相手ごとのネットワーク制限
-- 4 段階品質ランク（Excellent/Good/Fair/Poor）
+移動体通信環境をシミュレートするため，SUMO と Linux の制御機能を統合している．
+- SUMO シミュレーションからのモビリティトレースをパースする．
+- ノード間距離に基づく動的ネットワーク品質エミュレーションを行う．
+- HTB (Hierarchical Token Bucket) とフィルタを用いて，宛先（ピア）ごとに独立した帯域制限・遅延・損失を適用する．
+- 4 段階の品質ランク（Excellent/Good/Fair/Poor）に基づき，パラメータを動的に変更する．
 - 詳細: [docs/mobility_aware.md](docs/mobility_aware.md)
 
 #### トポロジー生成
 
-| モデル                           | 説明                                                      | ツール                           |
-| -------------------------------- | --------------------------------------------------------- | -------------------------------- |
-| **Random Waypoint (RWP)**        | ノードが移動し続ける標準的な WAFL シナリオ                | `utils/generate_rwp_topology.py` |
-| **Random Geometric Graph (RGG)** | 静的トポロジー（Dense: 平均次数≥10 / Sparse: 平均次数≤4） | `utils/generate_rgg_topology.py` |
-| **SUMO Mobility Trace**          | SUMO シミュレーションからのリアルな移動パターン           | `mise sumo`                      |
+| モデル                           | 説明                                                         | ツール                           |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------------- |
+| **Random Waypoint (RWP)**        | ノードが一定速度で移動し続ける動的シナリオ用                 | `utils/generate_rwp_topology.py` |
+| **Random Geometric Graph (RGG)** | 位置固定の静的トポロジー（Dense: 平均次数 ≥ 10 / Sparse: 4） | `utils/generate_rgg_topology.py` |
+| **SUMO Mobility Trace**          | 実地図データに基づくリアルな移動パターン                     | `mise sumo` / `mise sumo-osm`    |
 
 ### クイックスタート
 
@@ -142,7 +146,7 @@ ssh-copy-id denjo@192.168.11.101
     "delay": "50ms",
     "loss": "3%"
   },
-  "method": "dynamic",
+  "method": "udp",
   "ssp": {
     "enabled": true,
     "ssp_threshold": 0.8
@@ -203,8 +207,7 @@ WAFL-Testbed/
 ├── wafl/                   # 実行エージェント
 │   ├── src/common/
 │   │   ├── main.py         # エージェントメイン
-│   │   ├── udp_model_sharing.py  # UDP/FEC 実装
-│   │   ├── rudp_protocol.py      # RUDP プロトコル
+│   │   ├── udp_model_sharing.py  # UDP / FEC 実装
 │   │   ├── compression_manager.py  # Adaptive Compression
 │   │   ├── network_estimator.py    # ネットワーク状態推定
 │   │   └── logger.py       # 構造化ログ
@@ -229,7 +232,7 @@ WAFL-Testbed/
 | [セットアップガイド](docs/setup.md)            | インストールと初期設定            |
 | [設定ガイド](docs/configuration.md)            | パラメータ詳細                    |
 | [使用方法](docs/usage.md)                      | 実験実行手順                      |
-| [通信プロトコル詳細](docs/protocol.md)         | TCP/Dynamic/Fast モードの実装詳細 |
+| [通信プロトコル詳細](docs/protocol.md)         | TCP / UDP / Fast モードの実装詳細 |
 | [結果分析ガイド](docs/analysis.md)             | グラフ・レポートの解釈方法        |
 | [モビリティ対応機能](docs/mobility_aware.md)   | SUMO 統合と動的ネットワーク制御   |
 
@@ -267,19 +270,19 @@ Unlike traditional simulation-based research, this testbed quantifies **real-wor
 
 WAFL-Testbed provides three communication modes for different use cases:
 
-| Mode        | Description                                                                                | Use Case                              |
-| ----------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| **TCP**     | Reliable communication via standard TCP connections                                        | Stable network environments           |
-| **Dynamic** | Adaptive UDP+FEC communication with automatic parameter tuning based on network estimation | Unstable network environments         |
-| **Fast**    | High-speed UDP+FEC communication optimized for high-bandwidth environments                 | High-bandwidth, low-loss environments |
+| Mode     | Description                                                                             | Use Case                              |
+| -------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| **TCP**  | Model exchange via standard TCP connections with full OS network stack                  | Stable network environments           |
+| **UDP**  | Adaptive UDP + FEC communication with parameter auto-tuning based on network estimation | Unstable network environments         |
+| **Fast** | High-speed UDP + FEC communication optimized for high-bandwidth paths                   | High-bandwidth, low-loss environments |
 
 Details: [docs/protocol.md](docs/protocol.md)
 
-#### Semi-Synchronous Protocol (SSP) - Reset Model
+#### Semi-Synchronous Protocol (SSP) - Autonomous
 
-- Prioritizes learning speed by discarding slow nodes
-- Configurable threshold `ssp_threshold` (e.g., 0.8 = force progress at 80% completion)
-- Design ensures no node ever falls more than 1 epoch behind
+- Each execution server autonomously manages SSP during model exchange
+- Configurable threshold `ssp_threshold` (e.g., 0.8 = cancel remaining exchanges when 80% of peers complete)
+- Control server only shares SSP configuration, no control involvement
 - Detailed wasted computation metrics (`wasted_ms`, `wasted_norm`, `batches_processed`)
 
 #### UDP + XOR-based FEC (Forward Error Correction)
@@ -391,7 +394,7 @@ ssh-copy-id denjo@192.168.11.101
     "delay": "50ms",
     "loss": "3%"
   },
-  "method": "dynamic",
+  "method": "udp",
   "ssp": {
     "enabled": true,
     "ssp_threshold": 0.8
@@ -440,9 +443,9 @@ WAFL-Testbed/
 │   ├── protocol.md         # Communication protocol details
 │   ├── analysis.md         # Results analysis guide
 │   └── mobility_aware.md   # Mobility-aware features
-├── ctrl/                   # Control Server
-│   ├── main.py             # Orchestrator
-│   ├── deploy.py           # Deployment script
+├── ctrl/                   # Control Server (Management)
+│   ├── main.py             # Server main orchestrator
+│   ├── deploy.py           # Deployment agent (SSH/Docker)
 │   ├── analyze.py          # Results analysis & graph generation
 │   ├── verify.py           # Configuration verification & benchmarks
 │   ├── run_experiments.py  # Automated multi-experiment execution
@@ -452,8 +455,7 @@ WAFL-Testbed/
 ├── wafl/                   # Execution Agents
 │   ├── src/common/
 │   │   ├── main.py         # Agent main
-│   │   ├── udp_model_sharing.py  # UDP/FEC implementation
-│   │   ├── rudp_protocol.py      # RUDP protocol
+│   │   ├── udp_model_sharing.py  # UDP / FEC implementation
 │   │   ├── compression_manager.py  # Adaptive Compression
 │   │   ├── network_estimator.py    # Network state estimation
 │   │   └── logger.py       # Structured logging
@@ -478,7 +480,7 @@ WAFL-Testbed/
 | [Setup Guide](docs/setup.md)                       | Installation and initial setup               |
 | [Configuration Guide](docs/configuration.md)       | Parameter details                            |
 | [Usage Guide](docs/usage.md)                       | Experiment execution                         |
-| [Communication Protocol Details](docs/protocol.md) | TCP/Dynamic/Fast mode implementation details |
+| [Communication Protocol Details](docs/protocol.md) | TCP / UDP / Fast mode implementation details |
 | [Results Analysis Guide](docs/analysis.md)         | Graph and report interpretation              |
 | [Mobility-Aware Features](docs/mobility_aware.md)  | SUMO integration and dynamic network control |
 

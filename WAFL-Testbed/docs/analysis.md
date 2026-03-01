@@ -15,14 +15,15 @@ WAFL-Testbed は `ctrl/analyze.py` を通じて包括的な結果分析とグラ
 #### 1.1 基本的な実行方法
 
 ```bash
-# 推奨: mise タスク経由で実行
+# 推奨: mise タスク経由で実行する
 mise analyze
 ```
 
-このコマンドは以下を順次実行する：
-1. 全ノードから結果を収集（SSH 経由）
-2. ローカルに rsync でダウンロード
-3. グラフ生成と分析レポート作成
+このコマンドを実行すると，背後で以下のプロセスが自動的に進行する．
+1. **結果の収集**: 全ノードに対し，SSH 接続を確立して実行結果（ログ，メトリクス，チェックポイント等）を走査する．
+2. **データの同期**: `rsync` を用いて，各ノードの成果物を管理サーバーの `results/` ディレクトリ配下へダウンロードする．
+3. **分析の実行**: 収集された JSON Lines 形式のログをパースし，時系列データの集計，統計計算，およびグラフ生成を実行する．
+4. **レポートの出力**: 分析結果を要約した Markdown 形式のレポートと，統合された CSV ファイルを生成する．
 
 #### 1.2 analyze.py のオプション
 
@@ -78,18 +79,18 @@ results/
 
 #### 3.1 グラフ一覧
 
-| グラフ名               | ファイル名               | 説明                 | フェーズ  |
-| ---------------------- | ------------------------ | -------------------- | --------- |
-| **Test Accuracy**      | `test_accuracy.png`      | テスト精度の推移     | SELF+WAFL |
-| **Epoch Duration**     | `epoch_duration.png`     | エポック所要時間     | SELF+WAFL |
-| **Idle Time Ratio**    | `idle_time_ratio.png`    | アイドル時間比率     | WAFL      |
-| **Wasted Computation** | `wasted_computation.png` | SSP による破棄計算量 | WAFL      |
-| **Survival Rate**      | `survival_rate.png`      | モデル生存率         | WAFL      |
-| **Goodput**            | `goodput.png`            | 有効スループット     | WAFL      |
-| **Traffic Volume**     | `traffic_volume.png`     | トラフィック量       | WAFL      |
-| **Asymmetry**          | `asymmetry.png`          | モデル受信分布       | WAFL      |
-| **Survivor Quality**   | `survivor_quality.png`   | 生存者品質分析       | WAFL      |
-| **Network Quality**    | `network_quality.png`    | ネットワーク品質分布 | WAFL      |
+| グラフ名               | ファイル名               | 説明                                                         | フェーズ  |
+| ---------------------- | ------------------------ | ------------------------------------------------------------ | --------- |
+| **Test Accuracy**      | `test_accuracy.png`      | 各エージェントおよび平均のテスト精度の推移をプロットする．   | SELF+WAFL |
+| **Epoch Duration**     | `epoch_duration.png`     | 学習，通信，待機の各要素を含むエポック所要時間を表示する．   | SELF+WAFL |
+| **Idle Time Ratio**    | `idle_time_ratio.png`    | エポック全体に対する同期待機時間の割合を可視化する．         | WAFL      |
+| **Wasted Computation** | `wasted_computation.png` | SSP による早期終了で破棄された計算量を定量化する．           | WAFL      |
+| **Survival Rate**      | `survival_rate.png`      | モデル交換が正常に完了した割合（P2P 生存率）を示す．         | WAFL      |
+| **Goodput**            | `goodput.png`            | アプリケーション層で実効的に得られた通信速度をプロットする． | WAFL      |
+| **Traffic Volume**     | `traffic_volume.png`     | 通信路を流れた物理的な総トラフィック量を表示する．           | WAFL      |
+| **Asymmetry**          | `asymmetry.png`          | ノード間でのモデル受信数の偏りをヒートマップ等で示す．       | WAFL      |
+| **Survivor Quality**   | `survivor_quality.png`   | 通信に成功したモデルが学習に与えた寄与度を分析する．         | WAFL      |
+| **Network Quality**    | `network_quality.png`    | 実験中に全ペアが経験したネットワーク品質ランクの分布．       | WAFL      |
 
 #### 3.2 Test Accuracy
 
@@ -143,15 +144,15 @@ xychart-beta
 
 #### 3.4 Survival Rate
 
-**説明**: UDP/FEC モードでのモデル生存率をプロット．
+**説明**: UDP / FEC（UDP または Fast モード）におけるモデル交換の成功率をプロットする．
 
 **定義**:
-$$\text{Survival Rate} = \frac{\text{成功した転送数}}{\text{試行した転送数}}$$
+$$\text{Survival Rate} = \frac{\text{復元に成功したモデル転送数}}{\text{試行された総転送数}}$$
 
 **解釈**:
-- 100% = 全転送成功
-- 低下 = パケットロスにより FEC 復元失敗
-- Dynamic モードでは FEC 冗長度調整により改善が期待される
+- 値が 1.0 (100 %) であれば，全てのモデル交換が正常に完了していることを意味する．
+- パケットロスが FEC 冗長度を超過した場合，この値が低下する．
+- UDP モードでは，`NetworkEstimator` による適応的冗長度調整が機能することで，高損失環境においても高い生存率を維持することが期待される．
 
 #### 3.5 Goodput
 
@@ -193,7 +194,7 @@ $$\text{Goodput} = \frac{\text{有効データ量 (bytes)}}{\text{転送時間 (
 - **Cumulative**: 累積トラフィック
 
 **解釈**:
-- Dynamic/Fast モードでは FEC オーバーヘッドが加算
+- UDP / Fast モードでは FEC オーバーヘッドが加算
 - 圧縮が有効な場合はトラフィック削減
 
 #### 3.8 Asymmetry
@@ -292,34 +293,34 @@ python ctrl/analyze.py --compare --condition excellent
 # Comparison Report: Experiment 0 (excellent)
 
 ## Experiment Overview
-| Experiment                 | Method  | Network   | Nodes | WAFL Epochs |
-| -------------------------- | ------- | --------- | ----- | ----------- |
-| exp0_1-excellent-1-tcp     | TCP     | Excellent | 50    | 64          |
-| exp0_1-excellent-3-dynamic | Dynamic | Excellent | 50    | 64          |
-| exp0_1-excellent-4-fast    | Fast    | Excellent | 50    | 64          |
+| Experiment              | Method | Network   | Nodes | WAFL Epochs |
+| ----------------------- | ------ | --------- | ----- | ----------- |
+| exp0_1-excellent-1-tcp  | TCP    | Excellent | 50    | 64          |
+| exp0_1-excellent-3-udp  | UDP    | Excellent | 50    | 64          |
+| exp0_1-excellent-4-fast | Fast   | Excellent | 50    | 64          |
 
 ## Performance Comparison
 
 ### Final Accuracy
-| Method  | Mean ± Std    | Min   | Max   |
-| ------- | ------------- | ----- | ----- |
-| TCP     | 0.923 ± 0.006 | 0.912 | 0.934 |
-| Dynamic | 0.921 ± 0.007 | 0.908 | 0.931 |
-| Fast    | 0.919 ± 0.008 | 0.905 | 0.929 |
+| Method | Mean ± Std    | Min   | Max   |
+| ------ | ------------- | ----- | ----- |
+| TCP    | 0.923 ± 0.006 | 0.912 | 0.934 |
+| UDP    | 0.921 ± 0.007 | 0.908 | 0.931 |
+| Fast   | 0.919 ± 0.008 | 0.905 | 0.929 |
 
 ### Epoch Duration (WAFL Phase Mean)
-| Method  | Duration (s) | Speedup vs TCP |
-| ------- | ------------ | -------------- |
-| TCP     | 15.2         | 1.00x          |
-| Dynamic | 12.8         | 1.19x          |
-| Fast    | 10.5         | 1.45x          |
+| Method | Duration (s) | Speedup vs TCP |
+| ------ | ------------ | -------------- |
+| TCP    | 15.2         | 1.00 x         |
+| UDP    | 12.8         | 1.19 x         |
+| Fast   | 10.5         | 1.45 x         |
 
 ### Survival Rate
-| Method  | Mean  | Min   |
-| ------- | ----- | ----- |
-| TCP     | 1.000 | 1.000 |
-| Dynamic | 0.985 | 0.923 |
-| Fast    | 0.978 | 0.912 |
+| Method | Mean  | Min   |
+| ------ | ----- | ----- |
+| TCP    | 1.000 | 1.000 |
+| UDP    | 0.985 | 0.923 |
+| Fast   | 0.978 | 0.912 |
 ```
 
 ---
