@@ -94,6 +94,12 @@ class MetricsLogger:
         # Initialize header with all columns
         self._init_csv()
 
+        # Check if WandB should be used
+        self.use_wandb = os.environ.get("WANDB_API_KEY") is not None
+        if not self.use_wandb:
+            print("WANDB_API_KEY not found. WandB logging is disabled.")
+            return
+
         # Initialize WandB
         try:
             wandb.init(
@@ -132,16 +138,17 @@ class MetricsLogger:
             os.fsync(f.fileno())
 
         # Log to WandB with explicit step to avoid misalignment on SSP skips
-        try:
-            # Use epoch as the step to ensure consistent x-axis in WandB graphs
-            # This prevents step/epoch mismatch when FORCE_NEXT creates extra log entries
-            epoch_step = entry.get("epoch", None)
-            if epoch_step is not None:
-                wandb.log(entry, step=int(epoch_step))
-            else:
-                wandb.log(entry)
-        except Exception:
-            pass
+        if self.use_wandb:
+            try:
+                # Use epoch as the step to ensure consistent x-axis in WandB graphs
+                # This prevents step/epoch mismatch when FORCE_NEXT creates extra log entries
+                epoch_step = entry.get("epoch", None)
+                if epoch_step is not None:
+                    wandb.log(entry, step=int(epoch_step))
+                else:
+                    wandb.log(entry)
+            except Exception:
+                pass
 
     def log_epoch(self, phase: str, epoch: int, metrics: dict):
         """Log all metrics for an epoch to CSV.

@@ -4298,20 +4298,20 @@ def _generate_epoch_breakdown_comparison(experiments_data, group_name, output_di
         if "Experiment 4" in group_name:
             # Swap name format: Role (Method) -> Method (Role)
             if "Traditional (TCP)" in short_name:
-                short_name = "TCP (Traditional)"
+                short_name = "TCP + BSP (baseline)"
             elif "Competitor (TCP + SSP)" in short_name:
-                short_name = "TCP + SSP (Competitor)"
+                short_name = "TCP + SSP"
             elif "Proposed (WAFL-Fast + SSP)" in short_name:
-                short_name = "WAFL-Fast + SSP (Proposed)"
+                short_name = "WAFL-Fast + SSP (ours)"
 
-        breakdown_data.append({"Method": short_name, "Compute Time": avg_compute, "Comm Time": avg_comm})
+        breakdown_data.append({"Method": short_name, "Time for Local Training": avg_compute, "Time for Communication": avg_comm})
 
     if not breakdown_data:
         return
 
     # Custom sort for Experiment 4
     if "Experiment 4" in group_name:
-        order_map = {"TCP (Traditional)": 0, "TCP + SSP (Competitor)": 1, "WAFL-Fast + SSP (Proposed)": 2}
+        order_map = {"TCP + BSP (baseline)": 0, "TCP + SSP": 1, "WAFL-Fast + SSP (ours)": 2}
         # Sort breakdown_data based on the map, default to infinity if not found
         breakdown_data.sort(key=lambda x: order_map.get(x["Method"], float("inf")))
 
@@ -4324,16 +4324,16 @@ def _generate_epoch_breakdown_comparison(experiments_data, group_name, output_di
     colors = [COLORS["bar_primary"], COLORS["bar_secondary"]]
     df.plot(kind="bar", stacked=True, color=colors, ax=ax, alpha=0.9, width=0.6)
 
-    ax.set_ylabel("Time [s]", fontsize=14)
-    ax.set_xlabel("Method", fontsize=14)
-    ax.set_title("Epoch Duration Breakdown", fontsize=16)
+    ax.set_ylabel("Time [s]", fontsize=16)
+    ax.set_xlabel("Method", fontsize=16)
+    ax.set_title("Epoch Duration Breakdown", fontsize=18)
 
     # X-axis formatting
-    ax.tick_params(axis="x", rotation=0, labelsize=12)
-    ax.tick_params(axis="y", labelsize=12)
+    ax.tick_params(axis="x", rotation=0, labelsize=16)
+    ax.tick_params(axis="y", labelsize=16)
 
     # Legend
-    ax.legend(title="Component", fontsize=12, loc="upper left")
+    ax.legend(fontsize=16, loc="lower right")
 
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()

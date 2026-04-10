@@ -6,6 +6,16 @@
 
 ## 日本語版
 
+### システム構成
+
+WAFL-Testbed は，以下の 3 階層の環境で構成される．セットアップの際は，各サーバーの役割を理解しておくことが重要である．
+
+1.  **開発環境 (Local PC / Workstation)**: あなたの手元のマシン．コードの編集や実験パラメータの設定を行い，`mise deploy` によって管理サーバーへ同期する．
+2.  **管理サーバー (Management / Control Server)**: 実験全体の司令塔．開発環境から送られたコードを元に Docker イメージをビルドし，全実行サーバーへ配布・制御する．
+3.  **実行サーバー (Execution Nodes / Agents)**: 実際に学習コンテナが動作するマシン．管理サーバーから配布されたイメージを実行し，ノード間でモデル交換を行う．
+
+Detailed: [docs/architecture.md](architecture.md)
+
 ### 前提条件
 
 #### コントロールサーバー
@@ -138,7 +148,28 @@ bash ctrl/setup.sh
 sudo apt-get install -y jq sshpass
 ```
 
-#### ステップ 5: 設定ファイルの編集（コントロールサーバー）
+#### ステップ 5: 環境変数の設定 (.env)
+
+プロジェクトのルートディレクトリに `.env` ファイルを作成し，必要な環境変数を設定する．
+
+```bash
+cp .env.sample .env  # サンプルがある場合
+# または直接エディタで作成する
+```
+
+**設定項目**:
+
+- **Docker Hub 認証 (任意)**:
+  - `DOCKER_HUB_USERNAME`, `DOCKER_HUB_PASSWORD`
+  - プライベートイメージの利用時に必要となる．設定しない場合は，ノードセットアップ時の Docker Hub ログイン（Phase 4）は自動的にスキップされる．
+- **WandB 連携 (任意)**:
+  - `WANDB_API_KEY`
+  - 実験メトリクスを [Weights & Biases](https://wandb.ai/) にアップロードする場合に設定する．設定しない場合は，WandB へのログ送信は無効化され，ローカルの CSV ファイルにのみ詳細ログが記録される．
+- **デプロイ設定**:
+  - `DEPLOY_CTRL_SERVER_USER`, `DEPLOY_CTRL_SERVER_HOST`, `DEPLOY_CTRL_SERVER_DIST`
+  - `mise deploy` 等でリモートの管理サーバーへファイルを同期する際に使用される．
+
+#### ステップ 6: 設定ファイルの編集（コントロールサーバー）
 
 実験構成およびパラメータを自環境に合わせて調整する．
 
@@ -182,7 +213,7 @@ sudo apt-get install -y jq sshpass
 }
 ```
 
-#### ステップ 6: データセットとトポロジーの生成（コントロールサーバー）
+#### ステップ 7: データセットとトポロジーの生成（コントロールサーバー）
 
 **トポロジー生成**:
 
@@ -194,7 +225,7 @@ python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense --r
 python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density sparse --randomseed 1
 
 # RWP (移動あり)
-python utils/generate_rwp_topology.py --nodes 3 --times 100
+python utils/generate_rwp_topology.py --times 128 --nodes 10 --areasize 1000 --animation
 ```
 
 生成されたファイルは `data/contact_pattern/` に保存される．
@@ -202,14 +233,14 @@ python utils/generate_rwp_topology.py --nodes 3 --times 100
 **データセット生成（初回のみ）**:
 
 ```bash
+# Non-IID フィルター生成
+python utils/generate_nonIID_filters.py --nodes 3
+
 # Non-IID MNIST データセット生成
 python utils/generate_datasets.py
-
-# Non-IID フィルター生成
-python utils/generate_nonIID_filters.py --ratio 50
 ```
 
-#### ステップ 7: 疎通確認テスト
+#### ステップ 8: 疎通確認テスト
 
 小規模な設定（2〜3 ノード，10 エポック程度）で動作確認を行う．
 
@@ -309,6 +340,18 @@ sudo ufw allow 22/tcp
 
 ## English Version
 
+### System Configuration
+
+WAFL-Testbed consists of the following three tiers. It is important to understand the role of each server during setup.
+
+1.  **Development Environment (Local PC / Workstation)**: Your local machine. You edit code and experiment parameters, then sync them to the management server via `mise deploy`.
+2.  **Management Server (Management / Control Server)**: The orchestrator of the experiment. It builds Docker images from the code sent from the development environment, and distributes/controls them across all execution servers.
+3.  **Execution Servers (Nodes / Agents)**: Machines where the training containers actually run. They execute the images distributed by the management server and exchange models between nodes.
+
+Detailed: [docs/architecture.md](architecture.md)
+
+---
+
 ### Prerequisites
 
 **Control Server**:
@@ -372,18 +415,25 @@ This script automatically:
 sudo apt-get install -y jq sshpass
 ```
 
-#### Step 5: Edit Configuration Files
+#### Step 5: Environment Variables (.env)
+
+Create a `.env` file in the root directory.
+
+- **Docker Hub (Optional)**: `DOCKER_HUB_USERNAME`, `DOCKER_HUB_PASSWORD`. Skip login if not provided.
+- **WandB (Optional)**: `WANDB_API_KEY`. WandB features will be disabled if not provided.
+
+#### Step 6: Edit Configuration Files
 
 Edit `ctrl/execution_config.json` and `ctrl/parameters.json` according to your environment.
 
-#### Step 6: Generate Datasets and Topology
+#### Step 7: Generate Datasets and Topology
 
 ```bash
 python utils/generate_rgg_topology.py --nodes 3 --epochs 100 --density dense
 python utils/generate_datasets.py
 ```
 
-#### Step 7: Verification Test
+#### Step 8: Verification Test
 
 ```bash
 mise deploy

@@ -8,6 +8,7 @@ mise.file = ".env"
 [tasks.rsync]
 description = "Sync project files to management server (optimized single rsync call)"
 run = [
+  "ssh ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST} \"mkdir -p ${DEPLOY_CTRL_SERVER_DIST}\"",
   "rsync -arhvz --progress --delete --inplace ./.env ./mise.toml ./uv.lock ./pyproject.toml ./Dockerfile ./.dockerignore ./ctrl ./wafl ./data ./utils ${DEPLOY_CTRL_SERVER_USER}@${DEPLOY_CTRL_SERVER_HOST}:${DEPLOY_CTRL_SERVER_DIST}/",
 ]
 

@@ -10,7 +10,20 @@
 
 WAFL-Testbed（物理・コンテナハイブリッドテストベッド）は，大規模実環境無線アドホック連合学習（WAFL: Wireless Ad-hoc Federated Learning）における同期方式・通信プロトコルのスケーラビリティと信頼性を実機ベースで評価するための研究プラットフォームである．
 
-従来のシミュレーションベース研究では見えなかった**実環境固有の制約**（OS・ネットワークスタックの遅延，物理リソース競合，同期待ち時間の指数関数的増大）を定量化し，実用的な設計指針を提供する．
+従来の実環境では見えなかった**実環境固有の制約**（OS・ネットワークスタックの遅延，物理リソース競合，同期待ち時間の指数関数的増大）を定量化し，実用的な設計指針を提供する．
+
+### デプロイ構成
+
+```mermaid
+flowchart LR
+    Dev["1. 開発環境<br/>(Local PC)"] -- "rsync" --> Mgmt["2. 管理サーバ<br/>(Orchestrator)"]
+    Mgmt -- "docker build/push" --> Mgmt
+    Mgmt -- "SSH/docker pull" --> Exec["3. 実行サーバ群<br/>(Training Nodes)"]
+```
+
+1.  **開発環境**: コード編集・パラメータ調整を行い，`mise deploy` で管理サーバへ同期する．
+2.  **管理サーバ**: 実験を制御し，Docker イメージをビルド・配布する．
+3.  **実行サーバ**: 実際にコンテナを起動し，連合学習を実行する．
 
 ### 主要機能
 
@@ -110,7 +123,15 @@ ssh-copy-id denjo@192.168.11.101
 # ... 全ノードで繰り返し
 ```
 
-#### 4. 設定ファイル編集
+#### 4. 環境変数の設定
+
+ルートディレクトリに `.env` ファイルを作成する．WandB や Docker Hub の認証情報は任意である．
+
+```bash
+cp .env.sample .env
+```
+
+#### 5. 設定ファイル編集
 
 **`ctrl/execution_config.json`** - インフラ設定:
 ```json
@@ -119,9 +140,6 @@ ssh-copy-id denjo@192.168.11.101
     {
       "name": 0,
       "physical_ip": "192.168.11.100",
-      "container_port_ctrl": 10001,
-      "host_port_ctrl": 10001,
-      "host_port_p2p": 10002,
       "cpu_limit": "1.0"
     }
   ],
@@ -154,7 +172,7 @@ ssh-copy-id denjo@192.168.11.101
 }
 ```
 
-#### 5. 実験実行
+#### 6. 実験実行
 
 ```bash
 # トポロジー生成（初回のみ）
@@ -264,6 +282,19 @@ WAFL-Testbed is a research platform for evaluating the **scalability and reliabi
 
 Unlike traditional simulation-based research, this testbed quantifies **real-world constraints** invisible in simulators: OS/network stack latency, physical resource contention, and exponential synchronization overhead growth.
 
+### Deployment Architecture
+
+```mermaid
+flowchart LR
+    Dev["1. Dev Environment<br/>(Local PC)"] -- "rsync" --> Mgmt["2. Mgmt Server<br/>(Orchestrator)"]
+    Mgmt -- "docker build/push" --> Mgmt
+    Mgmt -- "SSH/docker pull" --> Exec["3. Execution Servers<br/>(Training Nodes)"]
+```
+
+1.  **Dev Environment**: Edit code and parameters, then sync to the Management Server via `mise deploy`.
+2.  **Management Server**: Controls the experiment and handles Docker image builds and distribution.
+3.  **Execution Servers**: Launch containers and execute Federated Learning.
+
 ### Key Features
 
 #### Three Communication Modes
@@ -358,7 +389,15 @@ ssh-copy-id denjo@192.168.11.101
 # ... repeat for all nodes
 ```
 
-#### 4. Edit Configuration Files
+#### 4. Environment Variables
+
+Create a `.env` file in the root directory.
+
+```bash
+cp .env.sample .env
+```
+
+#### 5. Edit Configuration Files
 
 **`ctrl/execution_config.json`** - Infrastructure:
 ```json
@@ -402,7 +441,7 @@ ssh-copy-id denjo@192.168.11.101
 }
 ```
 
-#### 5. Run Experiment
+#### 6. Run Experiment
 
 ```bash
 # Generate topology (first time only)

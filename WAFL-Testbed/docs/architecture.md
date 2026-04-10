@@ -55,6 +55,30 @@ flowchart TB
 
 ---
 
+### 3 階層のデプロイメント構成
+
+WAFL-Testbed は，効率的な実験開発と大規模な制御を両立するため，以下の 3 階層で構成される．
+
+```mermaid
+flowchart LR
+    Dev["1. 開発環境<br/>(Local PC / Workstation)"]
+    Mgmt["2. 管理サーバー<br/>(Management / Control Server)"]
+    Exec["3. 実行サーバー群<br/>(Execution Nodes / Agents)"]
+
+    Dev -- "rsync (mise deploy)" --> Mgmt
+    Mgmt -- "docker build / push" --> Mgmt
+    Mgmt -- "docker pull / run" --> Exec
+    Mgmt -- "SSH control (ctrl/main.py)" --> Exec
+```
+
+| 階層                | 役割                     | 主要タスク                                                                                    |
+| :------------------ | :----------------------- | :-------------------------------------------------------------------------------------------- |
+| **1. 開発環境**     | コード編集・デプロイ指示 | 実験パラメータ設定，ソースコード修正，`mise deploy` の実行                                    |
+| **2. 管理サーバー** | 集中制御・イメージ配布   | コードの集約，Docker イメージのビルド，ローカルレジストリのホスト，実験のオーケストレーション |
+| **3. 実行サーバー** | 演算・モデル学習         | 学習コンテナの実行，P2P 通信，メトリクスの出力                                                |
+
+---
+
 ### システムコンポーネント
 
 #### 1. コントロールサーバー (Control Server)
@@ -386,6 +410,32 @@ flowchart TD
 ### Overview
 
 WAFL-Testbed is a research platform for emulating Device-to-Device (D2D) Federated Learning over real TCP/IP networks. It quantifies **real-world constraints** difficult to reproduce in simulations: OS-layer latency, physical resource contention, and network stack behavior.
+
+---
+
+### 3-Tier Deployment Architecture
+
+To balance efficient development and large-scale control, WAFL-Testbed is structured in three tiers:
+
+```mermaid
+flowchart LR
+    Dev["1. Development Environment<br/>(Local PC / Workstation)"]
+    Mgmt["2. Management Server<br/>(Control Server)"]
+    Exec["3. Execution Servers<br/>(Nodes / Agents)"]
+
+    Dev -- "rsync (mise deploy)" --> Mgmt
+    Mgmt -- "docker build / push" --> Mgmt
+    Mgmt -- "docker pull / run" --> Exec
+    Mgmt -- "SSH control (ctrl/main.py)" --> Exec
+```
+
+| Tier                     | Role                         | Key Tasks                                                             |
+| :----------------------- | :--------------------------- | :-------------------------------------------------------------------- |
+| **1. Dev Environment**   | Code editing & Deployment    | Config parameters, code changes, executing `mise deploy`              |
+| **2. Management Server** | Control & Image Distribution | Code aggregation, Docker build, hosting local registry, orchestration |
+| **3. Execution Servers** | Training & Computation       | Running training containers, P2P communication, metrics output        |
+
+---
 
 ### System Components
 

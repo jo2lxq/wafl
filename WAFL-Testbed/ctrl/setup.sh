@@ -10,6 +10,7 @@
 #   1. Sudo 権限でパスワード不要設定
 #   2. 必要なパッケージのインストール
 #   3. ホスト設定（Chrony, Docker, Kernel）
+#   4. デプロイ先ディレクトリのクリア
 # ==========================================
 
 set -e  # エラー時に即座に終了
@@ -100,9 +101,11 @@ source "$ENV_FILE"
 set +a
 
 # Docker Hub 認証情報の確認
+SKIP_DOCKER_LOGIN=0
 if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
-    echo -e "${RED}Error: DOCKER_HUB_USERNAME or DOCKER_HUB_PASSWORD is not set in $ENV_FILE${NC}"
-    exit 1
+    echo -e "${YELLOW}Warning: DOCKER_HUB_USERNAME or DOCKER_HUB_PASSWORD is not set in $ENV_FILE${NC}"
+    echo -e "${YELLOW}Phase 4 (Docker Hub login) will be skipped.${NC}"
+    SKIP_DOCKER_LOGIN=1
 fi
 
 # ==========================================
@@ -135,42 +138,6 @@ export SSH_PASSWORD
 export SUDO_PASSWORD
 export REMOTE_USER
 export TEMP_DIR
-
-# ==========================================
-# Phase 0: デプロイ先ディレクトリのクリア（並列）
-# ==========================================
-echo -e "${CYAN}=========================================${NC}"
-echo -e "${CYAN}Phase 0: Clearing deployment directory (parallel)${NC}"
-echo -e "${CYAN}=========================================${NC}"
-echo ""
-
-DEPLOYMENT_LOCATION=$(jq -r '.deployment_location' "$CONFIG_FILE")
-DEPLOY_DIR="${DEPLOYMENT_LOCATION}/WAFL-Testbed"
-
-echo -e "${BLUE}⏳ Starting cleanup on ${#HOSTS[@]} hosts...${NC}"
-
-for HOST in "${HOSTS[@]}"; do
-    (
-        DOCKER_CLEANUP="
-            docker ps -aq --filter 'name=wafl' | xargs -r docker stop 2>/dev/null || true
-            docker ps -aq --filter 'name=wafl' | xargs -r docker rm -f 2>/dev/null || true
-            docker rmi -f wafl-node:latest 2>/dev/null || true
-            docker image prune -f 2>/dev/null || true
-            docker container prune -f 2>/dev/null || true
-            sudo rm -rf ${DEPLOY_DIR} && mkdir -p ${DEPLOY_DIR}
-        "
-
-        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$DOCKER_CLEANUP" 2>"$TEMP_DIR/phase0_${HOST}_error"; then
-            rm -f "$TEMP_DIR/phase0_${HOST}_failed"
-        else
-            touch "$TEMP_DIR/phase0_${HOST}_failed"
-        fi
-    ) &
-done
-
-wait
-check_parallel_results "phase0"
-echo ""
 
 # ==========================================
 # Phase 1: Sudo 権限設定（並列）
@@ -248,6 +215,7 @@ for HOST in "${HOSTS[@]}"; do
             sudo systemctl restart chrony
 
             sudo usermod -aG docker ${REMOTE_USER}
+            sudo chmod 666 /var/run/docker.sock
 
             cat <<EOF | sudo tee /etc/sysctl.d/99-wafl-tuning.conf > /dev/null
 # WAFL Experiment Tuning
@@ -273,22 +241,30 @@ check_parallel_results "phase3"
 echo ""
 
 # ==========================================
-# Phase 4: Docker Hub ログイン（並列）
+# Phase 4: デプロイ先ディレクトリのクリア（並列）
 # ==========================================
 echo -e "${CYAN}=========================================${NC}"
-echo -e "${CYAN}Phase 4: Docker Hub login (parallel)${NC}"
+echo -e "${CYAN}Phase 4: Clearing deployment directory (parallel)${NC}"
 echo -e "${CYAN}=========================================${NC}"
 echo ""
 
-echo -e "${BLUE}⏳ Logging in to Docker Hub on ${#HOSTS[@]} hosts...${NC}"
+DEPLOYMENT_LOCATION=$(jq -r '.deployment_location' "$CONFIG_FILE")
+DEPLOY_DIR="${DEPLOYMENT_LOCATION}/WAFL-Testbed"
+
+echo -e "${BLUE}⏳ Starting cleanup on ${#HOSTS[@]} hosts...${NC}"
 
 for HOST in "${HOSTS[@]}"; do
     (
-        REMOTE_CMDS="
-            echo '${DOCKER_HUB_PASSWORD}' | docker login -u '${DOCKER_HUB_USERNAME}' --password-stdin
+        DOCKER_CLEANUP="
+            docker ps -aq --filter 'name=wafl' | xargs -r docker stop 2>/dev/null || true
+            docker ps -aq --filter 'name=wafl' | xargs -r docker rm -f 2>/dev/null || true
+            docker rmi -f wafl-node:latest 2>/dev/null || true
+            docker image prune -f 2>/dev/null || true
+            docker container prune -f 2>/dev/null || true
+            sudo rm -rf ${DEPLOY_DIR} && mkdir -p ${DEPLOY_DIR}
         "
 
-        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS" 2>"$TEMP_DIR/phase4_${HOST}_error"; then
+        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$DOCKER_CLEANUP" 2>"$TEMP_DIR/phase4_${HOST}_error"; then
             rm -f "$TEMP_DIR/phase4_${HOST}_failed"
         else
             touch "$TEMP_DIR/phase4_${HOST}_failed"
@@ -301,10 +277,43 @@ check_parallel_results "phase4"
 echo ""
 
 # ==========================================
-# Phase 5: Docker Registry Setup
+# Phase 5: Docker Hub ログイン（並列）
+# ==========================================
+if [ $SKIP_DOCKER_LOGIN -eq 0 ]; then
+    echo -e "${CYAN}=========================================${NC}"
+    echo -e "${CYAN}Phase 5: Docker Hub login (parallel)${NC}"
+    echo -e "${CYAN}=========================================${NC}"
+    echo ""
+
+    echo -e "${BLUE}⏳ Logging in to Docker Hub on ${#HOSTS[@]} hosts...${NC}"
+
+    for HOST in "${HOSTS[@]}"; do
+        (
+            REMOTE_CMDS="
+                echo '${DOCKER_HUB_PASSWORD}' | docker login -u '${DOCKER_HUB_USERNAME}' --password-stdin
+            "
+
+            if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS" 2>"$TEMP_DIR/phase5_${HOST}_error"; then
+                rm -f "$TEMP_DIR/phase5_${HOST}_failed"
+            else
+                touch "$TEMP_DIR/phase5_${HOST}_failed"
+            fi
+        ) &
+    done
+
+    wait
+    check_parallel_results "phase5"
+    echo ""
+else
+    echo -e "${YELLOW}Skipping Phase 5: Docker Hub login (credentials not provided)${NC}"
+    echo ""
+fi
+
+# ==========================================
+# Phase 6: Docker Registry Setup
 # ==========================================
 echo -e "${CYAN}=========================================${NC}"
-echo -e "${CYAN}Phase 5: Docker Registry Setup${NC}"
+echo -e "${CYAN}Phase 6: Docker Registry Setup${NC}"
 echo -e "${CYAN}=========================================${NC}"
 echo ""
 
@@ -357,16 +366,16 @@ for HOST in "${HOSTS[@]}"; do
             sudo systemctl restart docker
         "
 
-        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS" 2>"$TEMP_DIR/phase5_${HOST}_error"; then
-            rm -f "$TEMP_DIR/phase5_${HOST}_failed"
+        if sshpass -p "$SSH_PASSWORD" ssh -n -o StrictHostKeyChecking=no $REMOTE_USER@$HOST "$REMOTE_CMDS" 2>"$TEMP_DIR/phase6_${HOST}_error"; then
+            rm -f "$TEMP_DIR/phase6_${HOST}_failed"
         else
-            touch "$TEMP_DIR/phase5_${HOST}_failed"
+            touch "$TEMP_DIR/phase6_${HOST}_failed"
         fi
     ) &
 done
 
 wait
-check_parallel_results "phase5"
+check_parallel_results "phase6"
 echo ""
 
 # ==========================================
