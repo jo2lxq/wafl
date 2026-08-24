@@ -133,14 +133,11 @@ def topk_ds_dq(net, contact, fl_coefficient, K, Q, prev_net, zero_initialization
 				diff[key] = param[key] - prev_net[k][n][key]
 			diff_threshold = topk_threshold(diff, K, device)
 
-			# quantiza diff
-			diff_abs = torch.cat([v.view(-1).abs() for v in diff.values()])
-
 			for key, value in diff.items():
 				if key in private_param:
 					continue
 				mask = (-1 * diff_threshold < value) & (value < diff_threshold)
-				diff[key][mask] = 0
+				value[mask] = 0
 				max_diff = torch.max(value.abs())
 				if torch.all(value == 0):
 					min_diff = max_diff

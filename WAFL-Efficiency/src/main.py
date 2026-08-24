@@ -18,12 +18,12 @@ from functions.subset import create_subsets
 
 parser = argparse.ArgumentParser(description="Hyper Parameters")
 parser.add_argument("--pre_epoch", default = 10, type=int)
-parser.add_argument("--max_epoch", default = 100, type=int)
-parser.add_argument("--batch_size", default = 64, type=int)
+parser.add_argument("--max_epoch", default = 1000, type=int)
+parser.add_argument("--batch_size", default = 32, type=int)
 parser.add_argument("--steps_per_epoch", default = 5, type=int)
 parser.add_argument("--noniid", default = 0.9, type=float)
 parser.add_argument("--zero_initialization", default = False, type=bool)
-parser.add_argument("--reduce", default = "topk_ds", type=str, help = "set topk_ds, topk_ds_dq, or None") 
+parser.add_argument("--reduce", default = "topk_ds_dq", type=str, help = "set topk_ds, topk_ds_dq, or None") 
 parser.add_argument("--K", default = 0.1, type=float, help = "sparsification rate")
 parser.add_argument("--Q", default = 1, type=float, help = "quatization bit")
 
@@ -51,13 +51,13 @@ torch.random.manual_seed(1)
 random.seed(1)
 
 # directory for storing the prev_net data
-tmp_dir = "./tmp" 
+tmp_dir = "../tmp/" 
 if os.path.isdir(tmp_dir):
 	for filename in os.listdir(tmp_dir):
 		os.remove(tmp_dir + filename)
 else:
 	os.makedirs(tmp_dir)
-save_dir = "../trained_net" 
+save_dir = "../trained_net/" 
 if not os.path.isdir(tmp_dir):
 	os.makedirs(save_dir)
 
