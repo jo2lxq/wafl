@@ -56,6 +56,16 @@ Each device trains a model individually with the local data it has. When a devic
 
 \[14\] Ryusei Higuchi, Hiroshi Esaki, Hideya Ochiai, "Neuron Personalization of Collaborative Federated Learning via Device-to-Device Communications", IEEE WiMob, 2024 (https://ieeexplore.ieee.org/document/10770527).
 
-\[15\] Kaito Tsuchiya, Hiroshi Esaki, Hideya Ochiai, "Top-K Difference Sparsification and Quantization for Communication-Efficient Model Aggregation in Wireless Ad Hoc Federated Learning", IEEE Conference on Artificial Intelligence, 2025 (in-press).
+\[15\] Kaito Tsuchiya, Hiroshi Esaki, Hideya Ochiai, "Top-K Difference Sparsification and Quantization for Communication-Efficient Model Aggregation in Wireless Ad Hoc Federated Learning", IEEE Conference on Artificial Intelligence, pp. 1093-1099, 2025 (https://ieeexplore.ieee.org/document/11050680).
 
-\[16\] Yudai Ueda, Hideya Ochiai, "Fully Decentralized Collaborative Learning for Visual Question Answering in Distributed Scenarios", IEEE Conference on Artificial Intelligence, 2025 (in-press).
+\[16\] Yudai Ueda, Hideya Ochiai, "Fully Decentralized Collaborative Learning for Visual Question Answering in Distributed Scenarios", IEEE Conference on Artificial Intelligence, pp. 1262-1267, 2025 (https://ieeexplore.ieee.org/document/11050754).
+
+\[17\] Atsuya Muramatsu, Hideya Ochiai, "Backdoor-Aware Adaptive Aggregation for Wireless Ad Hoc Federated Learning", IEEE International Conference on Trust, Privacy and Security in Intelligent Systems, and Applications, 2025 (https://ieeexplore.ieee.org/abstract/document/11410197).
+
+\[18\] Namit Shah, Kosei Takahashi, Tatsumi Yamazaki, Natsuki Zenko, Hiroshi Esaki, Hideya Ochiai, "An Emulation Platform for Wireless Ad Hoc Federated Learning: Design, Implementation, and Case Study", IEEE International Conference on Knowledge and Smart Technology, 2026 (https://ieeexplore.ieee.org/document/11431966).
+
+\[19\] Kota Nakajima, Hiroshi Esaki, Hideya Ochiai, "Serverless Cross-Device Knowledge Transfer with Collaborative LLM Fine-Tuning via Wireless Ad Hoc Federated Learning", IEEE International Conference on Artificial Intelligence, 2026 (https://ieeexplore.ieee.org/document/11536207).
+
+\[20\] Guangzhao Yang, Hiroshi Esaki, Hideya Ochiai, "Singular Value Fine-Tuning for Efficient Device-to-Device Adaptation of Large Language Models", IEEE International Conference on Artificial Intelligence, 2026 (https://ieeexplore.ieee.org/document/11536638).
+
+\[21\] Motoki Tanaka, Hiroshi Esaki, Hideya Ochiai, "Robust Training of Large Language Models under Non-IID Data in Wireless Ad Hoc Federated Learning", IEEE International Conference on Artificial Intelligence, 2026 (https://ieeexplore.ieee.org/document/11536528).
