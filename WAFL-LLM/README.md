@@ -21,8 +21,9 @@ sections explain how to run it.
 9. [Qualitative Evaluation](#qualitative-evaluation)
 10. [Model Selection](#model-selection)
 11. [Baselines and Ablation Studies](#baselines-and-ablation-studies)
-12. [Documentation](#documentation)
-13. [Repository Structure](#repository-structure)
+12. [Experiments with IID Setting](#experiments-with-iid-setting)
+13. [Documentation](#documentation)
+14. [Repository Structure](#repository-structure)
 
 ---
 
@@ -294,6 +295,57 @@ In this case the number of training steps is identical to the WAFL run, so the
 only difference in the whole experiment is whether the adapters are combined.
 This is the most precise comparison. Both experiments are described in
 [docs/experiments.md](docs/experiments.md).
+
+## Experiments with IID Setting
+
+The main subject of this project is the Non-IID setting, because that is what
+happens in reality. Each person has different conversations, so each device
+holds a different kind of data. For reference, however, the program can also
+divide the data in the **IID** way, in which all conversations are shuffled and
+then dealt out evenly. Every device then holds roughly the same mixture of the
+five domains.
+
+The IID setting is useful as a point of comparison for two reasons. First, it
+shows what accuracy is reachable when the uneven distribution of data is not a
+problem at all. Second, it tells you how much of the difficulty in the Non-IID
+setting comes from the distribution rather than from the task itself.
+
+Add the option `--split-type iid` to use this setting. It can be combined with
+`--mode self` in the same way as before.
+
+```bash
+# WAFL on IID data
+uv run wafl_llm_dst_train.py --split-type iid
+uv run wafl_llm_dst_eval.py  --split-type iid
+
+# Self-training only, on IID data
+uv run wafl_llm_dst_train.py --mode self --split-type iid
+uv run wafl_llm_dst_eval.py  --mode self --split-type iid
+```
+
+Together with the Non-IID runs, this gives four experiments. Each one writes to
+its own directory, so they never overwrite each other.
+
+| training command | directory | evaluation summary |
+| ---------------- | --------- | ------------------ |
+| (no options) | `wafl-qwen3-8b-dst-noniid/` | `wafl_qwen3-8b_eval_noniid.json` |
+| `--split-type iid` | `wafl-qwen3-8b-dst-iid/` | `wafl_qwen3-8b_eval_iid.json` |
+| `--mode self` | `self-qwen3-8b-dst-noniid/` | `self_qwen3-8b_eval_noniid.json` |
+| `--mode self --split-type iid` | `self-qwen3-8b-dst-iid/` | `self_qwen3-8b_eval_iid.json` |
+
+The last of these four is worth explaining. When the data is IID and no
+exchange takes place, every device is simply learning on its own from a
+representative sample of all five domains. This is close to ordinary
+centralised training. If WAFL on Non-IID data reaches a similar accuracy, then
+the exchange of adapters has recovered almost everything that was lost because
+of the uneven distribution.
+
+You can also inspect the individual predictions of an IID run, by giving the
+same option to the third program.
+
+```bash
+uv run wafl_llm_dst_inspect.py --split-type iid --round 300 --node 9 --only-errors
+```
 
 ---
 
