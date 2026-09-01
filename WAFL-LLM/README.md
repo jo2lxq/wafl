@@ -170,14 +170,35 @@ common problem and it is fixed by adding a few lines to `pyproject.toml`.
 Please see [docs/installation.md](docs/installation.md), which explains the
 procedure step by step.
 
-**Step 4.** Copy a contact pattern file into the project. This file describes
-which devices meet each other in each round. The same files are used by the
-other projects in this repository.
+**Step 4.** Prepare a contact pattern file. This file describes which devices
+meet each other in each round. The same files are used by the other projects in
+this repository, where they are distributed as a zip archive. If the archive has
+not been extracted yet, extract it first.
+
+```bash
+unzip -n ../WAFL-MLP/data/contact_pattern/contact_pattern.zip \
+      -d ../WAFL-MLP/data/contact_pattern/
+```
+
+The `-n` option means that existing files are never overwritten, so it is safe
+to run this command even if the archive has already been extracted. You can
+then confirm that the JSON files are present.
+
+```bash
+ls ../WAFL-MLP/data/contact_pattern/*.json
+```
+
+Finally, copy the file that this project uses by default into a directory
+called `contact_pattern`.
 
 ```bash
 mkdir -p contact_pattern
 cp ../WAFL-MLP/data/contact_pattern/rwp_n10_a0500_r100_p10_s01.json contact_pattern/
 ```
+
+If your copy of the repository places these files somewhere else, adjust the
+paths above. What matters is that the file
+`contact_pattern/rwp_n10_a0500_r100_p10_s01.json` exists inside this project.
 
 ## Training
 
@@ -195,6 +216,49 @@ first in order to confirm that everything works.
 ```bash
 uv run wafl_llm_dst_train.py --rounds 5 --max-samples-per-node 200 --save-every 5
 ```
+
+### Running in the background
+
+A full training run takes many hours. If you are working on a remote machine
+over SSH, the run will normally be killed when you close the connection. To
+prevent this, start the program in the background with `nohup`.
+
+```bash
+nohup uv run wafl_llm_dst_train.py > stdout.log 2> stderr.log < /dev/null &
+```
+
+Each part of this command has a purpose.
+
+| part | meaning |
+| ---- | ------- |
+| `nohup` | the program keeps running after you log out |
+| `> stdout.log` | normal output is written to `stdout.log` |
+| `2> stderr.log` | warnings and progress bars are written to `stderr.log` |
+| `< /dev/null` | the program reads no keyboard input, so it never stops to wait for you |
+| `&` | the program runs in the background and the shell prompt returns immediately |
+
+The normal output and the error output are sent to separate files on purpose.
+The libraries used here print progress bars and warnings to the error output,
+which would otherwise make the training log difficult to read.
+
+You can watch the progress at any time with the following command.
+
+```bash
+tail -f stdout.log
+```
+
+Press Ctrl-C to stop watching. This stops only the `tail` command, not the
+training itself. To confirm that training is still running, or to find its
+process number, use `ps`.
+
+```bash
+ps aux | grep wafl_llm_dst_train
+```
+
+If you need to stop the training, use `kill` with the process number shown by
+`ps`.
+
+### Output of a training run
 
 The trained adapters are saved at regular intervals during training. A saved
 copy of this kind is called a **checkpoint**, and it lets you evaluate the
