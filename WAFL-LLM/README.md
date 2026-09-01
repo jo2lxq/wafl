@@ -442,3 +442,21 @@ way as the rest of this repository. The model weights are separate works and
 have their own licenses. In particular, the two Llama models are not covered by
 an Apache license. Please see
 [docs/implementation-notes.md](docs/implementation-notes.md).
+
+## References
+
+1. H. Ochiai, Y. Sun, Q. Jin, N. Wongwiwatchai, H. Esaki,
+   "Wireless Ad Hoc Federated Learning: A Fully Distributed Cooperative Machine
+   Learning," 2022. <https://arxiv.org/abs/2205.11779>
+2. E. J. Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models," 2021.
+   <https://arxiv.org/abs/2106.09685>
+3. Qwen Team, "Qwen3 Technical Report," 2025.
+   <https://arxiv.org/abs/2505.09388>
+4. Mistral AI, "Introducing Mistral 3," 2025.
+   <https://mistral.ai/news/mistral-3/>
+5. Meta, "The Llama 3 Herd of Models," 2024.
+   <https://arxiv.org/abs/2407.21783>
+6. F. Ye, J. Manotumruksa, E. Yilmaz, "MultiWOZ 2.4: A Multi-Domain
+   Task-Oriented Dialogue Dataset with Essential Annotation Corrections,"
+   2021. <https://github.com/smartyfh/MultiWOZ2.4>
+7. Unsloth. <https://github.com/unslothai/unsloth>
