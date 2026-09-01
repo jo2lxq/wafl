@@ -125,7 +125,7 @@ number of saved rounds, so pair it with a small `--max-test`.
 * **Slot F1** — micro-averaged precision/recall/F1 over individual
   `slot=value` pairs. It degrades gracefully, so it shows partial progress that
   JGA hides.
-* **Std JGA** — the spread across nodes. This is the WAFL-specific number: it
+* **Std JGA** — the spread across nodes. This is the WAFL-specific metric: it
   should shrink as the rounds go on, indicating that the nodes converged on a
   shared model instead of drifting apart into local specialists.
 * **parse_fail** — the fraction of generations from which no JSON object could
