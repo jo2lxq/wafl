@@ -7,24 +7,23 @@ of their models whenever they meet, without using any central server.
 
 ## Contents
 
-The first five sections explain what the project does and why. The remaining
+The first four sections explain what the project does and why. The remaining
 sections explain how to run it.
 
 1. [Background](#background)
 2. [Target LLM Task as an Example: Dialogue State Tracking](#target-llm-task-as-an-example-dialogue-state-tracking)
 3. [Problem Setting: Non-IID Data Without a Central Server](#problem-setting-non-iid-data-without-a-central-server)
 4. [Method: WAFL with LoRA Adapters](#method-wafl-with-lora-adapters)
-5. [Summary of Results](#summary-of-results)
-6. [Requirements](#requirements)
-7. [Installation](#installation)
-8. [Training](#training)
-9. [Quantitative Evaluation](#quantitative-evaluation)
-10. [Qualitative Evaluation](#qualitative-evaluation)
-11. [Model Selection](#model-selection)
-12. [Baselines and Ablation Studies](#baselines-and-ablation-studies)
-13. [Experiments with IID Setting](#experiments-with-iid-setting)
-14. [Documentation](#documentation)
-15. [Repository Structure](#repository-structure)
+5. [Requirements](#requirements)
+6. [Installation](#installation)
+7. [Training](#training)
+8. [Quantitative Evaluation](#quantitative-evaluation)
+9. [Qualitative Evaluation](#qualitative-evaluation)
+10. [Model Selection](#model-selection)
+11. [Baselines and Ablation Studies](#baselines-and-ablation-studies)
+12. [Experiments with IID Setting](#experiments-with-iid-setting)
+13. [Documentation](#documentation)
+14. [Repository Structure](#repository-structure)
 
 ---
 
@@ -56,8 +55,9 @@ The programs are ready to run. Please try them and see how WAFL-LLM performs.
 
 ## Target LLM Task as an Example: Dialogue State Tracking
 
-A task-oriented dialogue system has to understand what the user wants. To do
-this, it converts each user utterance into a structured record called a
+There can be many tasks handled by LLMs, but we focus on dialog state tracking as an example. 
+Assume a task-oriented dialogue system that has to understand what the user wants. 
+It converts each user utterance into a structured record called a
 **belief state**. The belief state is a set of slots and values. For example,
 if the user says "I need a cheap hotel in the north for two people", the belief
 state becomes the following JSON object.
@@ -125,39 +125,6 @@ One note on terminology. This document says "device", because the setting we
 are modelling is a group of people carrying devices. The programs and their
 options use the word **node** for the same thing. The two words mean exactly
 the same in this project.
-
-## Summary of Results
-
-The following table shows the result for Qwen3-8B on ten devices. "Round 0"
-means the state before any exchange has taken place, so each device has learned
-only from its own data.
-
-| round | mean JGA | standard deviation of JGA |
-| ----- | -------- | ------------------------- |
-| 0 (no exchange yet) | 53.57 % | 13.93 % |
-| 150 | 80.57 % | 1.19 % |
-| 300 | 79.77 % | 1.89 % |
-
-**JGA** stands for Joint Goal Accuracy. It is the percentage of turns for which
-the predicted JSON object is exactly equal to the correct one. If even a single
-slot is wrong or missing, that turn is counted as an error.
-
-Two things are worth noticing in this table.
-
-First, the average accuracy rises from about 54 % to about 80 %. This shows
-that exchanging models helps a great deal.
-
-Second, the standard deviation falls from about 14 % to about 2 %. The standard
-deviation measures how much the devices differ from each other. A large value
-means that some devices are much better than others. A small value means that
-all devices have reached a similar level. This is the result that is specific
-to WAFL, because it shows that the devices have converged to a shared model
-rather than remaining ten separate specialists.
-
-The effect is largest for the devices that hold the least data. The two devices
-that mainly recorded taxi conversations have fewer than one thousand training
-samples each. Their accuracy improves by almost 49 points, and they end up at
-the same level as devices that hold ten times more data.
 
 ---
 
