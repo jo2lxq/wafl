@@ -1,16 +1,16 @@
-# WAFL-LLM: Wireless Ad Hoc Federated Learning for Large Language Models
+# Wireless Ad Hoc Federated Learning for Large Language Models
 
 This project trains a large language model for **Dialogue State Tracking**
-using **Wireless Ad Hoc Federated Learning (WAFL)**. Ten simulated devices
-learn together by exchanging parts of their models whenever they meet, without
-using any central server.
+using **Wireless Ad Hoc Federated Learning (WAFL)**, naming WAFL-LLM for short. 
+Ten simulated devices learn together by exchanging parts of their models 
+whenever they meet, without using any central server.
 
 ## Contents
 
 The first four sections explain what the project does and why. The remaining
 sections explain how to run it.
 
-1. [Task: Dialogue State Tracking](#task-dialogue-state-tracking)
+1. [Target LLM Task as an Example: Dialogue State Tracking](#task-dialogue-state-tracking)
 2. [Problem Setting: Non-IID Data Without a Central Server](#problem-setting-non-iid-data-without-a-central-server)
 3. [Method: WAFL with LoRA Adapters](#method-wafl-with-lora-adapters)
 4. [Summary of Results](#summary-of-results)
@@ -27,7 +27,7 @@ sections explain how to run it.
 
 ---
 
-## Task: Dialogue State Tracking
+## Target LLM Task as an Example: Dialogue State Tracking
 
 A task-oriented dialogue system has to understand what the user wants. To do
 this, it converts each user utterance into a structured record called a
