@@ -1,4 +1,4 @@
-# WAFL-LLM
+# WAFL-LLM: Wireless Ad Hoc Federated Learning for Large Language Models
 
 This project trains a large language model for **Dialogue State Tracking**
 using **Wireless Ad Hoc Federated Learning (WAFL)**. Ten simulated devices
