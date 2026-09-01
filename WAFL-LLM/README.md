@@ -1,31 +1,58 @@
 # Wireless Ad Hoc Federated Learning for Large Language Models
 
 This project trains a large language model for **Dialogue State Tracking**
-using **Wireless Ad Hoc Federated Learning (WAFL)**, naming WAFL-LLM for short. 
-Ten simulated devices learn together by exchanging parts of their models 
-whenever they meet, without using any central server.
+using **Wireless Ad Hoc Federated Learning (WAFL)**. We refer to this project
+as WAFL-LLM for short. Ten simulated devices learn together by exchanging parts
+of their models whenever they meet, without using any central server.
 
 ## Contents
 
-The first four sections explain what the project does and why. The remaining
+The first five sections explain what the project does and why. The remaining
 sections explain how to run it.
 
-1. [Target LLM Task as an Example: Dialogue State Tracking](#task-dialogue-state-tracking)
-2. [Problem Setting: Non-IID Data Without a Central Server](#problem-setting-non-iid-data-without-a-central-server)
-3. [Method: WAFL with LoRA Adapters](#method-wafl-with-lora-adapters)
-4. [Summary of Results](#summary-of-results)
-5. [Requirements](#requirements)
-6. [Installation](#installation)
-7. [Training](#training)
-8. [Quantitative Evaluation](#quantitative-evaluation)
-9. [Qualitative Evaluation](#qualitative-evaluation)
-10. [Model Selection](#model-selection)
-11. [Baselines and Ablation Studies](#baselines-and-ablation-studies)
-12. [Experiments with IID Setting](#experiments-with-iid-setting)
-13. [Documentation](#documentation)
-14. [Repository Structure](#repository-structure)
+1. [Background](#background)
+2. [Target LLM Task as an Example: Dialogue State Tracking](#target-llm-task-as-an-example-dialogue-state-tracking)
+3. [Problem Setting: Non-IID Data Without a Central Server](#problem-setting-non-iid-data-without-a-central-server)
+4. [Method: WAFL with LoRA Adapters](#method-wafl-with-lora-adapters)
+5. [Summary of Results](#summary-of-results)
+6. [Requirements](#requirements)
+7. [Installation](#installation)
+8. [Training](#training)
+9. [Quantitative Evaluation](#quantitative-evaluation)
+10. [Qualitative Evaluation](#qualitative-evaluation)
+11. [Model Selection](#model-selection)
+12. [Baselines and Ablation Studies](#baselines-and-ablation-studies)
+13. [Experiments with IID Setting](#experiments-with-iid-setting)
+14. [Documentation](#documentation)
+15. [Repository Structure](#repository-structure)
 
 ---
+
+## Background
+
+AI accelerators for edge devices have evolved rapidly in recent years. Personal
+devices can now run a large language model locally, and they are beginning to
+be able to **train** the model as well, using methods such as quantization and
+LoRA.
+
+This project WAFL-LLM simulates training a **local LLM**, a model running on
+the user's own machine, while also using **device-to-device** communication
+links to exchange model parameters for collaborative learning. Everything is
+conducted locally, in a self-organizing and autonomous way, with peer-to-peer
+communication over wireless ad hoc connections. No central server takes part,
+and no third-party organization runs this process.
+
+This differs completely from the cloud-centric LLM architecture, where you have
+to create an account, agree to the terms of use, and accept the provider's
+billing policies and future changes. WAFL-LLM assumes a purely P2P
+architecture, which your community can run without any intervention by others.
+
+Note that privacy, which is often discussed in the context of conventional
+federated learning, is not the primary subject of this project. Our interest is
+whether a community of devices can improve a shared model by themselves in an
+autonomous way using the recent and future hardware platforms.
+
+The programs are ready to run. Please try them and see how WAFL-LLM performs.
 
 ## Target LLM Task as an Example: Dialogue State Tracking
 
