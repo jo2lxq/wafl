@@ -55,8 +55,8 @@ The programs are ready to run. Please try them and see how WAFL-LLM performs.
 
 ## Target LLM Task as an Example: Dialogue State Tracking
 
-There can be many tasks handled by LLMs, but we focus on dialog state tracking as an example. 
-Assume a task-oriented dialogue system that has to understand what the user wants. 
+There can be many tasks handled by LLMs, but we focus on dialogue state tracking as an example.
+Assume a task-oriented dialogue system that has to understand what the user wants.
 It converts each user utterance into a structured record called a
 **belief state**. The belief state is a set of slots and values. For example,
 if the user says "I need a cheap hotel in the north for two people", the belief
@@ -272,9 +272,16 @@ only ever saw taxi conversations is also asked about hotels and restaurants.
 uv run wafl_llm_dst_eval.py
 ```
 
-This prints the accuracy of each device and their average. To see how the
-accuracy changed as the rounds progressed, add the following option. Note that
-this takes several times longer, because every saved checkpoint is evaluated.
+This prints the accuracy of each device and their average. The main metric is
+**JGA**, or Joint Goal Accuracy, which is the percentage of turns for which the
+predicted JSON object is exactly equal to the correct one. If even a single
+slot is wrong or missing, that turn is counted as an error. The other metrics,
+and the results we measured, are explained in
+[docs/results.md](docs/results.md).
+
+To see how the accuracy changed as the rounds progressed, add the following
+option. Note that this takes several times longer, because every saved
+checkpoint is evaluated.
 
 ```bash
 uv run wafl_llm_dst_eval.py --rounds-curve
@@ -282,7 +289,7 @@ uv run wafl_llm_dst_eval.py --rounds-curve
 
 ## Qualitative Evaluation
 
-Accuracy numbers tell you how well a device performs, but they do not tell you
+Accuracy metrics tell you how well a device performs, but they do not tell you
 what kind of mistakes it makes. The third program shows the prediction and the
 correct answer side by side, one turn at a time.
 
